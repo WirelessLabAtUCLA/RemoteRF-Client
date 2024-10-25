@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+option java_package = "com.example.demo";
+option java_outer_classname = "DemoProtos";
+
+package remote_rf;
+
+service GenericRPC {
+    rpc Call (GenericRPCRequest) returns (GenericRPCResponse);
+}
+
+message GenericRPCRequest {
+    string function_name = 1;
+    map<string, Argument> args = 2;
+}
+
+message GenericRPCResponse {
+    map<string, Argument> results = 1;
+}
+
+message ArrayShape {
+    repeated int32 dim = 1;
+}
+
+message ComplexNumber {
+    float real = 1;
+    float imag = 2;
+}
+
+message ComplexNumpyArray {
+    ArrayShape shape = 1;
+    repeated ComplexNumber data = 2;
+}
+
+message RealNumpyArray {
+    ArrayShape shape = 1;
+    repeated float data = 2;
+}
+
+message Argument {
+    oneof value {
+        string string_value = 1;
+        int64 int64_value = 2;
+        float float_value = 3;
+        bool bool_value = 4;
+        ComplexNumpyArray complex_array = 5;
+        RealNumpyArray real_array = 6;
+    }
+}
