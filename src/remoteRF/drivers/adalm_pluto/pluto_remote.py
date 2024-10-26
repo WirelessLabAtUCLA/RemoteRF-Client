@@ -1,6 +1,7 @@
 from ...core.grpc_client import rpc_client
 from ...common.utils import *
 from ...common.grpc import grpc_pb2
+from ...core.grpc_client import get_tcp_calls
 
 class rx_def:
     pass
@@ -16,14 +17,18 @@ class ad9364(rx_tx_def):
 
 class Pluto: # client
     
-    def __init__(self, token=''):
+    def __init__(self, token='', debug=False):
         self.token = token
         # self.try_set(function_name="ip", value=grpc_pb2.Argument(string_value=ip))
+        
+        if debug:
+            print("Pluto Remote Client Initialized.")
         
     def api_token(self, token:str) -> None:
         self.token = token
         
     def try_get(self, *, function_name):
+        self.test_print()   # For debugging purposes
         try:
             return rpc_client(function_name=f"Pluto:{function_name}:GET", args={'a':map_arg(self.token)}).results[function_name]
         except Exception as e:
@@ -31,10 +36,15 @@ class Pluto: # client
             return None
 
     def try_set(self, *, function_name, value):
+        self.test_print()   # For debugging purposes
         try:
             rpc_client(function_name=f"Pluto:{function_name}:SET", args={function_name: value, 'a':map_arg(self.token)})
         except Exception as e:
             input(f"Error: {e}\nHit enter to continue...")
+            
+    def test_print(self):
+        if get_tcp_calls() % 50 == 0:
+            print(f'TCP Call Number: {get_tcp_calls()}')
 
     #region ad9364
 

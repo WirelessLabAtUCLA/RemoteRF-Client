@@ -2,12 +2,13 @@ from setuptools import setup, find_packages
 
 setup(
     name="remoteRF",
-    version="0.0.0",
+    version="0.0.5",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
-    description="A package with core functionalities and device-specific submodules for remote emulation usage.",
+    description="A python API to remotely access signal centric hardware. Client-side only!",
     packages=find_packages(where="src"),  # Automatically finds subpackages like core, deviceA, deviceB
     package_dir={"": "src"},
+    include_package_data=True,  # Includes files specified in MANIFEST.in
     install_requires=[
         "grpcio", "protobuf", "numpy", "prompt_toolkit", "python-dotenv"
     ],
