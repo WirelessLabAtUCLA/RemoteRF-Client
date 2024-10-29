@@ -1,6 +1,8 @@
 # Remote RF
 
-A python API to remotely access signal centric hardware. Courtesy of Wireless Lab @ UCLA.
+A python API to remotely access signal centric hardware. 
+
+Courtesy of Wireless Lab @ UCLA. - Ethan Ge
 
 ## Prerequisites
 
@@ -19,7 +21,10 @@ python --version
 Use the package manager [pip](https://pip.pypa.io/en/stable/) to install remoteRF. It is recommended that you install this package within a [virtual environment](https://docs.python.org/3/library/venv.html).
 
 ```bash
-pip install remoteRF
+python3 -m venv venv        # Create virtual environment
+source venv/bin/activate    # Activate virtual environment
+
+pip install remoteRF        # Install remoteRF
 ```
 
 If `pip install` doesn't work, you can clone the [source](https://github.com/WirelessLabAtUCLA/RemoteRF-Client) directly from github.
