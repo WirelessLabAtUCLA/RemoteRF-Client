@@ -6,7 +6,7 @@ Courtesy of Wireless Lab @ UCLA. - Ethan Ge
 
 ## Prerequisites
 
-- **Python 3.10**: This package works in Python 3.10+. You can try earlier versions and they likely will work, but if not, please use 3.10+. If you don’t have Python installed, you can download it from the [official Python website](https://www.python.org/downloads/).
+- **Python 3.10**: This package works in Python 3.10+. If you don’t have Python installed, you can download it from the [official Python website](https://www.python.org/downloads/).
 
 To check your current Python version, open a terminal and run:
 
