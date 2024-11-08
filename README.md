@@ -6,7 +6,7 @@ Courtesy of Wireless Lab @ UCLA. - Ethan Ge
 
 ## Prerequisites
 
-- **Python 3.12**: This package works in Python 3.12+. You can try earlier versions and they likely will work, but if not, please use 3.12+. If you don’t have Python installed, you can download it from the [official Python website](https://www.python.org/downloads/).
+- **Python 3.10**: This package works in Python 3.10+. You can try earlier versions and they likely will work, but if not, please use 3.10+. If you don’t have Python installed, you can download it from the [official Python website](https://www.python.org/downloads/).
 
 To check your current Python version, open a terminal and run:
 
@@ -50,7 +50,9 @@ Usage of the platform requires you to register a account and reserve a device in
 
 ### 2. **Register a account**:
 ```bash
-remoterf-login  # Run in the terminal where the Python library is installed
+remoterf-login  
+# Run in the terminal 
+# where the Python library is installed
 
 # Typically, this will be the terminal where you’ve activated the virtual environment if you’re using one
 ```

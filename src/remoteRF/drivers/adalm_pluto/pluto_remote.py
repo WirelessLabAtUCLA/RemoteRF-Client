@@ -28,7 +28,7 @@ class Pluto: # client
         self.token = token
         
     def try_get(self, *, function_name):
-        self.test_print()   # For debugging purposes
+        # self.test_print()   # For debugging purposes
         try:
             return rpc_client(function_name=f"Pluto:{function_name}:GET", args={'a':map_arg(self.token)}).results[function_name]
         except Exception as e:
