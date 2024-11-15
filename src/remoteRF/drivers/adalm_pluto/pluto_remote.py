@@ -28,7 +28,6 @@ class Pluto: # client
         self.token = token
         
     def try_get(self, *, function_name):
-        # self.test_print()   # For debugging purposes
         try:
             return rpc_client(function_name=f"Pluto:{function_name}:GET", args={'a':map_arg(self.token)}).results[function_name]
         except Exception as e:
@@ -36,15 +35,14 @@ class Pluto: # client
             return None
 
     def try_set(self, *, function_name, value):
-        self.test_print()   # For debugging purposes
         try:
             rpc_client(function_name=f"Pluto:{function_name}:SET", args={function_name: value, 'a':map_arg(self.token)})
         except Exception as e:
             input(f"Error: {e}\nHit enter to continue...")
             
-    def test_print(self):
-        if get_tcp_calls() % 50 == 0:
-            print(f'TCP Call Number: {get_tcp_calls()}')
+    # def test_print(self):
+    #     if self.debug == True and get_tcp_calls() % 50 == 0:
+    #         print(f'TCP Call Number: {get_tcp_calls()}')
 
     #region ad9364
 
