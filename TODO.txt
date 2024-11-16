@@ -1,0 +1,5 @@
+Del device and reinit on remote init call.
+Implement raw method calls (optional arg input and arg return.)
+^ Implement the rest of the Pluto Python Library
+Schedule Blocks and physically selecting the reservation time block you want. (Prompt say, give me the next x amount of open reservations for say one type of device, or for a pair of the same type of device)
+Change text color based on OS. (looks doo doo on windows and some linux kernals.)
