@@ -21,7 +21,7 @@ def welcome():
             account.username = input("Username: ")
             double_check = True
             while double_check:
-                password = getpass.getpass("Password: ")
+                password = getpass.getpass("Password (Hidden): ")
                 password2 = getpass.getpass("Confirm Password: ")
                 if password == password2:
                     double_check = False
@@ -37,7 +37,7 @@ def welcome():
                 welcome()
         else:
             account.username = input("Username: ")
-            account.password = getpass.getpass("Password: ")
+            account.password = getpass.getpass("Password (Hidden): ")
             # check if login was valid
             if not account.login_user():
                 os.system('cls' if os.name == 'nt' else 'clear')
