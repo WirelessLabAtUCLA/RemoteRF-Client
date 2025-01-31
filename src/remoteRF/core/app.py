@@ -64,6 +64,7 @@ def commands():
     printf("'myres' ", Sty.MAGENTA, "- View My Reservations", Sty.DEFAULT)
     printf("'cancelres' ", Sty.MAGENTA, "- Cancel a Reservation", Sty.DEFAULT)
     printf("'resdev' ", Sty.MAGENTA, "- Reserve a Device", Sty.DEFAULT)
+    printf("'naiveresdev' ", Sty.MAGENTA, "- Old implementation of reservations", Sty.DEFAULT)
     
 def clear():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -176,7 +177,7 @@ def cancel_my_reservation():
             print("Invalid ID.")
             return
         
-        #grab the reservation
+        # grab the reservation
         for entry in sorted_entries:
             if entry['id'] == id:
                 db_id = entry['internal_id']
@@ -237,6 +238,152 @@ def perms():
     else:
         printf(f"Error: Unknown permission level {results[0]}", Sty.BRIGHT_RED)
 
+# New block scheduling
+
+def fetch_all_devices():
+    response = rpc_client(
+        function_name='ACC:get_dev',
+        args={
+            "un": map_arg(account.username),
+            "pw": map_arg(account.password)
+        }
+    )
+    devices = []
+    # Sort keys using numeric conversion when possible.
+    for key in sorted(response.results.keys(), key=lambda k: int(k) if k.isdigit() else k):
+        devices.append(key)
+    return devices
+
+def fetch_all_reservations():
+    data = account.get_reservations()
+    if 'ace' in data.results:
+        print(f"Error: {unmap_arg(data.results['ace'])}")
+        return []
+    entries = []
+
+    for key, value in data.results.items():
+        parts = unmap_arg(value).split(',')
+        # Convert both start and end times to datetime objects.
+        entry = {
+            'username': parts[0],
+            'device_id': int(parts[1]),  # Stored as an int
+            'start_time': datetime.datetime.strptime(parts[2], '%Y-%m-%d %H:%M:%S'),
+            'end_time': datetime.datetime.strptime(parts[3], '%Y-%m-%d %H:%M:%S')
+        }
+        entries.append(entry)
+    return entries
+
+def fetch_device_reservations_by_date(device_id: str, date: datetime.date):
+    """
+    Filter all reservations to those for a specific device (by ID, as a string)
+    on the specified date.
+    """
+    all_res = fetch_all_reservations()
+    device_reservations = []
+    for res in all_res:
+        # Convert the stored device_id (an int) to a string for comparison.
+        if str(res['device_id']) == device_id and res['start_time'].date() == date:
+            device_reservations.append((res['start_time'], res['end_time']))
+            
+    return device_reservations
+
+def build_hourly_slots(date: datetime.date, start_hour: int = 0, end_hour: int = 24):
+    """Generate 1-hour time slots for the given date."""
+    slots = []
+    for hour in range(start_hour, end_hour):
+        slot_start = datetime.datetime.combine(date, datetime.time(hour, 0))
+        slot_end = slot_start + datetime.timedelta(hours=1)
+        slots.append((slot_start, slot_end))
+    return slots
+
+def is_slot_conflicting(slot: tuple, reservations: list):
+    """Return True if the slot overlaps with any reservation in the provided list."""
+    slot_start, slot_end = slot
+    for res_start, res_end in reservations:
+        if slot_start < res_end and slot_end > res_start:
+            return True
+    return False
+
+def display_free_slots_all(date: datetime.date):
+    """
+    Display available 1-hour slots aggregated across all devices on a given date.
+    A slot is available if at least one device is free (i.e. not reserved during that slot).
+    Omits any slots whose end time is in the past.
+    Returns a tuple (chosen_slot, chosen_device) where:
+      - chosen_slot is a tuple (start_time, end_time)
+      - chosen_device is one available device for that slot
+    If no slot is available, returns (None, None).
+    """
+    devices = fetch_all_devices()
+    all_slots = build_hourly_slots(date)
+    now = datetime.datetime.now()
+    available_slots = {}  # key: slot tuple, value: list of available device IDs
+    
+    for slot in all_slots:
+        # Skip slots whose end time is in the past.
+        if slot[1] <= now:
+            continue
+        free_devices = []
+        # For each device, re-fetch its reservations for accuracy.
+        for dev in devices:
+            current_res = fetch_device_reservations_by_date(dev, date)
+            if not is_slot_conflicting(slot, current_res):
+                free_devices.append(dev)
+        if free_devices:
+            available_slots[slot] = free_devices
+
+    if not available_slots:
+        print("No available time slots for any device on that day.")
+        return None, None
+
+    print("Available time slots (aggregated across devices):")
+    sorted_slots = sorted(available_slots.keys())
+    for idx, slot in enumerate(sorted_slots):
+        start_str = slot[0].strftime('%I:%M %p')
+        end_str = slot[1].strftime('%I:%M %p')
+        num_available = len(available_slots[slot])
+        print(f"{idx + 1}: {start_str} - {end_str} (Devices available: {num_available})")
+    
+    try:
+        selection = int(input("Select a slot by number: "))
+        if selection < 1 or selection > len(sorted_slots):
+            print("Invalid selection.")
+            return None, None
+    except ValueError:
+        print("Invalid input. Please enter a number.")
+        return None, None
+
+    chosen_slot = sorted_slots[selection - 1]
+    free_devices_for_slot = available_slots[chosen_slot]
+    # Automatically choose one device from the free devices.
+    candidate = sorted(free_devices_for_slot)[0]
+    try:
+        chosen_device = int(candidate)  # Convert if the device ID is numeric.
+    except ValueError:
+        chosen_device = candidate
+    return chosen_slot, chosen_device
+
+def interactive_reserve_all():
+    """
+    Interactive function that prompts for a reservation date,
+    displays aggregated free 1-hour slots (with an accurate count of available devices),
+    and reserves the chosen slot on one available device.
+    """
+    try:
+        date_input = input("Enter the date for reservation (YYYY-MM-DD): ")
+        reservation_date = datetime.datetime.strptime(date_input, '%Y-%m-%d').date()
+
+        chosen_slot, chosen_device = display_free_slots_all(reservation_date)
+        if chosen_slot is None:
+            return
+
+        token = account.reserve_device(chosen_device, chosen_slot[0], chosen_slot[1])
+        if token != '':
+            print(f"Reservation successful on device {chosen_device}. Thy Token -> {token}")
+            print("Please keep this token safe, as it is not saved on server side, and cannot be regenerated/reretrieved.")
+    except Exception as e:
+        print(f"Error: {e}")
+
 welcome()
 clear()
 
@@ -258,13 +405,14 @@ while True:
         elif inpu == "myres":
             my_reservations()
         elif inpu == "resdev":
-            reserve()
+            interactive_reserve_all()
         elif inpu == 'cancelres':
             cancel_my_reservation()
+        elif inpu == 'naiveresdev':
+            reserve()
         else:
             print(f"Unknown command: {inpu}")
     except KeyboardInterrupt:
         break
     except EOFError:
         break
-        
