@@ -85,6 +85,20 @@ perms   # To view your permissions
 # Depending on your permission levels, you will be given different restrictions 
 ```
 
+<!-- ```bash
+resdev # To reserve a device
+
+Enter the device ID you would like to reserve: 0
+Reserve Start Time (YYYY-MM-DD HH:MM): 2024-11-20 10:20
+Reserve End Time (YYYY-MM-DD HH:MM): 2024-11-20 11:20
+
+# Time is military time. You can also use arrow keys to cycle between previous commands.
+
+Reservation successful. Thy Token -> example_token
+
+# Take note of this token. You will need it to actually access the device.
+``` -->
+
 ```bash
 resdev # To reserve a device
 
