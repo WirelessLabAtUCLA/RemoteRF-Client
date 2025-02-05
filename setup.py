@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="remoteRF",
-    version="0.0.6.14",
+    version="0.0.7.2",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
     description="A python API to remotely access signal centric hardware. Client-side only!",
@@ -14,6 +14,7 @@ setup(
     long_description_content_type="text/markdown",  # Specify that it's Markdown
     packages=find_packages(where="src"),  # Automatically finds subpackages like core, deviceA, deviceB
     package_dir={"": "src"},
+    license_file='MIT',
     include_package_data=True,  # Includes files specified in MANIFEST.in
     install_requires=[
         "grpcio", "protobuf", "numpy", "prompt_toolkit", "python-dotenv"
@@ -23,7 +24,7 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.10',
     entry_points={
         'console_scripts': [
             'remoterf-login=remoteRF.core.acc_login:main',
