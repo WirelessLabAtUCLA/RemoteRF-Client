@@ -11,13 +11,18 @@ from ..common.utils import *
 server_ip = '164.67.195.207'
 server_port = '61005'
 
+options = [
+      ('grpc.max_send_message_length', 100 * 1024 * 1024),
+      ('grpc.max_receive_message_length', 100 * 1024 * 1024),
+]
+
 # Server.crt
 certs_path = Path(__file__).resolve().parent.parent/'core'/'certs'/'server.crt'
 with certs_path.open('rb') as f:
     trusted_certs = f.read()
     
 credentials = grpc.ssl_channel_credentials(root_certificates=trusted_certs)
-channel = grpc.secure_channel(f'{server_ip}:{server_port}', credentials)
+channel = grpc.secure_channel(f'{server_ip}:{server_port}', credentials, options=options)
 stub = grpc_pb2_grpc.GenericRPCStub(channel)
 
 tcp_calls = 0
