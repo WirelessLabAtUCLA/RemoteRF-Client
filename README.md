@@ -106,7 +106,7 @@ Here is a explained sample script to get you going!
 from remoteRF.drivers.adalm_pluto import *  # Imports device Pluto SDR remote drivers. Change depending on desired device.
 
 sdr = adi.Pluto(    # Device initialization.
-    token = 'sample_token'     # Place the prior token here.
+    token = 'example_token'     # Place the prior token here.
 )
 
 # You can now use this 'sdr' as you normally would with the default Pluto drivers.
