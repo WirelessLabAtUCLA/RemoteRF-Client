@@ -142,6 +142,25 @@ class Pluto: # client
     @tx_lo.setter
     def tx_lo(self, value):
         try_set("tx_lo", value, self.token)
+        
+    @property
+    def tx_cyclic_buffer(self):
+        """tx_cyclic_buffer_size: Size of cyclic buffer"""
+        return try_get("tx_cyclic_buffer_size", self.token)
+    
+    @tx_cyclic_buffer.setter
+    def tx_cyclic_buffer(self, value):
+        try_set("tx_cyclic_buffer_size", value, self.token)
+        
+    @property
+    def tx_destroy_buffer(self):
+        """tx_destroy_buffer: Destroy cyclic buffer"""
+        return try_get("tx_destroy_buffer", self.token)
+    
+    @property
+    def rx_destroy_buffer(self):
+        """rx_destroy_buffer: Destroy cyclic buffer"""
+        return try_get("rx_destroy_buffer", self.token)
 
     #endregion
     

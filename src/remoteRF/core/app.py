@@ -477,7 +477,6 @@ def display_free_slots_next_days(num_days: int):
         chosen_device = candidate
     return chosen_day, chosen_slot, chosen_device
 
-
 def interactive_reserve_next_days():
     """
     Interactive function that prompts the user for the number of days (starting today) to check for available reservations.
