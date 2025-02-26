@@ -15,6 +15,34 @@ def try_set(function_name, value, token):
         rpc_client(function_name=f"Pluto:{function_name}:SET", args={function_name: map_arg(value), 'a':map_arg(token)})
     except Exception as e:
         input(f"Error: {e}\nHit enter to continue...")
+        
+def try_call_0_arg(function_name, token):   # 0 argument call
+    try:
+        response = rpc_client(
+            function_name=f"Pluto:{function_name}:CALL0", 
+            args={
+                'a': map_arg(token)
+            }
+        )
+        return unmap_arg(response.results[function_name])
+    except Exception as e:
+        input(f"RPC_0_call Error: {e}\nHit enter to continue...")
+    return None
+        
+def try_call_1_arg(function_name, arg, token):  # 1 argument call
+    try:
+        response = rpc_client(
+            function_name=f"Pluto:{function_name}:CALL1", 
+            args={
+                'a': map_arg(token),
+                'arg1': map_arg(arg)
+            }
+        )
+        # The server should return something like {function_name: <something>}
+        return unmap_arg(response.results[function_name])
+    except Exception as e:
+        input(f"RPC_1_call Error: {e}\nHit enter to continue...")
+    return None
 
 class rx_def:
     pass
@@ -145,22 +173,18 @@ class Pluto: # client
         
     @property
     def tx_cyclic_buffer(self):
-        """tx_cyclic_buffer_size: Size of cyclic buffer"""
-        return try_get("tx_cyclic_buffer_size", self.token)
+        """tx_cyclic_buffer: Size of cyclic buffer"""
+        return try_get("tx_cyclic_buffer", self.token)
     
     @tx_cyclic_buffer.setter
     def tx_cyclic_buffer(self, value):
-        try_set("tx_cyclic_buffer_size", value, self.token)
+        try_set("tx_cyclic_buffer", value, self.token)
         
-    @property
     def tx_destroy_buffer(self):
-        """tx_destroy_buffer: Destroy cyclic buffer"""
-        return try_get("tx_destroy_buffer", self.token)
-    
-    @property
+        try_call_0_arg("tx_destroy_buffer", self.token)
+
     def rx_destroy_buffer(self):
-        """rx_destroy_buffer: Destroy cyclic buffer"""
-        return try_get("rx_destroy_buffer", self.token)
+        try_call_0_arg("rx_destroy_buffer", self.token)
 
     #endregion
     
@@ -180,6 +204,13 @@ class Pluto: # client
     #endregion
     
     #region tx_def
+    
+    def tx(self, value):
+        return try_call_1_arg("tx", value, self.token)
+    
+    # @tx.setter
+    # def tx(self, value):
+    #     try_set("tx", value, self.token)
     
     #endregion
     
