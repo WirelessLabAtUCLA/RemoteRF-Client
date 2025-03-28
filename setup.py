@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="remoteRF",
-    version="0.0.7.20",
+    version="0.0.7.25",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
     description="A python API to remotely access signal centric hardware. Client-side only!",
@@ -17,7 +17,7 @@ setup(
     license_file='MIT',
     include_package_data=True,  # Includes files specified in MANIFEST.in
     install_requires=[
-        "grpcio", "protobuf", "numpy", "prompt_toolkit", "python-dotenv"
+        "grpcio==1.71.0", "protobuf", "numpy", "prompt_toolkit", "python-dotenv"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
