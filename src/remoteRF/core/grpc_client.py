@@ -56,6 +56,9 @@ def rpc_client(*, function_name, args):
     if 'UE' in response.results:
         print(f"UserError: {unmap_arg(response.results['UE'])}")
         input("Hit enter to continue...")
+        
+    if 'Message' in response.results:
+        print(f"{unmap_arg(response.results['Message'])}")
             
     
     return response

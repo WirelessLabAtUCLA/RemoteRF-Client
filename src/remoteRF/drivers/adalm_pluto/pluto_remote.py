@@ -58,15 +58,14 @@ class ad9364(rx_tx_def):
 
 class Pluto: # client
     
-    def __init__(self, token='', debug=False):
+    def __init__(self, token:str, debug=False):
         self.token = token
-        # self.try_set(function_name="ip", value=grpc_pb2.Argument(string_value=ip))
+        response = try_call_0_arg(function_name="ip", token=token)
         
-        if debug:
-            print("Pluto Remote Client Initialized.")
         
     def api_token(self, token:str) -> None:
         self.token = token
+        try_call_0_arg(function_name="ip", token=token)
     
     # PlutoSDR
     
