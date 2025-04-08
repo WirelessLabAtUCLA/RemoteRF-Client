@@ -13,9 +13,9 @@ account = RemoteRFAccount()
 session = PromptSession()
 
 def welcome():
-    printf("Welcome to Remote RF Account System. (all times are in PST)", (Sty.BOLD, Sty.BLUE))
+    printf("Welcome to RemoteRF Reservation System. (all times are in Pacific Time)", (Sty.BOLD, Sty.BLUE))
     try:
-        inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "):", Sty.DEFAULT))
+        inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':
             print("Registering new account ...")
             account.username = input("Username: ")
@@ -26,7 +26,7 @@ def welcome():
                 if password == password2:
                     double_check = False
                 else:
-                    print("Passwords do not match. Try again")
+                    print("Passwords do not match. Try again.")
                     
             account.password = password
             account.email = input("Email: ")  # TODO: Email verification.
@@ -49,22 +49,22 @@ def welcome():
         exit()
 
 def title():
-    printf(f"Remote RF Account System", Sty.BOLD)
+    printf(f"RemoteRF Reservation System", Sty.BOLD)
     # printf(f"Logged in as: ", Sty.DEFAULT, f'{account.username}', Sty.MAGENTA)
     printf(f"Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for avaliable commands.", Sty.DEFAULT)  
 
 def commands():
     printf("Commands:", Sty.BOLD)
-    printf("'clear' ", Sty.MAGENTA, "- Clear Terminal", Sty.DEFAULT)
-    printf("'getdev' ", Sty.MAGENTA, "- View Devices", Sty.DEFAULT)
-    printf("'help' or 'h'", Sty.MAGENTA, "- Show this help message", Sty.DEFAULT)
-    printf("'perms' ", Sty.MAGENTA, "- View Permissions", Sty.DEFAULT)
-    printf("'exit' or 'quit'", Sty.MAGENTA, "- Exit", Sty.DEFAULT)
-    printf("'getres' ", Sty.MAGENTA, "- View All Reservations", Sty.DEFAULT)
-    printf("'myres' ", Sty.MAGENTA, "- View My Reservations", Sty.DEFAULT)
-    printf("'cancelres' ", Sty.MAGENTA, "- Cancel a Reservation", Sty.DEFAULT)
-    printf("'resdev' ", Sty.MAGENTA, "- Reserve a Device", Sty.DEFAULT)
-    printf("'resdev -n' ", Sty.MAGENTA, "- Naive reserve device", Sty.DEFAULT)
+    printf("'clear' ", Sty.MAGENTA, "- clear terminal", Sty.DEFAULT)
+    printf("'getdev' ", Sty.MAGENTA, "- view devices", Sty.DEFAULT)
+    printf("'help' or 'h'", Sty.MAGENTA, "- show this help message", Sty.DEFAULT)
+    printf("'perms' ", Sty.MAGENTA, "- view permissions", Sty.DEFAULT)
+    printf("'exit' or 'quit'", Sty.MAGENTA, "- exit", Sty.DEFAULT)
+    printf("'getres' ", Sty.MAGENTA, "- view all reservations", Sty.DEFAULT)
+    printf("'myres' ", Sty.MAGENTA, "- view my reservations", Sty.DEFAULT)
+    printf("'cancelres' ", Sty.MAGENTA, "- cancel a reservation", Sty.DEFAULT)
+    printf("'resdev' ", Sty.MAGENTA, "- reserve a device", Sty.DEFAULT)
+    # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
     # check if user is admin
     # if account.get_perms().results['UC'] == 'Admin':
@@ -311,7 +311,7 @@ def interactive_reserve_next_days(block_minutes=60):
             print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}")
         
         # --- 2) Prompt user to pick a device by 0-based index ---
-        device_selection = input("Which device do you want? (enter the 0-based index) ")
+        device_selection = input("Which device do you want? (enter the 0-based index): ")
         try:
             device_selection = int(device_selection)
             if device_selection < 0 or device_selection >= len(sorted_device_ids):
