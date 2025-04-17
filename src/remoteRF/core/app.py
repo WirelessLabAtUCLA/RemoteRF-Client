@@ -358,7 +358,7 @@ def interactive_reserve_next_days(block_minutes=60):
                 slot_start = start_of_day + datetime.timedelta(minutes=current_offset)
                 slot_end   = slot_start + datetime.timedelta(minutes=block_size)
                 # Stop if slot_end bleeds into the next calendar day
-                if slot_end.date() != date:
+                if slot_end.date() != date and slot_end.time() != datetime.time.min:
                     break
                 slots.append((slot_start, slot_end))
                 current_offset += block_size
