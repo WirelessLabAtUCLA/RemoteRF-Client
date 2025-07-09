@@ -466,7 +466,7 @@ while True:
         # elif inpu == "resdev s":
         #     interactive_reserve_all()
         elif inpu == "resdev":
-            interactive_reserve_next_days(block_minutes=30) # 30 minutes FOR NOW (change if need be)
+            interactive_reserve_next_days(block_minutes=60) 
         elif inpu == 'cancelres':
             cancel_my_reservation()
         elif inpu == 'resdev -n':
