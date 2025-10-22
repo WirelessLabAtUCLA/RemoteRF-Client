@@ -6,10 +6,10 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="remoterf",
-    version="0.0.7.36",
+    version="0.0.7.39",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
-    description="A python API to remotely access signal centric hardware. Client-side only!",
+    description="A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts.",
     long_description=long_description,  # Set the README content here
     long_description_content_type="text/markdown",  # Specify that it's Markdown
     packages=find_packages(where="src"),  # Automatically finds subpackages like core, deviceA, deviceB

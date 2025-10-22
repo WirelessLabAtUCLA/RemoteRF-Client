@@ -13,7 +13,7 @@ account = RemoteRFAccount()
 session = PromptSession()
 
 def welcome():
-    printf("Welcome to RemoteRF Reservation System. (all times are in Pacific Time)", (Sty.BOLD, Sty.BLUE))
+    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \nAll times are in Pacific Time (Los Angeles)", (Sty.GRAY))
     try:
         inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':
@@ -49,21 +49,21 @@ def welcome():
         exit()
 
 def title():
-    printf(f"RemoteRF Reservation System", Sty.BOLD)
+    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \nAll times are in Pacific Time (Los Angeles)", (Sty.GRAY))
     # printf(f"Logged in as: ", Sty.DEFAULT, f'{account.username}', Sty.MAGENTA)
-    printf(f"Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for avaliable commands.", Sty.DEFAULT)  
+    printf(f"Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for a list of avaliable commands.", Sty.DEFAULT)  
 
 def commands():
     printf("Commands:", Sty.BOLD)
-    printf("'clear' ", Sty.MAGENTA, "- clear terminal", Sty.DEFAULT)
-    printf("'getdev' ", Sty.MAGENTA, "- view devices", Sty.DEFAULT)
-    printf("'help' or 'h'", Sty.MAGENTA, "- show this help message", Sty.DEFAULT)
-    printf("'perms' ", Sty.MAGENTA, "- view permissions", Sty.DEFAULT)
-    printf("'exit' or 'quit'", Sty.MAGENTA, "- exit", Sty.DEFAULT)
-    printf("'getres' ", Sty.MAGENTA, "- view all reservations", Sty.DEFAULT)
-    printf("'myres' ", Sty.MAGENTA, "- view my reservations", Sty.DEFAULT)
-    printf("'cancelres' ", Sty.MAGENTA, "- cancel a reservation", Sty.DEFAULT)
-    printf("'resdev' ", Sty.MAGENTA, "- reserve a device", Sty.DEFAULT)
+    printf("'clear' ", Sty.MAGENTA, "         : Clear terminal", Sty.DEFAULT)
+    printf("'getdev' ", Sty.MAGENTA, "        : View devices", Sty.DEFAULT)
+    printf("'help' or 'h' ", Sty.MAGENTA, "   : Show this help message", Sty.DEFAULT)
+    printf("'perms' ", Sty.MAGENTA, "         : View permissions", Sty.DEFAULT)
+    printf("'exit' or 'quit' ", Sty.MAGENTA, ": Exit", Sty.DEFAULT)
+    printf("'getres' ", Sty.MAGENTA, "        : View all reservations", Sty.DEFAULT)
+    printf("'myres' ", Sty.MAGENTA, "         : View my reservations", Sty.DEFAULT)
+    printf("'cancelres' ", Sty.MAGENTA, "     : Cancel a reservation", Sty.DEFAULT)
+    printf("'resdev' ", Sty.MAGENTA, "        : Reserve a device", Sty.DEFAULT)
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
     # check if user is admin
@@ -72,6 +72,33 @@ def commands():
 def clear():
     os.system('cls' if os.name == 'nt' else 'clear')
     title()
+    
+def print_my_version():
+    import sys
+    latest = newest_version_pip("remoterf")
+    try:
+        import importlib.metadata as md  # Py3.8+
+        top = __name__.split('.')[0]
+        # Try mapping package → distribution (Py3.10+); fall back to same name.
+        for dist in getattr(md, "packages_distributions", lambda: {})().get(top, []):
+            if (latest == md.version(dist)):
+                return f"{md.version(dist)} (LATEST)"
+            else:
+                return f"{md.version(dist)} (OUTDATED)"
+        return md.version(top)
+    except Exception:
+        # Last resort: __version__ attribute if you define it.
+        return getattr(sys.modules.get(__name__.split('.')[0]), "__version__", "unknown")
+
+def newest_version_pip(project="remoterf"):
+    import sys, subprocess, re
+    out = subprocess.check_output(
+        [sys.executable, "-m", "pip", "index", "versions", project],
+        text=True, stderr=subprocess.STDOUT
+    )
+    m = re.search(r"(?i)\blatest\s*:\s*([^\s,]+)", out)
+    return m.group(1) if m else None
+
     
 def reservations():
     data = account.get_reservations()
