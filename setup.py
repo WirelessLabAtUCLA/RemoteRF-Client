@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="remoterf",
-    version="0.0.7.40",
+    version="0.0.7.45",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
     description="A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts.",
@@ -28,7 +28,8 @@ setup(
     entry_points={
         'console_scripts': [
             'remoterf-login=remoteRF.core.acc_login:main',
-            'remoterf-v=remoteRF.core.version:main'
+            'remoterf-v=remoteRF.core.version:main',
+            'remoterf-config=remoteRF.config.config_cli:main',
         ],
     },
 )

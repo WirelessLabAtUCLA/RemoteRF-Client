@@ -1,15 +1,17 @@
 import socket
 import getpass
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
 import grpc
 from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
 
-# wlab credentials
-server_ip = '164.67.195.207'
-server_port = '61005'
+load_dotenv(Path.home() / ".config" / "remoterf" / ".env")
+addr = os.getenv("REMOTERF_ADDR")  # "host:port"
+ca_path = os.getenv("REMOTERF_CA_CERT")  # path to saved CA cert
 
 options = [
       ('grpc.max_send_message_length', 100 * 1024 * 1024),
@@ -17,12 +19,12 @@ options = [
 ]
 
 # Server.crt
-certs_path = Path(__file__).resolve().parent.parent/'core'/'certs'/'server.crt'
+certs_path = Path(ca_path).expanduser().resolve()
 with certs_path.open('rb') as f:
     trusted_certs = f.read()
     
 credentials = grpc.ssl_channel_credentials(root_certificates=trusted_certs)
-channel = grpc.secure_channel(f'{server_ip}:{server_port}', credentials, options=options)
+channel = grpc.secure_channel(addr, credentials, options=options)
 stub = grpc_pb2_grpc.GenericRPCStub(channel)
 
 tcp_calls = 0
