@@ -31,6 +31,7 @@ def welcome():
                     
             account.password = password
             account.email = input("Email: ")  # TODO: Email verification.
+            account.enrollment_code = input("Enrollment Code: ")
             # check if login was valid
             os.system('cls' if os.name == 'nt' else 'clear')
             
@@ -60,6 +61,7 @@ def commands():
     printf("'getdev' ", Sty.MAGENTA, "        : View devices", Sty.DEFAULT)
     printf("'help' or 'h' ", Sty.MAGENTA, "   : Show this help message", Sty.DEFAULT)
     printf("'perms' ", Sty.MAGENTA, "         : View permissions", Sty.DEFAULT)
+    printf("'enroll' ", Sty.MAGENTA, "        : Enroll with an enrollment code", Sty.DEFAULT)
     printf("'exit' or 'quit' ", Sty.MAGENTA, ": Exit", Sty.DEFAULT)
     printf("'getres' ", Sty.MAGENTA, "        : View all reservations", Sty.DEFAULT)
     printf("'myres' ", Sty.MAGENTA, "         : View my reservations", Sty.DEFAULT)
@@ -280,6 +282,18 @@ def perms():
         printf(f'No restrictions on reservation count or duration.', Sty.DEFAULT)
     else:
         printf(f"Error: Unknown permission level {results[0]}", Sty.BRIGHT_RED)
+        
+def enroll():
+    code = session.prompt(stylize("Enter your enrollment code: ", Sty.DEFAULT))
+    account.enrollment_code = code
+    data = account.set_enroll()
+    
+    if 'ace' in data.results:
+        print(f"Error: {unmap_arg(data.results['ace'])}")
+        return
+    else:
+        # todo: print out specifics, like group name (ie: successfully enrolled in ECE 132A)
+        printf("Enrollment successful.", Sty.BOLD_GREEN)
 
 # New block scheduling
 
@@ -497,6 +511,8 @@ while True:
             commands()
         elif inpu == "perms":
             perms()
+        elif inpu == "enroll":
+            enroll()
         elif inpu == "quit" or inpu == "exit":
             break
         elif inpu == "getres":
@@ -509,6 +525,7 @@ while True:
             interactive_reserve_next_days(block_minutes=30) 
         elif inpu == 'cancelres':
             cancel_my_reservation()
+            
         elif inpu == 'resdev -n':
             # check if user is admin
             # if account.get_perms().results['UC'] == 'Admin':

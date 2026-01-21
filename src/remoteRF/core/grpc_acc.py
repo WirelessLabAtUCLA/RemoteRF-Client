@@ -9,9 +9,10 @@ class RemoteRFAccount:
         self.username = username
         self.password = password
         self.email = email
+        self.enrollment_code = ""
     
     def create_user(self):
-        response = rpc_client(function_name="ACC:create_user", args={"un":map_arg(self.username), "pw":map_arg(self.password), "em":map_arg(self.email)})
+        response = rpc_client(function_name="ACC:create_user", args={"un":map_arg(self.username), "pw":map_arg(self.password), "em":map_arg(self.email), "ec":map_arg(self.enrollment_code)})
         if 'UC' in response.results:
             print(f'User {unmap_arg(response.results["UC"])} successfully created.')
             return True
@@ -51,5 +52,8 @@ class RemoteRFAccount:
     
     def get_perms(self):
         return rpc_client(function_name='ACC:get_perms', args={"un":map_arg(self.username), "pw":map_arg(self.password)})
+    
+    def set_enroll(self):
+        return rpc_client(function_name='ACC:set_enroll', args={"un":map_arg(self.username), "pw":map_arg(self.password), "ec":map_arg(self.enrollment_code)})
     
     
