@@ -1,3 +1,4 @@
+import ast
 from .grpc_client import rpc_client
 from ..common.utils import *
 
@@ -25,8 +26,7 @@ class RemoteRFAccount:
         if 'UC' in response.results:
             print(f'User {unmap_arg(response.results["UC"])} successful login.')
             
-            # Fetch and store whether or not is admin
-            self.is_admin = (self.get_perms().results['UC'] == 'Admin')
+            self.is_admin = (ast.literal_eval(unmap_arg(self.get_perms().results['UC']))[0][0] == 'Admin')
             return True
         elif 'UE' in response.results:
             print(f'Error: {unmap_arg(response.results["UE"])}')
