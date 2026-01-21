@@ -17,7 +17,7 @@ setup(
     license_file='MIT',
     include_package_data=True,  # Includes files specified in MANIFEST.in
     install_requires=[
-        "grpcio==1.71.0", "protobuf>=5.0.0,<6.0.0", "numpy", "prompt_toolkit", "python-dotenv"
+        "grpcio==1.71.0", "protobuf>=5.0.0,<6.0.0", "numpy", "prompt_toolkit", "python-dotenv", "prompt-toolkit"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

@@ -1,3 +1,4 @@
+from remoteRF.core.grpc_client import handle_admin_command
 from . import *
 from ..common.utils import *
 
@@ -66,8 +67,20 @@ def commands():
     printf("'resdev' ", Sty.MAGENTA, "        : Reserve a device", Sty.DEFAULT)
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
-    # check if user is admin
-    # if account.get_perms().results['UC'] == 'Admin':
+    
+    if account.is_admin:
+        print()
+        printf("Admin Commands:", Sty.BOLD)
+        printf("'admin printa' ", Sty.MAGENTA, " : Print all accounts", Sty.DEFAULT)
+        printf("'admin printr' ", Sty.MAGENTA, " : Print all reservations", Sty.DEFAULT)
+        printf("'admin printp' ", Sty.MAGENTA, " : Print all perms", Sty.DEFAULT)
+        printf("'admin printd' ", Sty.MAGENTA, " : Print all devices", Sty.DEFAULT)
+        printf("'admin rm a <username>' ", Sty.MAGENTA, " : Remove one account", Sty.DEFAULT)
+        printf("'admin rm aa' ", Sty.MAGENTA, " : Remove all accounts", Sty.DEFAULT)
+        printf("'admin rm ar' ", Sty.MAGENTA, " : Remove all reservations", Sty.DEFAULT)
+        # If you expose set_account remotely:
+        printf("'admin setacc <username> <U|P|A> [args...]' ", Sty.MAGENTA, " : Set perms", Sty.DEFAULT)
+    
     
 def clear():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -500,6 +513,8 @@ while True:
             # check if user is admin
             # if account.get_perms().results['UC'] == 'Admin':
             reserve()
+        elif account.is_admin and inpu.strip().startswith("admin"):
+            handle_admin_command(inpu)
         else:
             print(f"Unknown command: {inpu}")
     except KeyboardInterrupt:
