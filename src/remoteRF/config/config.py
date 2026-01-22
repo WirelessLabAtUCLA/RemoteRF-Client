@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import sys
+import shutil
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Sequence, Tuple
+import argparse
 
-from .cert_fetcher import fetch_and_save_ca_cert  # your earlier module
+from .cert_fetcher import fetch_and_save_ca_cert
+
+
 
 # -----------------------------
 # Local config locations
 # -----------------------------
 def _config_root() -> Path:
-    # Keep it simple and consistent with earlier suggestions.
     return Path(os.path.expanduser("~")) / ".config" / "remoterf"
 
 def _env_path() -> Path:
@@ -40,16 +42,10 @@ def _parse_hostport(s: str) -> Tuple[str, int]:
         raise ValueError("Port out of range")
     return host, port
 
-
 def _write_env_kv(path: Path, kv: dict[str, str]) -> None:
-    """
-    Writes/overwrites a simple dotenv-style file.
-    (We overwrite the whole file for simplicity and correctness.)
-    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
+    lines: list[str] = []
     for k, v in kv.items():
-        # Quote only if needed; keep simple and safe.
         if any(c.isspace() for c in v) or any(c in v for c in ['"', "'"]):
             v = v.replace('"', '\\"')
             lines.append(f'{k}="{v}"')
@@ -57,46 +53,40 @@ def _write_env_kv(path: Path, kv: dict[str, str]) -> None:
             lines.append(f"{k}={v}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-def main() -> None:
-    import argparse
-    import sys
-
-    parser = argparse.ArgumentParser(
-        prog="remoterf-config",
-        add_help=True,
-        formatter_class=argparse.RawTextHelpFormatter,
-        description=(
-            "Configure RemoteRF to talk to a server.\n"
-            "Fetches the server CA certificate and saves the gRPC target locally."
-        ),
+def _confirm_wipe(root: Path) -> bool:
+    prompt = (
+        f"This will permanently delete ALL RemoteRF config at:\n"
+        f"  {root}\n\n"
+        f"Type 'wipe' to confirm: "
     )
-
-    parser.add_argument(
-        "addr",
-        nargs="?",
-        help="Server address in host:port form. Example: 164.67.195.207:61005",
-    )
-
-    args = parser.parse_args()
-
-    if not args.addr:
-        print(
-            "\nError: missing required argument: host:port\n\n"
-            "Usage:\n"
-            "  remoterf-config <host:port>\n\n"
-            "Example:\n"
-            "  remoterf-config 164.67.195.207:61005\n"
-        )
-        sys.exit(2)
-
     try:
-        host, grpc_port = _parse_hostport(args.addr)
-    except Exception as e:
-        print(f"Error: invalid addr '{args.addr}': {e}", file=sys.stderr)
-        sys.exit(2)
+        return input(prompt).strip().lower() == "wipe"
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        return False
 
-    # Single-arg policy
-    cert_port = grpc_port + 1      # cert-provider convention
+def _wipe_config(root: Path) -> None:
+    if not root.exists():
+        print(f"No config found at: {root}")
+        return
+    if not root.is_dir():
+        raise RuntimeError(f"Config root exists but is not a directory: {root}")
+    shutil.rmtree(root)
+    print(f"Wiped RemoteRF config: {root}")
+
+def configure(host: str, port: int, cert_port: int) -> int:
+    # Basic validation
+    host = (host or "").strip()
+    if not host:
+        print("Error: host is empty", file=sys.stderr)
+        return 2
+    if port <= 0 or port > 65535:
+        print("Error: port out of range", file=sys.stderr)
+        return 2
+
+    grpc_port = int(port)
+    cert_port = int(cert_port)
+
     profile = "default"
     timeout_sec = 3.0
     overwrite = True
@@ -112,10 +102,9 @@ def main() -> None:
         timeout_sec=timeout_sec,
         overwrite=overwrite,
     )
-
     if not fetched_ok:
         print(f"Failed to fetch CA cert from {host}:{cert_port}.", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     env_file = _env_path()
     _write_env_kv(env_file, {
@@ -130,5 +119,17 @@ def main() -> None:
     print(f"  CA cert     : {ca_out}")
     print(f"  env file    : {env_file}")
 
-if __name__ == "__main__":
-    main()
+def wipe_config(*, yes: bool = False) -> int:
+    """
+    Optional helper if you want wipe behavior without argparse.
+    """
+    root = _config_root()
+    if not yes and not _confirm_wipe(root):
+        print("Wipe aborted.")
+        return 1
+    try:
+        _wipe_config(root)
+        return 0
+    except Exception as e:
+        print(f"Error wiping config: {e}", file=sys.stderr)
+        return 1

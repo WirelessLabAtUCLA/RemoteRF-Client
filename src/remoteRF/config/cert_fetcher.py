@@ -1,26 +1,4 @@
 # cert_fetcher.py
-"""
-RemoteRF Client-Side Cert Fetcher (bootstrap)
-
-Purpose:
-- Fetch the public CA certificate (ca.crt) from a server's bootstrap endpoint
-  (your cert_provider) and save it locally for later use in:
-      grpc.ssl_channel_credentials(root_certificates=ca_bytes)
-
-Security note (TOFU):
-- This fetch is typically done over plaintext HTTP (or raw TCP). The CA cert is public,
-  but authenticity is not guaranteed on first fetch. If you want TOFU done "right",
-  you should display the SHA256 fingerprint and require user confirmation elsewhere.
-  This module focuses only on: fetch + save + return success.
-
-Behavior:
-- Attempts HTTP GET first: http://{host}:{port}/ca.crt
-- If HTTP fails, falls back to raw TCP (reads until EOF).
-- Saves to a per-profile file under ~/.config/remoterf/certs/ by default.
-
-Exported API:
-- fetch_and_save_ca_cert(host, port, *, out_path=None, profile=None, timeout_sec=3.0) -> bool
-"""
 
 from __future__ import annotations
 
