@@ -266,7 +266,6 @@ def reserve():
 
 import ast
 import json
-
 def perms():
     data = account.get_perms()
     if 'ace' in data.results:
@@ -287,10 +286,22 @@ def perms():
 
         devices = details.get("devices", []) or []
         caps = details.get("caps", {}) or {}
+        groups = details.get("groups", []) or []
 
         def _cap_for(dev_id: int):
             return caps.get(str(dev_id)) or caps.get(dev_id) or {}
 
+        # ---- Groups (NEW) ----
+        if groups:
+            # keep stable ordering
+            groups = [str(g) for g in groups if str(g).strip() != ""]
+            print("User Groups:")
+            for g in groups:
+                print(f"  - {g}")
+        else:
+            print("User Groups: (none)")
+
+        # ---- Devices ----
         if not devices:
             printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
             return
@@ -315,15 +326,17 @@ def perms():
 
         # If everything shares the same limits, print once
         if len(buckets) == 1:
-            (max_r, max_t), devs = next(iter(buckets.items()))
+            (max_r, max_t), _devs = next(iter(buckets.items()))
             print("Limits (all devices):")
-            print(f"  Max Concurrent Reservations: {max_r} \n  Max Reservation Duration (min): {max_t // 60}")
+            print(f"  Max Concurrent Reservations: {max_r}")
+            print(f"  Max Reservation Duration (min): {max_t // 60}")
             return
 
         # Otherwise print grouped limits
         print("Limits per device (grouped):")
         for (max_r, max_t), devs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[1])):
             devs = sorted(devs)
+
             # compress ranges like 0-3,5,7-9
             ranges = []
             start = prev = None
@@ -338,8 +351,8 @@ def perms():
                     start = prev = x
             if start is not None:
                 ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
-            dev_str = ",".join(ranges)
 
+            dev_str = ",".join(ranges)
             print(f"  devices[{dev_str}]: max_reservations={max_r}, max_time_min={max_t // 60}")
 
     elif perm_level == "Power User":
