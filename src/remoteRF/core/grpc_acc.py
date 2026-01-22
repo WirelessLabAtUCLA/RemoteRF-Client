@@ -10,6 +10,7 @@ class RemoteRFAccount:
         self.password = password
         self.email = email
         self.enrollment_code = ""
+        self.is_admin = False
     
     def create_user(self):
         response = rpc_client(function_name="ACC:create_user", args={"un":map_arg(self.username), "pw":map_arg(self.password), "em":map_arg(self.email), "ec":map_arg(self.enrollment_code)})

@@ -264,24 +264,95 @@ def reserve():
     except Exception as e:
         printf(f"Error: {e}", Sty.BRIGHT_RED)
 
+import ast
+import json
+
 def perms():
     data = account.get_perms()
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
         return
-    
+
     results = ast.literal_eval(unmap_arg(data.results['UC']))[0]
-    printf(f'Permission Level: ', Sty.BOLD, f'{results[0]}', Sty.BLUE)
-    if results[0] == 'Normal User':
-        print(unmap_arg(data.results['details']))
-    elif results[0] == 'Power User':
-        printf(f'Max Reservations: ', Sty.DEFAULT, f'{results[3]}', Sty.MAGENTA)
-        printf(f'Max Reservation Duration (min): ', Sty.DEFAULT, f'{int(results[4]/60)}', Sty.MAGENTA)
-        printf(f'Device IDs allowed Access to: ', Sty.DEFAULT, f'{results[5]}', Sty.MAGENTA)
-    elif results[0] == 'Admin':
-        printf(f'No restrictions on reservation count or duration.', Sty.DEFAULT)
+    perm_level = results[0]
+
+    printf("Permission Level: ", Sty.BOLD, f"{perm_level}", Sty.BLUE)
+
+    if perm_level == "Normal User":
+        details_raw = unmap_arg(data.results.get("details", map_arg("{}")))
+        try:
+            details = json.loads(details_raw) if details_raw else {}
+        except Exception:
+            details = {}
+
+        devices = details.get("devices", []) or []
+        caps = details.get("caps", {}) or {}
+
+        def _cap_for(dev_id: int):
+            return caps.get(str(dev_id)) or caps.get(dev_id) or {}
+
+        if not devices:
+            printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
+            return
+
+        printf("Devices allowed: ", Sty.DEFAULT, f"{devices}", Sty.MAGENTA)
+
+        # Build per-device caps and group identical limits together
+        buckets: dict[tuple[int, int], list[int]] = {}  # (max_r, max_t_sec) -> [dev_ids]
+        for d in devices:
+            try:
+                did = int(d)
+            except Exception:
+                continue
+            c = _cap_for(did)
+            max_t = int(c.get("max_reservation_time_sec", 0) or 0)
+            max_r = int(c.get("max_reservations", 0) or 0)
+            buckets.setdefault((max_r, max_t), []).append(did)
+
+        if not buckets:
+            print("Limits per device: (none)")
+            return
+
+        # If everything shares the same limits, print once
+        if len(buckets) == 1:
+            (max_r, max_t), devs = next(iter(buckets.items()))
+            print("Limits (all devices):")
+            print(f"  Max Concurrent Reservations: {max_r} \n  Max Reservation Duration (min): {max_t // 60}")
+            return
+
+        # Otherwise print grouped limits
+        print("Limits per device (grouped):")
+        for (max_r, max_t), devs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[1])):
+            devs = sorted(devs)
+            # compress ranges like 0-3,5,7-9
+            ranges = []
+            start = prev = None
+            for x in devs:
+                if start is None:
+                    start = prev = x
+                    continue
+                if x == prev + 1:
+                    prev = x
+                else:
+                    ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
+                    start = prev = x
+            if start is not None:
+                ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
+            dev_str = ",".join(ranges)
+
+            print(f"  devices[{dev_str}]: max_reservations={max_r}, max_time_min={max_t // 60}")
+
+    elif perm_level == "Power User":
+        printf("Max Reservations: ", Sty.DEFAULT, f"{results[3]}", Sty.MAGENTA)
+        printf("Max Reservation Duration (min): ", Sty.DEFAULT, f"{int(results[4]/60)}", Sty.MAGENTA)
+        printf("Device IDs allowed Access to: ", Sty.DEFAULT, f"{results[5]}", Sty.MAGENTA)
+
+    elif perm_level == "Admin":
+        printf("No restrictions on reservation count or duration.", Sty.DEFAULT)
+
     else:
-        printf(f"Error: Unknown permission level {results[0]}", Sty.BRIGHT_RED)
+        printf(f"Error: Unknown permission level {perm_level}", Sty.BRIGHT_RED)
+
         
 def enroll():
     code = session.prompt(stylize("Enter your enrollment code: ", Sty.DEFAULT))
@@ -293,7 +364,7 @@ def enroll():
         return
     else:
         # todo: print out specifics, like group name (ie: successfully enrolled in ECE 132A)
-        printf("Enrollment successful.", Sty.BOLD_GREEN)
+        printf("Enrollment successful.", Sty.BG_GREEN)
 
 # New block scheduling
 
