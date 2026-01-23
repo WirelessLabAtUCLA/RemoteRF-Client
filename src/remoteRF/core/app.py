@@ -70,18 +70,18 @@ def commands():
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
     
-    if account.is_admin:
-        print()
-        printf("Admin Commands:", Sty.BOLD)
-        printf("'admin printa' ", Sty.MAGENTA, " : Print all accounts", Sty.DEFAULT)
-        printf("'admin printr' ", Sty.MAGENTA, " : Print all reservations", Sty.DEFAULT)
-        printf("'admin printp' ", Sty.MAGENTA, " : Print all perms", Sty.DEFAULT)
-        printf("'admin printd' ", Sty.MAGENTA, " : Print all devices", Sty.DEFAULT)
-        printf("'admin rm a <username>' ", Sty.MAGENTA, " : Remove one account", Sty.DEFAULT)
-        printf("'admin rm aa' ", Sty.MAGENTA, " : Remove all accounts", Sty.DEFAULT)
-        printf("'admin rm ar' ", Sty.MAGENTA, " : Remove all reservations", Sty.DEFAULT)
-        # If you expose set_account remotely:
-        printf("'admin setacc <username> <U|P|A> [args...]' ", Sty.MAGENTA, " : Set perms", Sty.DEFAULT)
+    # if account.is_admin:
+    #     print()
+    #     printf("Admin Commands:", Sty.BOLD)
+    #     printf("'admin printa' ", Sty.MAGENTA, " : Print all accounts", Sty.DEFAULT)
+    #     printf("'admin printr' ", Sty.MAGENTA, " : Print all reservations", Sty.DEFAULT)
+    #     printf("'admin printp' ", Sty.MAGENTA, " : Print all perms", Sty.DEFAULT)
+    #     printf("'admin printd' ", Sty.MAGENTA, " : Print all devices", Sty.DEFAULT)
+    #     printf("'admin rm a <username>' ", Sty.MAGENTA, " : Remove one account", Sty.DEFAULT)
+    #     printf("'admin rm aa' ", Sty.MAGENTA, " : Remove all accounts", Sty.DEFAULT)
+    #     printf("'admin rm ar' ", Sty.MAGENTA, " : Remove all reservations", Sty.DEFAULT)
+    #     # If you expose set_account remotely:
+    #     printf("'admin setacc <username> <U|P|A> [args...]' ", Sty.MAGENTA, " : Set perms", Sty.DEFAULT)
     
     
 def clear():
