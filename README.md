@@ -24,7 +24,7 @@ Use the package manager [pip](https://pip.pypa.io/en/stable/) to install remoteR
 python3 -m venv venv        # Create virtual environment
 source venv/bin/activate    # Activate virtual environment
 
-pip install remoteRF        # Install remoteRF
+pip install remoterf        # Install remoteRF
 ```
 
 If `pip install` doesn't work, you can clone the [source](https://github.com/WirelessLabAtUCLA/RemoteRF-Client) directly from github.
@@ -39,7 +39,7 @@ cd repository-name
 pip install -e .
 ```
 This command installs the package in "editable" mode, allowing for modifications to the local code without reinstalling. For more details on installing packages from local directories, refer to Python Packaging: [Installing from Local Archives](https://packaging.python.org/en/latest/tutorials/installing-packages/#installing-packages-from-local-archives). -->
-
+<!-- 
 ## Reservation
 
 Usage of the platform requires you to register a account and reserve a device in order to run scripts remotely. 
@@ -59,7 +59,6 @@ remoterf-login
 
 - Input `r` to register a account, or `l` to login to a existing one.
 
-<!-- 2. **You will be prompted with this**: -->
 ```bash
 Welcome to Remote RF Account System.
 Please login or register to continue. (l/r):
@@ -130,4 +129,4 @@ Nothing else needs changing!
 
 This is fundamentally a experimental platform, and there will be many unknown bugs and issues. Some devices do not have universal support for all its functions at the moment, I am working on that aspect. 
 
-**So please submit feedback!**
+**So please submit feedback!** -->
