@@ -11,8 +11,6 @@ import argparse
 
 from .cert_fetcher import fetch_and_save_ca_cert
 
-
-
 # -----------------------------
 # Local config locations
 # -----------------------------

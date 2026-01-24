@@ -116,7 +116,7 @@ def main() -> int:
         return 0
 
     if argv[0] in ("--version", "-version", "-v"):
-        from remoteRF.core.version import main as version_main
+        from remoteRF.version import main as version_main
         
         print("RemoteRF version:", end=" ")
         version_main()
