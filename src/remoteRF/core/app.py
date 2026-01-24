@@ -401,10 +401,6 @@ def fetch_all_reservations():
     return entries
 
 def fetch_reservations_for_range(start_day: datetime.date, end_day: datetime.date):
-    """
-    Fetch all reservations (via fetch_all_reservations) and filter those whose start_time date falls between start_day and end_day (inclusive).
-    Returns a dictionary keyed by (device_id, day) (device_id as string, day as datetime.date) with a list of reservation tuples.
-    """
     all_res = fetch_all_reservations()  # This calls the network only once.
     res_dict = {}
     for res in all_res:
@@ -415,7 +411,6 @@ def fetch_reservations_for_range(start_day: datetime.date, end_day: datetime.dat
     return res_dict
 
 def is_slot_conflicting(slot: tuple, reservations: list):
-    """Return True if the slot overlaps with any reservation in the provided list."""
     slot_start, slot_end = slot
     for res_start, res_end in reservations:
         if slot_start < res_end and slot_end > res_start:
@@ -423,16 +418,6 @@ def is_slot_conflicting(slot: tuple, reservations: list):
     return False
 
 def interactive_reserve_next_days(block_minutes=60):
-    """
-    Interactive function that:
-      1) Displays a menu of all devices (0-based indexing).
-      2) Prompts the user for which device they want.
-      3) Prompts how many days (starting today) to check for available reservations.
-      4) Prompts for an optional block duration in minutes (default = 60).
-      5) Displays the free time slots (in 'block_minutes' increments) for that device,
-         over the indicated number of days, also 0-based indexed.
-      6) Reserves the chosen slot on that device, after confirmation.
-    """
     try:
         # --- 1) Fetch and display all devices ---
         data = account.get_devices()
@@ -580,6 +565,261 @@ def interactive_reserve_next_days(block_minutes=60):
         
     except Exception as e:
         print(f"Error: {e}")
+        
+def interactive_reserve_next_days_auto():
+    try:
+        import ast, json, datetime
+
+        # ---------------------------
+        # 1) Fetch perms + per-device caps
+        # ---------------------------
+        perms_resp = account.get_perms()
+        if "ace" in perms_resp.results:
+            print(f"Error: {unmap_arg(perms_resp.results['ace'])}")
+            return
+
+        uc_raw = unmap_arg(perms_resp.results.get("UC", map_arg("[]")))
+        try:
+            perm_row = ast.literal_eval(uc_raw)[0]  # your server returns a list-of-rows
+        except Exception:
+            perm_row = []
+
+        perm_level = perm_row[0] if perm_row else ""
+
+        details = {}
+        if perm_level == "Normal User":
+            details_raw = unmap_arg(perms_resp.results.get("details", map_arg("{}")))
+            try:
+                details = json.loads(details_raw) if details_raw else {}
+            except Exception:
+                details = {}
+
+        caps = details.get("caps", {}) or {}
+
+        def _cap_for(dev_id: int) -> dict:
+            # tolerate server sending str keys, or int keys
+            return caps.get(str(dev_id)) or caps.get(dev_id) or {}
+
+        # Allowed devices filter from perms:
+        allowed_dev_ids: set[int] | None = None
+
+        if perm_level == "Normal User":
+            # server already computes allowed devices list for Normal User
+            devs = details.get("devices", []) or []
+            try:
+                allowed_dev_ids = {int(d) for d in devs}
+            except Exception:
+                allowed_dev_ids = set()
+
+        elif perm_level == "Power User":
+            # results[5] is the allowed device list (string encoded) in your system
+            try:
+                allowed_dev_ids = {int(x) for x in str_to_list(perm_row[5])}
+            except Exception:
+                allowed_dev_ids = None
+
+        elif perm_level == "Admin":
+            allowed_dev_ids = None  # no filter
+
+        # For Power User, one max duration applies to all allowed devices
+        power_user_max_t_sec = None
+        if perm_level == "Power User":
+            try:
+                power_user_max_t_sec = int(perm_row[4])
+            except Exception:
+                power_user_max_t_sec = None
+
+        def _auto_block_minutes(max_t_sec: int) -> int:
+            try:
+                max_t_sec = int(max_t_sec)
+            except Exception:
+                return 30
+
+            if max_t_sec <= 0:
+                return 30
+
+            max_min = max_t_sec // 60
+            if max_min < 10:
+                # Can't make a valid reservation at all (server min = 10 minutes).
+                return max_min
+
+            # Pick the largest "nice" block <= max_min
+            candidates = [10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720]
+            best = 10
+            for c in candidates:
+                if c <= max_min:
+                    best = c
+                else:
+                    break
+            return best
+
+        dev_resp = account.get_devices()
+        if "ace" in dev_resp.results:
+            print(f"Error: {unmap_arg(dev_resp.results['ace'])}")
+            return
+
+        sorted_device_ids = sorted(dev_resp.results.keys(), key=int)  # strings
+
+        if allowed_dev_ids is not None:
+            sorted_device_ids = [d for d in sorted_device_ids if int(d) in allowed_dev_ids]
+
+        if not sorted_device_ids:
+            print("No devices available for your permission level.")
+            return
+
+        print("Devices:")
+        block_by_dev: dict[str, int] = {}
+        max_by_dev: dict[str, int] = {}
+
+        for idx, dev_id in enumerate(sorted_device_ids):
+            dev_name = unmap_arg(dev_resp.results[dev_id])
+
+            max_t_sec = 0
+            if perm_level == "Normal User":
+                c = _cap_for(int(dev_id))
+                try:
+                    max_t_sec = int(c.get("max_reservation_time_sec", 0) or 0)
+                except Exception:
+                    max_t_sec = 0
+            elif perm_level == "Power User" and power_user_max_t_sec is not None:
+                max_t_sec = int(power_user_max_t_sec)
+            elif perm_level == "Admin":
+                # Admin has no cap; keep UX sane
+                max_t_sec = 60 * 60  # 60 min max display; only affects block sizing display
+
+            block_min = _auto_block_minutes(max_t_sec)
+            block_by_dev[str(dev_id)] = int(block_min)
+            max_by_dev[str(dev_id)] = int(max_t_sec)
+
+            # if max_t_sec > 0:
+            #     print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}   (max={max_t_sec//60} min, blocks={block_min} min)")
+            # else:
+            #     print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}   (blocks={block_min} min)")
+                
+            print(f"{idx}. Device ID: {dev_id}  Duration: {block_min} min.  Name: {dev_name}")
+
+        sel = input("Which device do you want? (enter the 0-based index): ").strip()
+        try:
+            sel_i = int(sel)
+            if sel_i < 0 or sel_i >= len(sorted_device_ids):
+                print("Invalid selection.")
+                return
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+            return
+
+        chosen_device_id = str(sorted_device_ids[sel_i])
+        block_minutes = int(block_by_dev.get(chosen_device_id, 30))
+
+        if block_minutes < 10:
+            print(
+                f"Your max reservation duration for device {chosen_device_id} is < 10 minutes "
+                f"(max_sec={max_by_dev.get(chosen_device_id, 0)}). Cannot create valid reservations."
+            )
+            return
+
+        num_days_s = input("Enter the number of days to check for available reservations (starting today): ").strip()
+        try:
+            num_days = int(num_days_s)
+            if num_days <= 0:
+                print("Invalid number of days.")
+                return
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+            return
+
+        # ---------------------------
+        # 4) Compute availability (same logic you already have)
+        # ---------------------------
+        today = datetime.date.today()
+        end_day = today + datetime.timedelta(days=num_days - 1)
+
+        reservations_range = fetch_reservations_for_range(today, end_day)
+        available_slots = []
+        now = datetime.datetime.now()
+
+        def build_time_slots(date: datetime.date, block_size: int):
+            slots = []
+            start_of_day = datetime.datetime.combine(date, datetime.time(0, 0))
+            minutes_in_day = 24 * 60
+            current_offset = 0
+            while current_offset < minutes_in_day:
+                slot_start = start_of_day + datetime.timedelta(minutes=current_offset)
+                slot_end = slot_start + datetime.timedelta(minutes=block_size)
+                if slot_end.date() != date and slot_end.time() != datetime.time.min:
+                    break
+                slots.append((slot_start, slot_end))
+                current_offset += block_size
+            return slots
+
+        for i in range(num_days):
+            day = today + datetime.timedelta(days=i)
+            all_slots = build_time_slots(day, block_minutes)
+
+            key = (str(chosen_device_id), day)
+            day_reservations = reservations_range.get(key, [])
+
+            for slot in all_slots:
+                slot_start, slot_end = slot
+                if day == today and slot_end <= now:
+                    continue
+                if not is_slot_conflicting(slot, day_reservations):
+                    available_slots.append((day, slot))
+
+        if not available_slots:
+            print(f"No available {block_minutes}-minute slots for device {chosen_device_id} in the next {num_days} days.")
+            return
+
+        available_slots.sort(key=lambda x: (x[0], x[1][0]))
+
+        print(f"\nAvailable time slots for device {chosen_device_id} ({block_minutes} min blocks) over the next {num_days} days:")
+        last_day = None
+        for idx, (day, slot) in enumerate(available_slots):
+            slot_start_str = slot[0].strftime("%I:%M %p")
+            slot_end_str = slot[1].strftime("%I:%M %p")
+            if day != last_day:
+                print("\n" + f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')})")
+                last_day = day
+            print(f"  {idx}. {slot_start_str} - {slot_end_str}")
+
+        pick_s = input("Select a slot by index: ").strip()
+        try:
+            pick = int(pick_s)
+            if pick < 0 or pick >= len(available_slots):
+                print("Invalid selection.")
+                return
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+            return
+
+        chosen_day, chosen_slot = available_slots[pick]
+        slot_start_str = chosen_slot[0].strftime("%I:%M %p")
+        slot_end_str = chosen_slot[1].strftime("%I:%M %p")
+
+        confirmation = input(
+            f"You have selected a reservation on {chosen_day.strftime('%Y-%m-%d')} "
+            f"from {slot_start_str} to {slot_end_str} on device {chosen_device_id}. "
+            f"Confirm reservation? (y/n): "
+        ).strip().lower()
+
+        if confirmation != "y":
+            print("Reservation cancelled.")
+            return
+
+        # ---------------------------
+        # 5) Reserve
+        # ---------------------------
+        token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
+        if token:
+            print(
+                f"Reservation successful on device {chosen_device_id} for "
+                f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}."
+            )
+            print(f"Thy Token -> {token}")
+            print("Please keep this token safe, as it is not saved on server side and cannot be retrieved again.")
+
+    except Exception as e:
+        print(f"Error: {e}")
 
 welcome()
 clear()
@@ -606,7 +846,8 @@ while True:
         # elif inpu == "resdev s":
         #     interactive_reserve_all()
         elif inpu == "resdev":
-            interactive_reserve_next_days(block_minutes=30) 
+            # interactive_reserve_next_days(block_minutes=30) 
+            interactive_reserve_next_days_auto()
         elif inpu == 'cancelres':
             cancel_my_reservation()
             
