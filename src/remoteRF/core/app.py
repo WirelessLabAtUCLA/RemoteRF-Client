@@ -19,6 +19,7 @@ def welcome():
         inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':
             print("Registering new account ...")
+            account.enrollment_code = input("Enrollment Code: ")
             account.username = input("Username: ")
             double_check = True
             while double_check:
@@ -31,7 +32,6 @@ def welcome():
                     
             account.password = password
             account.email = input("Email: ")  # TODO: Email verification.
-            account.enrollment_code = input("Enrollment Code: ")
             # check if login was valid
             os.system('cls' if os.name == 'nt' else 'clear')
             
@@ -610,10 +610,10 @@ while True:
         elif inpu == 'cancelres':
             cancel_my_reservation()
             
-        elif inpu == 'resdev -n':
-            # check if user is admin
-            # if account.get_perms().results['UC'] == 'Admin':
-            reserve()
+        # elif inpu == 'resdev -n':
+        #     # check if user is admin
+        #     # if account.get_perms().results['UC'] == 'Admin':
+        #     reserve()
         elif account.is_admin and inpu.strip().startswith("admin"):
             handle_admin_command(inpu)
         else:

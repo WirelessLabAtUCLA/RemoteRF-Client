@@ -27,8 +27,6 @@ class RemoteRFAccount:
         response = rpc_client(function_name="ACC:login", args={"un":map_arg(username), "pw":map_arg(password)})
         if 'UC' in response.results:
             print(f'User {unmap_arg(response.results["UC"])} successful login.')
-            
-            self.is_admin = (ast.literal_eval(unmap_arg(self.get_perms().results['UC']))[0][0] == 'Admin')
             return True
         elif 'UE' in response.results:
             print(f'Error: {unmap_arg(response.results["UE"])}')
