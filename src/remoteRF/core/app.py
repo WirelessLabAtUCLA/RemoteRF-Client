@@ -610,10 +610,10 @@ while True:
         elif inpu == 'cancelres':
             cancel_my_reservation()
             
-        # elif inpu == 'resdev -n':
-        #     # check if user is admin
-        #     # if account.get_perms().results['UC'] == 'Admin':
-        #     reserve()
+        elif inpu == 'resdev -n':
+            # check if user is admin
+            # if account.get_perms().results['UC'] == 'Admin':
+            reserve()
         elif account.is_admin and inpu.strip().startswith("admin"):
             handle_admin_command(inpu)
         else:
