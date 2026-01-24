@@ -144,7 +144,7 @@ def reservations():
 
     # Format the sorted entries into strings
     for entry in sorted_entries:
-        printf(f'Device ID: ', Sty.RED, f'{entry["device_id"]}', Sty.MAGENTA, f', Start Time: ', Sty.RED, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f', End Time: ', Sty.RED, f'{entry["end_time"]}', Sty.BLUE)
+        printf(f'Device ID: ', Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, f', Start Time: ', Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f', End Time: ', Sty.GRAY, f'{entry["end_time"]}', Sty.BLUE)
         
 def my_reservations():
     data = account.get_reservations()
@@ -175,7 +175,7 @@ def my_reservations():
     
     for entry in sorted_entries:
         if account.username == entry['username']:
-            printf(f'Device ID: ', Sty.RED, f'{entry["device_id"]}', Sty.MAGENTA, f', Start Time: ', Sty.RED, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f', End Time: ', Sty.RED, f'{entry["end_time"]}', Sty.BLUE)
+            printf(f'Device ID: ', Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, f', Start Time: ', Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f', End Time: ', Sty.GRAY, f'{entry["end_time"]}', Sty.BLUE)
 
 def cancel_my_reservation():
     ## print all of ur reservations and their ids
