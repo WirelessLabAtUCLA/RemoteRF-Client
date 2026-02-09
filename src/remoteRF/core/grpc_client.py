@@ -13,6 +13,8 @@ load_dotenv(Path.home() / ".config" / "remoterf" / ".env")
 addr = os.getenv("REMOTERF_ADDR")  # "host:port"
 ca_path = os.getenv("REMOTERF_CA_CERT")  # path to saved CA cert
 
+ca_path = ca_path.strip().strip('"').strip("'")
+
 options = [
       ('grpc.max_send_message_length', 100 * 1024 * 1024),
       ('grpc.max_receive_message_length', 100 * 1024 * 1024),
