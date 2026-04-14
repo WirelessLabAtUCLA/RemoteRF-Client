@@ -31,6 +31,8 @@ def map_arg(value):
         arg.string_value = value
     elif isinstance(value, bool):
         arg.bool_value = value
+    elif isinstance(value, (list, tuple)):
+        return map_arg(np.array(value))
     elif isinstance(value, np.ndarray):
         if np.iscomplexobj(value):
             complex_array = arg.complex_array

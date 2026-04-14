@@ -55,8 +55,7 @@ def rpc_client(*, function_name, args):
     response = stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
     
     if 'a' in response.results:
-        print(f"Error: {unmap_arg(response.results['a'])}")
-        exit()
+        raise RuntimeError(unmap_arg(response.results['a']))
         
     if 'UE' in response.results:
         print(f"UserError: {unmap_arg(response.results['UE'])}")

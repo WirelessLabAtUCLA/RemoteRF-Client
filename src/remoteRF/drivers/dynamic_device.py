@@ -81,43 +81,32 @@ _NO_ARG = object()
 
 
 def _try_get(prop, token):
-    try:
-        return unmap_arg(rpc_client(
-            function_name=f"{_PREFIX}:{prop}:GET",
-            args={'a': map_arg(token)},
-        ).results[prop])
-    except Exception as e:
-        input(f"Error: {e}\\nHit enter to continue...")
-    return None
+    return unmap_arg(rpc_client(
+        function_name=f"{_PREFIX}:{prop}:GET",
+        args={'a': map_arg(token)},
+    ).results[prop])
 
 
 def _try_set(prop, value, token):
-    try:
-        rpc_client(
-            function_name=f"{_PREFIX}:{prop}:SET",
-            args={prop: map_arg(value), 'a': map_arg(token)},
-        )
-    except Exception as e:
-        input(f"Error: {e}\\nHit enter to continue...")
+    rpc_client(
+        function_name=f"{_PREFIX}:{prop}:SET",
+        args={prop: map_arg(value), 'a': map_arg(token)},
+    )
 
 
 def _try_call(prop, token, arg=_NO_ARG):
-    try:
-        if arg is _NO_ARG:
-            resp = rpc_client(
-                function_name=f"{_PREFIX}:{prop}:CALL0",
-                args={'a': map_arg(token)},
-            )
-        else:
-            resp = rpc_client(
-                function_name=f"{_PREFIX}:{prop}:CALL1",
-                args={'a': map_arg(token), 'arg1': map_arg(arg)},
-            )
-        result = resp.results.get(prop)
-        return unmap_arg(result) if result is not None else None
-    except Exception as e:
-        input(f"Error: {e}\\nHit enter to continue...")
-    return None
+    if arg is _NO_ARG:
+        resp = rpc_client(
+            function_name=f"{_PREFIX}:{prop}:CALL0",
+            args={'a': map_arg(token)},
+        )
+    else:
+        resp = rpc_client(
+            function_name=f"{_PREFIX}:{prop}:CALL1",
+            args={'a': map_arg(token), 'arg1': map_arg(arg)},
+        )
+    result = resp.results.get(prop)
+    return unmap_arg(result) if result is not None else None
 '''
 
 
@@ -210,11 +199,13 @@ _DRIVERS_DIR = Path(__file__).parent
 
 def _write_driver_files(schema: dict) -> Path:
     device_type = schema.get("device_type", "unknown")
+    class_name = device_type[0].upper() + device_type[1:]  # "pluto" → "Pluto"
     pkg_dir = _DRIVERS_DIR / device_type
     pkg_dir.mkdir(exist_ok=True)
     (pkg_dir / f"{device_type}_remote.py").write_text(_codegen(schema), encoding="utf-8")
     (pkg_dir / "__init__.py").write_text(
-        f"from . import {device_type}_remote as adi\n",
+        f"from . import {device_type}_remote as adi\n"
+        f"from .{device_type}_remote import {class_name}\n",
         encoding="utf-8",
     )
     return pkg_dir

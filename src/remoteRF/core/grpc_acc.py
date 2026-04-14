@@ -1,7 +1,6 @@
 import ast
 from .grpc_client import rpc_client
 from ..common.utils import *
-from ..drivers.dynamic_device import install_driver
 
 import datetime
 
@@ -41,6 +40,7 @@ class RemoteRFAccount:
         elif 'Token' in response.results:
             token = unmap_arg(response.results["Token"])
             try:
+                from ..drivers.dynamic_device import install_driver
                 install_driver(device_id=device_id)
             except Exception as e:
                 print(f"Warning: could not install driver for device {device_id}: {e}")
