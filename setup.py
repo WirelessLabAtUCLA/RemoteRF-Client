@@ -5,8 +5,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="remoterf",
-    version="1.1.8",
+    name="remoterf-testing",
+    version="0.0.1",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
     description="A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts.",

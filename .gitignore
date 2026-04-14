@@ -67,3 +67,5 @@ docs/_build/
 
 #db
 *.db
+
+*.claude

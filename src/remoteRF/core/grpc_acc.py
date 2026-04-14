@@ -1,6 +1,7 @@
 import ast
 from .grpc_client import rpc_client
 from ..common.utils import *
+from ..drivers.dynamic_device import install_driver
 
 import datetime
 
@@ -34,11 +35,16 @@ class RemoteRFAccount:
     
     def reserve_device(self, device_id:int, start_time:datetime, end_time:datetime):
         response = rpc_client(function_name="ACC:reserve_device", args={"un":map_arg(self.username), "pw":map_arg(self.password), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
-        
+
         if 'ace' in response.results:
             raise Exception(f'{unmap_arg(response.results["ace"])}')
         elif 'Token' in response.results:
-            return unmap_arg(response.results["Token"])
+            token = unmap_arg(response.results["Token"])
+            try:
+                install_driver(device_id=device_id)
+            except Exception as e:
+                print(f"Warning: could not install driver for device {device_id}: {e}")
+            return token
             
     def get_reservations(self):
         return rpc_client(function_name='ACC:get_res', args={"un":map_arg(self.username), "pw":map_arg(self.password)})
