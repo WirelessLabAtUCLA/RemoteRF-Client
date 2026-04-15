@@ -861,7 +861,7 @@ clear()
 
 while True:
     try:
-        inpu = session.prompt(stylize(f'{account.username}@remote_rf: ', Sty.BLUE))
+        inpu = session.prompt(stylize(f'{account.username}@remoterf: ', Sty.BOLD))
         if inpu == "clear":
             clear()
         elif inpu == "getdev":
