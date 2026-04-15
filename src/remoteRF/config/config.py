@@ -11,6 +11,18 @@ import argparse
 
 from .cert_fetcher import fetch_and_save_ca_cert
 
+DEFAULT_TOS_NOTICE = (
+    "RemoteRF 2025\n"
+    "Terms of Service Acknowledgement\n"
+    "\n"
+    "By continuing, you confirm that you have reviewed and agree to the\n"
+    "RemoteRF Terms of Service and understand that use of the client and\n"
+    "service is at your own risk. RemoteRF is not liable for losses or\n"
+    "damages arising from use of the platform.\n"
+    "\n"
+    "Terms of Service: https://remoterf.net/docs/resources/\n"
+)
+
 # -----------------------------
 # Local config locations
 # -----------------------------
@@ -72,6 +84,35 @@ def _wipe_config(root: Path) -> None:
     shutil.rmtree(root)
     print(f"Wiped RemoteRF config: {root}")
 
+
+def _tos_notice_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "common" / "tos_notice.txt"
+
+
+def _read_tos_notice() -> str:
+    try:
+        text = _tos_notice_path().read_text(encoding="utf-8").strip()
+    except OSError:
+        return DEFAULT_TOS_NOTICE.strip()
+    return text or DEFAULT_TOS_NOTICE.strip()
+
+
+def _confirm_tos() -> bool:
+    print("=" * 60)
+    for line in _read_tos_notice().splitlines():
+        print(line)
+    print("=" * 60)
+    try:
+        reply = input("Continue with configuration? [y/N]: ").strip().lower()
+    except KeyboardInterrupt:
+        print("\nConfiguration cancelled.")
+        return False
+    except EOFError:
+        print("\nConfiguration cancelled.")
+        return False
+    print()
+    return reply in {"y", "yes"}
+
 def configure(host: str, port: int, cert_port: int) -> int:
     # Basic validation
     host = (host or "").strip()
@@ -88,6 +129,10 @@ def configure(host: str, port: int, cert_port: int) -> int:
     profile = "default"
     timeout_sec = 3.0
     overwrite = True
+
+    if not _confirm_tos():
+        print("Configuration cancelled. Accept the Terms of Service to continue.")
+        return 1
 
     certs_dir = _certs_dir()
     certs_dir.mkdir(parents=True, exist_ok=True)
@@ -111,11 +156,14 @@ def configure(host: str, port: int, cert_port: int) -> int:
         "REMOTERF_PROFILE": profile,
     })
 
-    print("RemoteRF configured successfully.")
-    print(f"  gRPC target : {host}:{grpc_port}")
-    print(f"  cert port   : {host}:{cert_port}")
-    print(f"  CA cert     : {ca_out}")
-    print(f"  env file    : {env_file}")
+    print("=" * 60)
+    print("Configuration Complete!")
+    print("- Details:")
+    print(f"  gRPC target: {host}:{grpc_port}")
+    print(f"  Cert port  : {host}:{cert_port}")
+    print(f"  CA cert    : {ca_out}")
+    print(f"  Env file   : {env_file}")
+    print("=" * 60)
 
 def wipe_config(*, yes: bool = False) -> int:
     """

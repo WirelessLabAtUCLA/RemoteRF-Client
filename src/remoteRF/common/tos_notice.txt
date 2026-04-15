@@ -1,0 +1,9 @@
+RemoteRF 2025
+Terms of Service Acknowledgement
+
+By continuing, you confirm that you have reviewed and agree to the
+RemoteRF Terms of Service and understand that use of the client and
+service is at your own risk. RemoteRF is not liable for losses or
+damages arising from use of the platform.
+
+Terms of Service: https://remoterf.net/docs/resources/

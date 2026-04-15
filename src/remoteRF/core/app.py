@@ -7,14 +7,48 @@ import os
 import datetime
 import time
 import ast
+from pathlib import Path
 
 from prompt_toolkit import PromptSession
 
 account = RemoteRFAccount()
 session = PromptSession()
 
+DEFAULT_TIMEZONE_NOTE = "All times are in Pacific Time (Los Angeles)"
+DEFAULT_TOS_URL = "https://remoterf.net/docs/resources/"
+
+
+def _banner_note() -> str:
+    note_path = Path(__file__).with_name("banner_note.txt")
+    try:
+        text = note_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return DEFAULT_TIMEZONE_NOTE
+    return text or DEFAULT_TIMEZONE_NOTE
+
+
+def _tos_notice_text() -> str:
+    notice_path = Path(__file__).resolve().parents[1] / "common" / "tos_notice.txt"
+    try:
+        text = notice_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return f"Terms of Service: {DEFAULT_TOS_URL}"
+    return text or f"Terms of Service: {DEFAULT_TOS_URL}"
+
+
+def _tos_url() -> str:
+    for line in reversed(_tos_notice_text().splitlines()):
+        if ":" not in line:
+            continue
+        label, value = line.split(":", 1)
+        if "terms of service" in label.lower():
+            url = value.strip()
+            if url:
+                return url
+    return DEFAULT_TOS_URL
+
 def welcome():
-    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \nAll times are in Pacific Time (Los Angeles)", (Sty.GRAY))
+    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \n{_banner_note()}", (Sty.GRAY))
     try:
         inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':
@@ -51,7 +85,8 @@ def welcome():
         exit()
 
 def title():
-    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \nAll times are in Pacific Time (Los Angeles)", (Sty.GRAY))
+    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \n{_banner_note()}", (Sty.GRAY))
+    printf("Terms of Service: ", Sty.BOLD, _tos_url(), Sty.DEFAULT)
     # printf(f"Logged in as: ", Sty.DEFAULT, f'{account.username}', Sty.MAGENTA)
     printf(f"Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for a list of avaliable commands.", Sty.DEFAULT)  
 

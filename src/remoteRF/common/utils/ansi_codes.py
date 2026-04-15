@@ -1,7 +1,8 @@
-from prompt_toolkit.styles import Style
-from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit import print_formatted_text
 from enum import Enum
+
+from prompt_toolkit import print_formatted_text
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.styles import Style
 
 class Sty(Enum):
     # Basic colors
@@ -39,21 +40,27 @@ class Sty(Enum):
     SELECTED = 'selected'
     DEFAULT = 'default'
 
-# Define the styles based on ANSI codes
+# Keep text styling portable by treating color classes as no-ops.
+# This preserves the existing call sites while avoiding OS-specific color output.
 style = Style.from_dict({
-    # Basic colors
-    'red': 'fg:#110000',
-    'green': 'fg:#003300',
-    'blue': 'fg:#0000ff',
-    'yellow': 'fg:#ffff00',
-    'magenta': 'fg:#ff00ff',
-    'cyan': 'fg:#00ffff',
-    'gray': 'fg:#808080',
-    
-    # Bright versions
-    'bright-red': 'fg:#ff5555',
-    'bright-green': 'fg:#00ff00',
-    'bright-blue': 'fg:#5555ff',
+    # Colors are intentionally blank for consistent black-and-white output.
+    'red': '',
+    'green': '',
+    'blue': '',
+    'yellow': '',
+    'magenta': '',
+    'cyan': '',
+    'gray': '',
+
+    # Background colors are also disabled.
+    'bg-red': '',
+    'bg-green': '',
+    'bg-blue': '',
+
+    # Bright variants become plain text.
+    'bright-red': '',
+    'bright-green': '',
+    'bright-blue': '',
     
     # Formatting
     'bold': 'bold',
@@ -61,13 +68,13 @@ style = Style.from_dict({
     'underline': 'underline',
     'reverse': 'reverse',
     
-    # Combinations
-    'error': 'bg:#ff0000 fg:#ffffff bold',
-    'warning': 'bg:#ffff00 fg:#000000 bold',
-    'info': 'bg:#0000ff fg:#ffffff italic underline',
+    # Combined styles keep emphasis without color.
+    'error': 'bold',
+    'warning': 'bold',
+    'info': 'italic underline',
     
     # Special
-    'selected': 'bg:#ffffff #000000 reverse',
+    'selected': 'reverse',
     'default':''
 })
 
