@@ -2,7 +2,6 @@ from enum import Enum
 
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.styles import Style
 
 class Sty(Enum):
     # Basic colors
@@ -40,43 +39,28 @@ class Sty(Enum):
     SELECTED = 'selected'
     DEFAULT = 'default'
 
-# Keep text styling portable by treating color classes as no-ops.
-# This preserves the existing call sites while avoiding OS-specific color output.
-style = Style.from_dict({
-    # Colors are intentionally blank for consistent black-and-white output.
-    'red': '',
-    'green': '',
-    'blue': '',
-    'yellow': '',
-    'magenta': '',
-    'cyan': '',
-    'gray': '',
-
-    # Background colors are also disabled.
-    'bg-red': '',
-    'bg-green': '',
-    'bg-blue': '',
-
-    # Bright variants become plain text.
-    'bright-red': '',
-    'bright-green': '',
-    'bright-blue': '',
-    
-    # Formatting
+_DIRECT_STYLES = {
     'bold': 'bold',
     'italic': 'italic',
     'underline': 'underline',
+    'blink': 'blink',
     'reverse': 'reverse',
-    
-    # Combined styles keep emphasis without color.
     'error': 'bold',
     'warning': 'bold',
     'info': 'italic underline',
-    
-    # Special
     'selected': 'reverse',
-    'default':''
-})
+    'default': '',
+}
+
+
+def _style_string(styles) -> str:
+    parts = []
+    for style_name in styles:
+        direct_style = _DIRECT_STYLES.get(style_name, '')
+        if not direct_style:
+            continue
+        parts.append(direct_style)
+    return ' '.join(parts)
 
 def printf(*args) -> str:
     if len(args) % 2 != 0:
@@ -94,14 +78,12 @@ def printf(*args) -> str:
             
         resolved_styles = (s.value if isinstance(s, Enum) else s for s in styles)
         
-        style_class = ' '.join(resolved_styles)
-        
-        formatted_text.append(('class:' + style_class, message))
+        formatted_text.append((_style_string(resolved_styles), message))
     
     # Create FormattedText object from pairs
     text = FormattedText(formatted_text)
     
-    print_formatted_text(text, style=style)
+    print_formatted_text(text)
     return text
 
 def stylize(*args):
@@ -121,7 +103,6 @@ def stylize(*args):
             
         resolved_styles = (s.value if isinstance(s, Enum) else s for s in styles)
         
-        style_class = ' '.join(resolved_styles)
-        styled_parts.append(('class:' + style_class, text))
+        styled_parts.append((_style_string(resolved_styles), text))
     
     return FormattedText(styled_parts)
