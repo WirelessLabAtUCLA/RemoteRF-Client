@@ -211,6 +211,10 @@ def _write_driver_files(schema: dict) -> Path:
     return pkg_dir
 
 
+def _print_driver_cached(pkg_dir: Path) -> None:
+    print("Device drivers updated successfully.")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -227,7 +231,7 @@ def install_driver(*, token: str = None, device_id: int = None, device_name: str
     """
     schema = fetch_idl(token=token, device_id=device_id, device_name=device_name)
     pkg_dir = _write_driver_files(schema)
-    print(f"Driver installed: {pkg_dir}")
+    _print_driver_cached(pkg_dir)
     return pkg_dir
 
 
@@ -254,7 +258,7 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
 
     if not remote_path.exists():
         pkg_dir = _write_driver_files(schema)
-        print(f"Driver installed: {pkg_dir}")
+        _print_driver_cached(pkg_dir)
         return
 
     # File exists — check staleness via the baked-in _SCHEMA_HASH line.

@@ -6,4 +6,4 @@ RemoteRF Terms of Service and understand that use of the client and
 service is at your own risk. RemoteRF is not liable for losses or
 damages arising from use of the platform.
 
-Terms of Service: https://remoterf.net/docs/resources/
+Terms of Service: https://remoterf.net/tos

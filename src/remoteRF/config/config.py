@@ -20,7 +20,7 @@ DEFAULT_TOS_NOTICE = (
     "service is at your own risk. RemoteRF is not liable for losses or\n"
     "damages arising from use of the platform.\n"
     "\n"
-    "Terms of Service: https://remoterf.net/docs/resources/\n"
+    "Terms of Service: https://remoterf.net/tos\n"
 )
 
 # -----------------------------

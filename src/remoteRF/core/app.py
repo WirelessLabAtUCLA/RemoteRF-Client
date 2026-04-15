@@ -15,7 +15,7 @@ account = RemoteRFAccount()
 session = PromptSession()
 
 DEFAULT_TIMEZONE_NOTE = "All times are in Pacific Time (Los Angeles)"
-DEFAULT_TOS_URL = "https://remoterf.net/docs/resources/"
+DEFAULT_TOS_URL = "https://remoterf.net/tos"
 
 
 def _banner_note() -> str:
