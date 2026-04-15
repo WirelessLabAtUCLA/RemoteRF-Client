@@ -12,7 +12,7 @@ from typing import Optional
 CERT_FILENAME_DEFAULT = "ca.crt"
 
 def _default_config_dir() -> Path:
-    return Path(os.path.expanduser("~")) / ".config" / "remoterf"
+    return Path(os.path.expanduser("~")) / ".config" / "remoterf-client"
 
 def _default_env_path() -> Path:
     return _default_config_dir() / ".env"
@@ -119,12 +119,12 @@ def fetch_and_save_ca_cert(
     env_path: Optional[str | Path] = None,
 ) -> bool:
     """
-    Fetch CA cert and save. Optionally writes REMOTERF_CA_CERT into ~/.config/remoterf/.env
+    Fetch CA cert and save. Optionally writes REMOTERF_CA_CERT into ~/.config/remoterf-client/.env
     WITHOUT quotes.
 
     Args:
         write_env: if True, updates REMOTERF_CA_CERT in env file to point at saved cert
-        env_path: override env file location; default ~/.config/remoterf/.env
+        env_path: override env file location; default ~/.config/remoterf-client/.env
     """
     try:
         if not isinstance(port, int):

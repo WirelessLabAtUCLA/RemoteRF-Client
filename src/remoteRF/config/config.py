@@ -27,7 +27,7 @@ DEFAULT_TOS_NOTICE = (
 # Local config locations
 # -----------------------------
 def _config_root() -> Path:
-    return Path(os.path.expanduser("~")) / ".config" / "remoterf"
+    return Path(os.path.expanduser("~")) / ".config" / "remoterf-client"
 
 def _env_path() -> Path:
     return _config_root() / ".env"

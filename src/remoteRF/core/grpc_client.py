@@ -9,7 +9,7 @@ from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
 
-load_dotenv(Path.home() / ".config" / "remoterf" / ".env")
+load_dotenv(Path.home() / ".config" / "remoterf-client" / ".env")
 addr = os.getenv("REMOTERF_ADDR")  # "host:port"
 ca_path = os.getenv("REMOTERF_CA_CERT")  # path to saved CA cert
 

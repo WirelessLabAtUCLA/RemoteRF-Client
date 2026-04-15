@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 def _config_root() -> Path:
-    return Path.home() / ".config" / "remoterf"
+    return Path.home() / ".config" / "remoterf-client"
 
 def _env_path() -> Path:
     return _config_root() / ".env"
