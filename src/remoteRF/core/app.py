@@ -542,14 +542,15 @@ def interactive_reserve_next_days(block_minutes=60):
                     available_slots.append((day, slot))
         
         if not available_slots:
-            print(f"No available time slots for device {chosen_device_id} in the next {num_days} days.")
+            printf("No available time slots for device ", Sty.BOLD, f"{chosen_device_id}", Sty.MAGENTA, f" in the next {num_days} days.", Sty.DEFAULT)
             return
         
         # Sort by day, then by slot start time
         available_slots.sort(key=lambda x: (x[0], x[1][0]))
         
         # --- Display the available slots, using 0-based index ---
-        print(f"\nAvailable time slots for device {chosen_device_id} over the next {num_days} days:")
+        print()
+        printf("Available time slots for device ", Sty.BOLD, f"{chosen_device_id}", Sty.MAGENTA, f" over the next {num_days} days:", Sty.DEFAULT)
         last_day = None
         for idx, (day, slot) in enumerate(available_slots):
             slot_start_str = slot[0].strftime('%I:%M %p')
@@ -557,13 +558,14 @@ def interactive_reserve_next_days(block_minutes=60):
             if day != last_day:
                 # Print a header for the day
                 day_header = f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')}) {day.strftime('%b')}. {day.day}"
-                print("\n" + day_header)
+                print()
+                printf(day_header, (Sty.BOLD, Sty.BLUE))
                 last_day = day
             
-            print(f"  {idx}. {slot_start_str} - {slot_end_str}")
+            printf("  ", Sty.DEFAULT, f"{idx}.", Sty.CYAN, f" {slot_start_str} - {slot_end_str}", Sty.DEFAULT)
         
         # Prompt user to pick a slot by 0-based index
-        selection = input("Select a slot by index: ")
+        selection = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN)))
         try:
             selection = int(selection)
             if selection < 0 or selection >= len(available_slots):
@@ -577,14 +579,20 @@ def interactive_reserve_next_days(block_minutes=60):
         slot_start_str = chosen_slot[0].strftime('%I:%M %p')
         slot_end_str   = chosen_slot[1].strftime('%I:%M %p')
         
-        confirmation = input(
-            f"You have selected a reservation on {chosen_day.strftime('%Y-%m-%d')} "
-            f"from {slot_start_str} to {slot_end_str} on device {chosen_device_id}. "
-            f"Confirm reservation? (y/n): "
-        ).strip().lower()
+        confirmation = session.prompt(stylize(
+            "You have selected a reservation on ", Sty.DEFAULT,
+            f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
+            " from ", Sty.DEFAULT,
+            f"{slot_start_str}", Sty.CYAN,
+            " to ", Sty.DEFAULT,
+            f"{slot_end_str}", Sty.CYAN,
+            " on device ", Sty.DEFAULT,
+            f"{chosen_device_id}", Sty.MAGENTA,
+            ". Confirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
+        )).strip().lower()
         
         if confirmation != 'y':
-            print("Reservation cancelled.")
+            printf("Reservation cancelled.", Sty.WARNING)
             return
         
         # print(f"device_id : {chosen_device_id}, start_time : {chosen_slot[0]}, end_time : {chosen_slot[1]}")
@@ -592,11 +600,9 @@ def interactive_reserve_next_days(block_minutes=60):
         # --- 6) Reserve the chosen slot on the chosen device ---
         token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
         if token:
-            print(f"Reservation successful on device {chosen_device_id} for "
-                  f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.")
-            print(f"Thy Token -> {token}")
-            print("Please keep this token safe, as it is not saved on server side "
-                  "and cannot be retrieved again.")
+            printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
+            printf("Thy Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
+            printf("Please keep this token safe, as it is not saved on server side and cannot be retrieved again.", Sty.DEFAULT)
         
     except Exception as e:
         print(f"Error: {e}")
@@ -699,10 +705,10 @@ def interactive_reserve_next_days_auto():
             sorted_device_ids = [d for d in sorted_device_ids if int(d) in allowed_dev_ids]
 
         if not sorted_device_ids:
-            print("No devices available for your permission level.")
+            printf("No devices available for your permission level.", Sty.WARNING)
             return
 
-        print("Devices:")
+        printf("Devices:", Sty.BOLD)
         block_by_dev: dict[str, int] = {}
         max_by_dev: dict[str, int] = {}
 
@@ -731,9 +737,12 @@ def interactive_reserve_next_days_auto():
             # else:
             #     print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}   (blocks={block_min} min)")
                 
-            print(f"{idx}. Device ID: {dev_id}  Duration: {block_min} min.  Name: {dev_name}")
+            printf(f"{idx}.", Sty.CYAN, " Device ID: ", Sty.DEFAULT, f"{dev_id}", Sty.MAGENTA, "  Duration: ", Sty.DEFAULT, f"{block_min} min", Sty.GREEN, ".  Name: ", Sty.DEFAULT, f"{dev_name}", Sty.GRAY)
 
-        sel = input("Which device do you want? (enter the 0-based index): ").strip()
+        sel = session.prompt(stylize(
+            "Which device do you want? ", (Sty.BOLD, Sty.GREEN),
+            "(enter the 0-based index): ", Sty.CYAN,
+        )).strip()
         try:
             sel_i = int(sel)
             if sel_i < 0 or sel_i >= len(sorted_device_ids):
@@ -747,13 +756,14 @@ def interactive_reserve_next_days_auto():
         block_minutes = int(block_by_dev.get(chosen_device_id, 30))
 
         if block_minutes < 10:
-            print(
-                f"Your max reservation duration for device {chosen_device_id} is < 10 minutes "
-                f"(max_sec={max_by_dev.get(chosen_device_id, 0)}). Cannot create valid reservations."
+            printf(
+                "Your max reservation duration for device ", Sty.DEFAULT,
+                f"{chosen_device_id}", Sty.MAGENTA,
+                f" is < 10 minutes (max_sec={max_by_dev.get(chosen_device_id, 0)}). Cannot create valid reservations.", Sty.DEFAULT,
             )
             return
 
-        num_days_s = input("Enter the number of days to check for available reservations (starting today): ").strip()
+        num_days_s = session.prompt(stylize("Enter the number of days to check for available reservations (starting today): ", (Sty.BOLD, Sty.GREEN))).strip()
         try:
             num_days = int(num_days_s)
             if num_days <= 0:
@@ -802,22 +812,24 @@ def interactive_reserve_next_days_auto():
                     available_slots.append((day, slot))
 
         if not available_slots:
-            print(f"No available {block_minutes}-minute slots for device {chosen_device_id} in the next {num_days} days.")
+            printf("No available ", Sty.DEFAULT, f"{block_minutes}-minute", Sty.CYAN, " slots for device ", Sty.DEFAULT, f"{chosen_device_id}", Sty.MAGENTA, f" in the next {num_days} days.", Sty.DEFAULT)
             return
 
         available_slots.sort(key=lambda x: (x[0], x[1][0]))
 
-        print(f"\nAvailable time slots for device {chosen_device_id} ({block_minutes} min blocks) over the next {num_days} days:")
+        print()
+        printf("Available time slots for device ", Sty.BOLD, f"{chosen_device_id}", Sty.MAGENTA, f" ({block_minutes} min blocks) over the next {num_days} days:", Sty.DEFAULT)
         last_day = None
         for idx, (day, slot) in enumerate(available_slots):
             slot_start_str = slot[0].strftime("%I:%M %p")
             slot_end_str = slot[1].strftime("%I:%M %p")
             if day != last_day:
-                print("\n" + f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')})")
+                print()
+                printf(f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')})", (Sty.BOLD, Sty.BLUE))
                 last_day = day
-            print(f"  {idx}. {slot_start_str} - {slot_end_str}")
+            printf("  ", Sty.DEFAULT, f"{idx}.", Sty.CYAN, f" {slot_start_str} - {slot_end_str}", Sty.DEFAULT)
 
-        pick_s = input("Select a slot by index: ").strip()
+        pick_s = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN))).strip()
         try:
             pick = int(pick_s)
             if pick < 0 or pick >= len(available_slots):
@@ -831,14 +843,20 @@ def interactive_reserve_next_days_auto():
         slot_start_str = chosen_slot[0].strftime("%I:%M %p")
         slot_end_str = chosen_slot[1].strftime("%I:%M %p")
 
-        confirmation = input(
-            f"You have selected a reservation on {chosen_day.strftime('%Y-%m-%d')} "
-            f"from {slot_start_str} to {slot_end_str} on device {chosen_device_id}. "
-            f"Confirm reservation? (y/n): "
-        ).strip().lower()
+        confirmation = session.prompt(stylize(
+            "You have selected a reservation on ", Sty.DEFAULT,
+            f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
+            " from ", Sty.DEFAULT,
+            f"{slot_start_str}", Sty.CYAN,
+            " to ", Sty.DEFAULT,
+            f"{slot_end_str}", Sty.CYAN,
+            " on device ", Sty.DEFAULT,
+            f"{chosen_device_id}", Sty.MAGENTA,
+            ". Confirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
+        )).strip().lower()
 
         if confirmation != "y":
-            print("Reservation cancelled.")
+            printf("Reservation cancelled.", Sty.WARNING)
             return
 
         # ---------------------------
@@ -846,12 +864,9 @@ def interactive_reserve_next_days_auto():
         # ---------------------------
         token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
         if token:
-            print(
-                f"Reservation successful on device {chosen_device_id} for "
-                f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}."
-            )
-            print(f"Thy Token -> {token}")
-            print("Please keep this token safe, as it is not saved on server side and cannot be retrieved again.")
+            printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
+            printf("Thy Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
+            printf("Please keep this token safe, as it is not saved on server side and cannot be retrieved again.", Sty.DEFAULT)
 
     except Exception as e:
         print(f"Error: {e}")
