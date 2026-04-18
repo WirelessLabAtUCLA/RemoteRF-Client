@@ -91,17 +91,17 @@ def title():
     printf(f"Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for a list of avaliable commands.", Sty.DEFAULT)  
 
 def commands():
-    printf("Commands:", Sty.BOLD)
-    printf("'clear' ", Sty.MAGENTA, "         : Clear terminal", Sty.DEFAULT)
-    printf("'getdev' ", Sty.MAGENTA, "        : View devices", Sty.DEFAULT)
-    printf("'help' or 'h' ", Sty.MAGENTA, "   : Show this help message", Sty.DEFAULT)
-    printf("'perms' ", Sty.MAGENTA, "         : View permissions", Sty.DEFAULT)
-    printf("'enroll' ", Sty.MAGENTA, "        : Enroll with an enrollment code", Sty.DEFAULT)
-    printf("'exit' or 'quit' ", Sty.MAGENTA, ": Exit", Sty.DEFAULT)
-    printf("'getres' ", Sty.MAGENTA, "        : View all reservations", Sty.DEFAULT)
-    printf("'myres' ", Sty.MAGENTA, "         : View my reservations", Sty.DEFAULT)
-    printf("'cancelres' ", Sty.MAGENTA, "     : Cancel a reservation", Sty.DEFAULT)
-    printf("'resdev' ", Sty.MAGENTA, "        : Reserve a device", Sty.DEFAULT)
+    printf("Commands:", (Sty.BOLD, Sty.BLUE))
+    printf("'clear' ", Sty.MAGENTA, "         : ", Sty.GRAY, "Clear terminal", Sty.DEFAULT)
+    printf("'getdev' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View devices", Sty.DEFAULT)
+    printf("'help' or 'h' ", Sty.MAGENTA, "   : ", Sty.GRAY, "Show this help message", Sty.DEFAULT)
+    printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
+    printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
+    printf("'exit' or 'quit' ", Sty.MAGENTA, ": ", Sty.GRAY, "Exit", Sty.DEFAULT)
+    printf("'getres' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View all reservations", Sty.DEFAULT)
+    printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
+    printf("'cancelres' ", Sty.MAGENTA, "     : ", Sty.GRAY, "Cancel a reservation", Sty.DEFAULT)
+    printf("'resdev' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Reserve a device", Sty.DEFAULT)
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
     
@@ -172,14 +172,14 @@ def reservations():
         printf("No reservations found.", Sty.BOLD)
         return
     
-    printf("Reservations:", Sty.BOLD)
+    printf("Reservations:", (Sty.BOLD, Sty.BLUE))
 
     # Sort the entries by device_id and then by start_time
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time']))
 
     # Format the sorted entries into strings
     for entry in sorted_entries:
-        printf(f'Device ID: ', Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, f', Start Time: ', Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f', End Time: ', Sty.GRAY, f'{entry["end_time"]}', Sty.BLUE)
+        printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Start Time: ", Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN, ", End Time: ", Sty.GRAY, f'{entry["end_time"]}', Sty.CYAN)
         
 def my_reservations():
     data = account.get_reservations()
@@ -203,14 +203,14 @@ def my_reservations():
         printf("No reservations found.", Sty.BOLD)
         return
     
-    printf("Reservations under: ", Sty.BOLD, f'{account.username}', Sty.MAGENTA)
+    printf("Reservations under: ", (Sty.BOLD, Sty.BLUE), f'{account.username}', Sty.MAGENTA)
 
     # Sort the entries by device_id and then by start_time
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time']))
     
     for entry in sorted_entries:
         if account.username == entry['username']:
-            printf(f'Device ID: ', Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, f', Start Time: ', Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f', End Time: ', Sty.GRAY, f'{entry["end_time"]}', Sty.BLUE)
+            printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Start Time: ", Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN, ", End Time: ", Sty.GRAY, f'{entry["end_time"]}', Sty.CYAN)
 
 def cancel_my_reservation():
     ## print all of ur reservations and their ids
@@ -237,19 +237,23 @@ def cancel_my_reservation():
         if account.username == entry['username']:
             entries.append(entry)
     
-    printf("Current Reservation(s) under ", Sty.BOLD, f'{account.username}:', Sty.MAGENTA)
+    printf("Current Reservation(s) under ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
     
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time'])) # sort by device_id and start_time
     for i, entry in enumerate(sorted_entries):  # label all reservations with unique id
         entry['id'] = i
-        printf(f'Reservation ID: ', Sty.GRAY, f'{i}', Sty.MAGENTA, f' Device ID: ', Sty.GRAY, f'{entry["device_id"]}', Sty.BRIGHT_GREEN, f' Start Time: ', Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f' End Time: ', Sty.GRAY, f'{entry["end_time"]}', Sty.BLUE)
+        printf("Reservation ID: ", Sty.GRAY, f'{i}', Sty.CYAN, " Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, " Start Time: ", Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN, " End Time: ", Sty.GRAY, f'{entry["end_time"]}', Sty.CYAN)
         # print(f"Reservation ID {i}, Device ID: {entry['device_id']}, Start Time: {entry['start_time'].strftime('%Y-%m-%d %H:%M:%S')}, End Time: {entry['end_time']}")
         
     if sorted_entries == []:
         printf("No reservations found.", Sty.BOLD)
         return    
         
-    inpu = session.prompt(stylize("Enter the ID of the reservation you would like to cancel ", Sty.BOLD, '(abort with any non number key input)', Sty.RED, ': ', Sty.BOLD))
+    inpu = session.prompt(stylize(
+        "Enter the ID of the reservation you would like to cancel ", Sty.BOLD,
+        "(abort with any non number key input)", Sty.CYAN,
+        ": ", Sty.BOLD,
+    ))
     
     if inpu.isdigit():
         id = int(inpu)
@@ -261,14 +265,24 @@ def cancel_my_reservation():
         for entry in sorted_entries:
             if entry['id'] == id:
                 db_id = entry['internal_id']
-                if session.prompt(stylize(f'Cancel reservation ID ', Sty.DEFAULT, f'{id}', Sty.MAGENTA, f' Device ID: ', Sty.DEFAULT, f'{entry["device_id"]}', Sty.BRIGHT_GREEN, f' Start Time: ', Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.BLUE, f' End Time: ', Sty.DEFAULT, f'{entry["end_time"]}', Sty.BLUE, f' ? (y/n):', Sty.DEFAULT)) == 'y':
+                if session.prompt(stylize(
+                    "Cancel reservation ID ", Sty.DEFAULT,
+                    f'{id}', Sty.CYAN,
+                    " Device ID: ", Sty.DEFAULT,
+                    f'{entry["device_id"]}', Sty.MAGENTA,
+                    " Start Time: ", Sty.GRAY,
+                    f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN,
+                    " End Time: ", Sty.DEFAULT,
+                    f'{entry["end_time"]}', Sty.CYAN,
+                    " ? (y/n): ", (Sty.BOLD, Sty.GREEN),
+                )) == 'y':
                     response = account.cancel_reservation(db_id)
                     if 'ace' in response.results:
                         print(f"Error: {unmap_arg(response.results['ace'])}")
                     elif 'UC' in response.results:
-                        printf(f"Reservation ID ", Sty.DEFAULT, f'{id}', Sty.BRIGHT_BLUE, ' successfully canceled.', Sty.DEFAULT)
+                        printf("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
                 else:
-                    print("Aborting. User canceled action.")
+                    printf("Aborting. User canceled action.", Sty.WARNING)
                 return
             
         print(f"Error: No reservation found with ID {id}.")
@@ -280,10 +294,10 @@ def devices():
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
         return
-    printf("Devices:", Sty.BOLD)
+    printf("Devices:", (Sty.BOLD, Sty.BLUE))
     
     for key in sorted(data.results, key=int):
-        printf(f"Device ID:", Sty.DEFAULT, f' {key}', Sty.MAGENTA, f" Device Name: ", Sty.DEFAULT, f"{unmap_arg(data.results[key])}", Sty.GRAY)
+        printf("Device ID: ", Sty.GRAY, f'{key}', Sty.MAGENTA, " Device Name: ", Sty.GRAY, f"{unmap_arg(data.results[key])}", Sty.DEFAULT)
 
 def get_datetime(question:str):
     timestamp = session.prompt(stylize(f'{question}', Sty.DEFAULT, ' (YYYY-MM-DD HH:MM): ', Sty.GRAY))
@@ -310,7 +324,7 @@ def perms():
     results = ast.literal_eval(unmap_arg(data.results['UC']))[0]
     perm_level = results[0]
 
-    printf("Permission Level: ", Sty.BOLD, f"{perm_level}", Sty.BLUE)
+    printf("Permission Level: ", (Sty.BOLD, Sty.BLUE), f"{perm_level}", Sty.MAGENTA)
 
     if perm_level == "Normal User":
         details_raw = unmap_arg(data.results.get("details", map_arg("{}")))
@@ -330,18 +344,18 @@ def perms():
         if groups:
             # keep stable ordering
             groups = [str(g) for g in groups if str(g).strip() != ""]
-            print("User Groups:")
+            printf("User Groups:", (Sty.BOLD, Sty.BLUE))
             for g in groups:
-                print(f"  - {g}")
+                printf("  - ", Sty.CYAN, f"{g}", Sty.MAGENTA)
         else:
-            print("User Groups: (none)")
+            printf("User Groups: ", (Sty.BOLD, Sty.BLUE), "(none)", Sty.GRAY)
 
         # ---- Devices ----
         if not devices:
             printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
             return
 
-        printf("Devices allowed: ", Sty.DEFAULT, f"{devices}", Sty.MAGENTA)
+        printf("Devices allowed: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)
 
         # Build per-device caps and group identical limits together
         buckets: dict[tuple[int, int], list[int]] = {}  # (max_r, max_t_sec) -> [dev_ids]
@@ -362,13 +376,13 @@ def perms():
         # If everything shares the same limits, print once
         if len(buckets) == 1:
             (max_r, max_t), _devs = next(iter(buckets.items()))
-            print("Limits (all devices):")
-            print(f"  Max Concurrent Reservations: {max_r}")
-            print(f"  Max Reservation Duration (min): {max_t // 60}")
+            printf("Limits (all devices):", (Sty.BOLD, Sty.BLUE))
+            printf("  Max Concurrent Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN)
+            printf("  Max Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN)
             return
 
         # Otherwise print grouped limits
-        print("Limits per device (grouped):")
+        printf("Limits per device (grouped):", (Sty.BOLD, Sty.BLUE))
         for (max_r, max_t), devs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[1])):
             devs = sorted(devs)
 
@@ -388,15 +402,15 @@ def perms():
                 ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
 
             dev_str = ",".join(ranges)
-            print(f"  devices[{dev_str}]: max_reservations={max_r}, max_time_min={max_t // 60}")
+            printf("  devices[", Sty.GRAY, f"{dev_str}", Sty.MAGENTA, "]: ", Sty.GRAY, f"max_reservations={max_r}, max_time_min={max_t // 60}", Sty.CYAN)
 
     elif perm_level == "Power User":
-        printf("Max Reservations: ", Sty.DEFAULT, f"{results[3]}", Sty.MAGENTA)
-        printf("Max Reservation Duration (min): ", Sty.DEFAULT, f"{int(results[4]/60)}", Sty.MAGENTA)
-        printf("Device IDs allowed Access to: ", Sty.DEFAULT, f"{results[5]}", Sty.MAGENTA)
+        printf("Max Reservations: ", (Sty.BOLD, Sty.BLUE), f"{results[3]}", Sty.CYAN)
+        printf("Max Reservation Duration (min): ", (Sty.BOLD, Sty.BLUE), f"{int(results[4]/60)}", Sty.CYAN)
+        printf("Device IDs allowed Access to: ", (Sty.BOLD, Sty.BLUE), f"{results[5]}", Sty.MAGENTA)
 
     elif perm_level == "Admin":
-        printf("No restrictions on reservation count or duration.", Sty.DEFAULT)
+        printf("No restrictions on reservation count or duration.", (Sty.BOLD, Sty.GREEN))
 
     else:
         printf(f"Error: Unknown permission level {perm_level}", Sty.BRIGHT_RED)
