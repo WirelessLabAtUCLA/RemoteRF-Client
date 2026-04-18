@@ -1,3 +1,5 @@
+import os
+import sys
 from enum import Enum
 
 from prompt_toolkit import print_formatted_text
@@ -39,7 +41,23 @@ class Sty(Enum):
     SELECTED = 'selected'
     DEFAULT = 'default'
 
-_DIRECT_STYLES = {
+_COLOR_STYLE_MAP = {
+    'red': 'fg:ansired',
+    'green': 'fg:ansigreen',
+    'blue': 'fg:ansiblue',
+    'yellow': 'fg:ansiyellow',
+    'magenta': 'fg:ansimagenta',
+    'cyan': 'fg:ansicyan',
+    'gray': 'fg:ansibrightblack',
+    'bg-red': 'bg:ansired',
+    'bg-green': 'bg:ansigreen',
+    'bg-blue': 'bg:ansiblue',
+    'bright-red': 'fg:ansibrightred',
+    'bright-green': 'fg:ansibrightgreen',
+    'bright-blue': 'fg:ansibrightblue',
+}
+
+_MONO_STYLES = {
     'bold': 'bold',
     'italic': 'italic',
     'underline': 'underline',
@@ -52,14 +70,66 @@ _DIRECT_STYLES = {
     'default': '',
 }
 
+_COLOR_COMBINATIONS = {
+    'error': 'fg:ansired bold',
+    'warning': 'fg:ansiyellow bold',
+    'info': 'fg:ansiblue italic underline',
+    'selected': 'reverse',
+}
+
+
+def _env_flag(name: str) -> str:
+    return os.environ.get(name, '').strip().lower()
+
+
+def _supports_color() -> bool:
+    override = _env_flag('REMOTERF_COLOR')
+    if override in {'0', 'false', 'no', 'off'}:
+        return False
+    if override in {'1', 'true', 'yes', 'on'}:
+        return True
+
+    if _env_flag('NO_COLOR'):
+        return False
+
+    term = _env_flag('TERM')
+    if term == 'dumb':
+        return False
+
+    try:
+        if not sys.stdout.isatty():
+            return False
+    except Exception:
+        return False
+
+    if sys.platform != 'win32':
+        return True
+
+    # Only use color in Windows terminals that commonly support ANSI output.
+    return any([
+        bool(os.environ.get('WT_SESSION')),
+        bool(os.environ.get('ANSICON')),
+        os.environ.get('ConEmuANSI', '').upper() == 'ON',
+        bool(os.environ.get('COLORTERM')),
+        bool(os.environ.get('TERM_PROGRAM')),
+        term not in {'', 'dumb'},
+    ])
+
 
 def _style_string(styles) -> str:
     parts = []
+    use_color = _supports_color()
     for style_name in styles:
-        direct_style = _DIRECT_STYLES.get(style_name, '')
-        if not direct_style:
+        if use_color and style_name in _COLOR_COMBINATIONS:
+            style_value = _COLOR_COMBINATIONS[style_name]
+        elif use_color and style_name in _COLOR_STYLE_MAP:
+            style_value = _COLOR_STYLE_MAP[style_name]
+        else:
+            style_value = _MONO_STYLES.get(style_name, '')
+
+        if not style_value:
             continue
-        parts.append(direct_style)
+        parts.append(style_value)
     return ' '.join(parts)
 
 def printf(*args) -> str:
