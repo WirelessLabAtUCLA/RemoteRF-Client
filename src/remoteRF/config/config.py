@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, Sequence, Tuple
 import argparse
 
+from ..common.utils import Sty, printf
 from .cert_fetcher import fetch_and_save_ca_cert
 
 DEFAULT_TOS_NOTICE = (
@@ -97,11 +98,48 @@ def _read_tos_notice() -> str:
     return text or DEFAULT_TOS_NOTICE.strip()
 
 
+def _print_separator() -> None:
+    printf("=" * 60, Sty.GRAY)
+
+
+def _print_tos_notice() -> None:
+    for i, line in enumerate(_read_tos_notice().splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            print()
+            continue
+
+        if i == 0:
+            printf(stripped, (Sty.BOLD, Sty.BLUE))
+            continue
+
+        if i == 1:
+            printf(stripped, (Sty.BOLD, Sty.MAGENTA))
+            continue
+
+        if stripped.lower().startswith("terms of service:"):
+            label, value = stripped.split(":", 1)
+            printf(f"{label}: ", (Sty.BOLD, Sty.DEFAULT), value.strip(), (Sty.CYAN, Sty.UNDERLINE))
+            continue
+
+        printf(stripped, Sty.DEFAULT)
+
+
+def _print_config_summary(host: str, grpc_port: int, cert_port: int, ca_out: Path, env_file: Path) -> None:
+    _print_separator()
+    printf("Configuration Complete!", (Sty.BOLD, Sty.GREEN))
+    printf("- Details:", Sty.BOLD)
+    printf("  gRPC target: ", (Sty.BOLD, Sty.DEFAULT), f"{host}:{grpc_port}", Sty.CYAN)
+    printf("  Cert port  : ", (Sty.BOLD, Sty.DEFAULT), f"{host}:{cert_port}", Sty.CYAN)
+    printf("  CA cert    : ", (Sty.BOLD, Sty.DEFAULT), f"{ca_out}", Sty.GRAY)
+    printf("  Env file   : ", (Sty.BOLD, Sty.DEFAULT), f"{env_file}", Sty.GRAY)
+    _print_separator()
+
+
 def _confirm_tos() -> bool:
-    print("=" * 60)
-    for line in _read_tos_notice().splitlines():
-        print(line)
-    print("=" * 60)
+    _print_separator()
+    _print_tos_notice()
+    _print_separator()
     try:
         reply = input("Continue with configuration? [y/N]: ").strip().lower()
     except KeyboardInterrupt:
@@ -156,14 +194,7 @@ def configure(host: str, port: int, cert_port: int) -> int:
         "REMOTERF_PROFILE": profile,
     })
 
-    print("=" * 60)
-    print("Configuration Complete!")
-    print("- Details:")
-    print(f"  gRPC target: {host}:{grpc_port}")
-    print(f"  Cert port  : {host}:{cert_port}")
-    print(f"  CA cert    : {ca_out}")
-    print(f"  Env file   : {env_file}")
-    print("=" * 60)
+    _print_config_summary(host, grpc_port, cert_port, ca_out, env_file)
 
 def wipe_config(*, yes: bool = False) -> int:
     """

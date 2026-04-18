@@ -9,6 +9,8 @@ import sys
 
 from pathlib import Path
 
+from .common.utils import Sty, printf
+
 def _config_root() -> Path:
     return Path.home() / ".config" / "remoterf-client"
 
@@ -71,28 +73,28 @@ def _ensure_config_present() -> tuple[bool, str]:
     return True, ""
 
 def print_help() -> None:
-    print(
-        "RemoteRF CLI Help\n"
-        "\n"
-        "Usage:\n"
-        "  remoterf                          Show this help\n"
-        "  remoterf -h | --help              Show this help\n"
-        "\n"
-        "  remoterf -l | --login             Login / register\n"
-        "  remoterf -v | --version           Print version\n"
-        "\n"
-        "  remoterf -c | --config [options]\n"
-        "    -a, --addr, -addr <host:port>   Set target server \n"
-        "    -w, --wipe, -wipe               Delete all local config\n"
-        "    -y, --yes, -yes                 Skip wipe confirmation\n"
-        "\n"
-        "Examples:\n"
-        "  remoterf --login\n"
-        "  remoterf --version\n"
-        "  remoterf --config --addr 123.45.654.321:12321\n"
-        "  remoterf --config --wipe\n"
-        "  remoterf --config --wipe --yes\n"
-    )
+    printf("RemoteRF CLI Help", (Sty.BOLD, Sty.BLUE))
+    print()
+    printf("Usage:", (Sty.BOLD, Sty.MAGENTA))
+    printf("  remoterf", Sty.CYAN, "                          Show this help", Sty.DEFAULT)
+    printf("  remoterf -h | --help", Sty.CYAN, "              Show this help", Sty.DEFAULT)
+    print()
+    printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
+    printf("  remoterf -l | --login", Sty.CYAN, "             Login / register", Sty.DEFAULT)
+    printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
+    print()
+    printf("Config:", (Sty.BOLD, Sty.MAGENTA))
+    printf("  remoterf -c | --config [options]", Sty.CYAN)
+    printf("    -a, --addr, -addr <host:port>", Sty.CYAN, "   Set target server", Sty.DEFAULT)
+    printf("    -w, --wipe, -wipe", Sty.CYAN, "               Delete all local config", Sty.DEFAULT)
+    printf("    -y, --yes, -yes", Sty.CYAN, "                 Skip wipe confirmation", Sty.DEFAULT)
+    print()
+    printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
+    printf("  remoterf --login", Sty.GREEN)
+    printf("  remoterf --version", Sty.GREEN)
+    printf("  remoterf --config --addr 123.45.654.321:12321", Sty.GREEN)
+    printf("  remoterf --config --wipe", Sty.GREEN)
+    printf("  remoterf --config --wipe --yes", Sty.GREEN)
 
 def main() -> int:
     argv = list(sys.argv[1:])
