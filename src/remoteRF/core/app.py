@@ -298,6 +298,7 @@ def devices():
     
     for key in sorted(data.results, key=int):
         printf("Device ID: ", Sty.GRAY, f'{key}', Sty.MAGENTA, " Device Name: ", Sty.GRAY, f"{unmap_arg(data.results[key])}", Sty.DEFAULT)
+        
 
 def get_datetime(question:str):
     timestamp = session.prompt(stylize(f'{question}', Sty.DEFAULT, ' (YYYY-MM-DD HH:MM): ', Sty.GRAY))
@@ -750,8 +751,15 @@ def interactive_reserve_next_days_auto():
             #     print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}   (max={max_t_sec//60} min, blocks={block_min} min)")
             # else:
             #     print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}   (blocks={block_min} min)")
-                
-            printf(f"{idx}.", Sty.CYAN, " Device ID: ", Sty.DEFAULT, f"{dev_id}", Sty.MAGENTA, "  Duration: ", Sty.DEFAULT, f"{block_min} min", Sty.GREEN, ".  Name: ", Sty.DEFAULT, f"{dev_name}", Sty.GRAY)
+
+            printf(
+                f"{idx}.", Sty.CYAN,
+                "  Name: ", Sty.DEFAULT,
+                f"{dev_name}", Sty.GRAY,
+                " Duration: ", Sty.DEFAULT,
+                f"{block_min} min", Sty.GREEN,
+            )
+
 
         sel = session.prompt(stylize(
             "Which device do you want? ", (Sty.BOLD, Sty.GREEN),
@@ -766,7 +774,9 @@ def interactive_reserve_next_days_auto():
             print("Invalid input. Please enter a number.")
             return
 
-        chosen_device_id = str(sorted_device_ids[sel_i])
+        chosen_device_key = sorted_device_ids[sel_i]
+        chosen_device_id = str(chosen_device_key)
+        chosen_device_name = unmap_arg(dev_resp.results[chosen_device_key])
         block_minutes = int(block_by_dev.get(chosen_device_id, 30))
 
         if block_minutes < 10:
@@ -864,9 +874,9 @@ def interactive_reserve_next_days_auto():
             f"{slot_start_str}", Sty.CYAN,
             " to ", Sty.DEFAULT,
             f"{slot_end_str}", Sty.CYAN,
-            " on device ", Sty.DEFAULT,
-            f"{chosen_device_id}", Sty.MAGENTA,
-            ". Confirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
+            " for ", Sty.DEFAULT,
+            f"{chosen_device_name}", Sty.GRAY,
+            ". \nConfirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
         )).strip().lower()
 
         if confirmation != "y":

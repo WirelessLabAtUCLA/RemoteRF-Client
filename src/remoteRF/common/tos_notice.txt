@@ -1,4 +1,4 @@
-RemoteRF 2025
+RemoteRF 2026
 Terms of Service Acknowledgement
 
 By continuing, you confirm that you have reviewed and agree to the
