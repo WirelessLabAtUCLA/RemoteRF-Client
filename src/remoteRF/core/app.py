@@ -132,7 +132,7 @@ def print_my_version():
         # Try mapping package → distribution (Py3.10+); fall back to same name.
         for dist in getattr(md, "packages_distributions", lambda: {})().get(top, []):
             if (latest == md.version(dist)):
-                return f"{md.version(dist)} (LATEST)"
+                return f"{md.version(dist)} (latest)"
             else:
                 return f"{md.version(dist)} (OUTDATED)"
         return md.version(top)
@@ -203,7 +203,7 @@ def my_reservations():
         printf("No reservations found.", Sty.BOLD)
         return
     
-    printf("Reservations under: ", (Sty.BOLD, Sty.BLUE), f'{account.username}', Sty.MAGENTA)
+    printf("Current Reservations Held By ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
 
     # Sort the entries by device_id and then by start_time
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time']))
@@ -251,7 +251,7 @@ def cancel_my_reservation():
         
     inpu = session.prompt(stylize(
         "Enter the ID of the reservation you would like to cancel ", Sty.BOLD,
-        "(abort with any non number key input)", Sty.CYAN,
+        "(abort with non-number input)", Sty.CYAN,
         ": ", Sty.BOLD,
     ))
     
@@ -274,7 +274,7 @@ def cancel_my_reservation():
                     f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN,
                     " End Time: ", Sty.DEFAULT,
                     f'{entry["end_time"]}', Sty.CYAN,
-                    " ? (y/n): ", (Sty.BOLD, Sty.GREEN),
+                    "? (y/n): ", (Sty.BOLD, Sty.GREEN),
                 )) == 'y':
                     response = account.cancel_reservation(db_id)
                     if 'ace' in response.results:
@@ -356,7 +356,7 @@ def perms():
             printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
             return
 
-        printf("Devices allowed: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)
+        printf("Accessible Devices: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)
 
         # Build per-device caps and group identical limits together
         buckets: dict[tuple[int, int], list[int]] = {}  # (max_r, max_t_sec) -> [dev_ids]
@@ -377,13 +377,13 @@ def perms():
         # If everything shares the same limits, print once
         if len(buckets) == 1:
             (max_r, max_t), _devs = next(iter(buckets.items()))
-            printf("Limits (all devices):", (Sty.BOLD, Sty.BLUE))
-            printf("  Max Concurrent Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN)
-            printf("  Max Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN)
+            printf("Permissions:", (Sty.BOLD, Sty.BLUE))
+            printf("  Max Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN)
+            printf("  Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN)
             return
 
         # Otherwise print grouped limits
-        printf("Limits per device (grouped):", (Sty.BOLD, Sty.BLUE))
+        printf("Permissions per device (grouped):", (Sty.BOLD, Sty.BLUE))
         for (max_r, max_t), devs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[1])):
             devs = sorted(devs)
 
@@ -484,7 +484,7 @@ def interactive_reserve_next_days(block_minutes=60):
             print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}")
         
         # --- 2) Prompt user to pick a device by 0-based index ---
-        device_selection = input("Which device do you want? (enter the 0-based index): ")
+        device_selection = input("Enter which device you want to reserve  (enter the 0-based index): ")
         try:
             device_selection = int(device_selection)
             if device_selection < 0 or device_selection >= len(sorted_device_ids):
@@ -762,7 +762,7 @@ def interactive_reserve_next_days_auto():
 
 
         sel = session.prompt(stylize(
-            "Which device do you want? ", (Sty.BOLD, Sty.GREEN),
+            "Enter which device you want to reserve ", (Sty.BOLD, Sty.GREEN),
             "(enter the 0-based index): ", Sty.CYAN,
         )).strip()
         try:
