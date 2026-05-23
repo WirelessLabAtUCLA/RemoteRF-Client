@@ -52,7 +52,7 @@ def welcome():
     try:
         inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':
-            print("Registering new account ...")
+            print("Registering new account...")
             account.enrollment_code = input("Enrollment Code: ")
             account.username = input("Username: ")
             double_check = True
@@ -310,7 +310,7 @@ def reserve():
         token = account.reserve_device(int(id), get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
         if token != '':
             printf(f"Reservation successful. Thy Token -> ", Sty.BOLD, f"{token}", Sty.BG_GREEN)
-            printf(f"Please keep this token safe, as it is not saved on server side, and cannot be regenerated/reretrieved. ", Sty.DEFAULT)
+            printf(f"Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one. ", Sty.DEFAULT)
     except Exception as e:
         printf(f"Error: {e}", Sty.BRIGHT_RED)
 
@@ -595,7 +595,7 @@ def interactive_reserve_next_days(block_minutes=60):
         slot_end_str   = chosen_slot[1].strftime('%I:%M %p')
         
         confirmation = session.prompt(stylize(
-            "You have selected a reservation on ", Sty.DEFAULT,
+            "Reservation successful on ", Sty.DEFAULT,
             f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
             " from ", Sty.DEFAULT,
             f"{slot_start_str}", Sty.CYAN,
@@ -617,7 +617,7 @@ def interactive_reserve_next_days(block_minutes=60):
         if token:
             printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
             printf("Thy Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
-            printf("Please keep this token safe, as it is not saved on server side and cannot be retrieved again.", Sty.DEFAULT)
+            printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
         
     except Exception as e:
         print(f"Error: {e}")
@@ -868,7 +868,7 @@ def interactive_reserve_next_days_auto():
         slot_end_str = chosen_slot[1].strftime("%I:%M %p")
 
         confirmation = session.prompt(stylize(
-            "You have selected a reservation on ", Sty.DEFAULT,
+            "Reservation successful on ", Sty.DEFAULT,
             f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
             " from ", Sty.DEFAULT,
             f"{slot_start_str}", Sty.CYAN,
@@ -890,7 +890,7 @@ def interactive_reserve_next_days_auto():
         if token:
             printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
             printf("Thy Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
-            printf("Please keep this token safe, as it is not saved on server side and cannot be retrieved again.", Sty.DEFAULT)
+            printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
 
     except Exception as e:
         print(f"Error: {e}")
