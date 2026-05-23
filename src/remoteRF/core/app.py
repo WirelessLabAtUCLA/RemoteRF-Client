@@ -16,6 +16,7 @@ session = PromptSession()
 
 DEFAULT_TIMEZONE_NOTE = "All times are in Pacific Time (Los Angeles)"
 DEFAULT_TOS_URL = "https://remoterf.net/tos"
+SERVER_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _banner_note() -> str:
@@ -46,6 +47,23 @@ def _tos_url() -> str:
             if url:
                 return url
     return DEFAULT_TOS_URL
+
+
+def _parse_reservation_time(value: str) -> datetime.datetime:
+    return datetime.datetime.strptime(value, SERVER_TIME_FORMAT)
+
+
+def _format_clock_12h(value: datetime.datetime) -> str:
+    hour = value.hour % 12 or 12
+    return f"{hour}:{value.minute:02d} {value.strftime('%p')}"
+
+
+def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.datetime) -> str:
+    start = f"{start_time.strftime('%Y-%m-%d')} {_format_clock_12h(start_time)}"
+    end = _format_clock_12h(end_time)
+    if start_time.date() != end_time.date():
+        end = f"{end_time.strftime('%Y-%m-%d')} {end}"
+    return f"{start} - {end}"
 
 def welcome():
     printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \n{_banner_note()}", (Sty.GRAY))
@@ -163,8 +181,8 @@ def reservations():
         entry = {
             'username': parts[0],
             'device_id': int(parts[1]),  # Convert device_id to integer for proper numerical sorting
-            'start_time': datetime.datetime.strptime(parts[2], '%Y-%m-%d %H:%M:%S'),  # Convert start_time to datetime
-            'end_time': parts[3]
+            'start_time': _parse_reservation_time(parts[2]),  # Convert start_time to datetime
+            'end_time': _parse_reservation_time(parts[3])
         }
         entries.append(entry)
         
@@ -179,7 +197,7 @@ def reservations():
 
     # Format the sorted entries into strings
     for entry in sorted_entries:
-        printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Start Time: ", Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN, ", End Time: ", Sty.GRAY, f'{entry["end_time"]}', Sty.CYAN)
+        printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
         
 def my_reservations():
     data = account.get_reservations()
@@ -194,8 +212,8 @@ def my_reservations():
         entry = {
             'username': parts[0],
             'device_id': int(parts[1]),  # Convert device_id to integer for proper numerical sorting
-            'start_time': datetime.datetime.strptime(parts[2], '%Y-%m-%d %H:%M:%S'),  # Convert start_time to datetime
-            'end_time': parts[3]
+            'start_time': _parse_reservation_time(parts[2]),  # Convert start_time to datetime
+            'end_time': _parse_reservation_time(parts[3])
         }
         entries.append(entry)
         
@@ -210,7 +228,7 @@ def my_reservations():
     
     for entry in sorted_entries:
         if account.username == entry['username']:
-            printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Start Time: ", Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN, ", End Time: ", Sty.GRAY, f'{entry["end_time"]}', Sty.CYAN)
+            printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
 
 def cancel_my_reservation():
     ## print all of ur reservations and their ids
@@ -231,8 +249,8 @@ def cancel_my_reservation():
             'internal_id': key,
             'username': parts[0],
             'device_id': int(parts[1]),  # Convert device_id to integer for proper numerical sorting
-            'start_time': datetime.datetime.strptime(parts[2], '%Y-%m-%d %H:%M:%S'),  # Convert start_time to datetime
-            'end_time': parts[3]
+            'start_time': _parse_reservation_time(parts[2]),  # Convert start_time to datetime
+            'end_time': _parse_reservation_time(parts[3])
         }
         if account.username == entry['username']:
             entries.append(entry)
@@ -242,15 +260,15 @@ def cancel_my_reservation():
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time'])) # sort by device_id and start_time
     for i, entry in enumerate(sorted_entries):  # label all reservations with unique id
         entry['id'] = i
-        printf("Reservation ID: ", Sty.GRAY, f'{i}', Sty.CYAN, " Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, " Start Time: ", Sty.GRAY, f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN, " End Time: ", Sty.GRAY, f'{entry["end_time"]}', Sty.CYAN)
-        # print(f"Reservation ID {i}, Device ID: {entry['device_id']}, Start Time: {entry['start_time'].strftime('%Y-%m-%d %H:%M:%S')}, End Time: {entry['end_time']}")
+        printf("Reservation ID: ", Sty.GRAY, f'{i}', Sty.CYAN, " Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, " Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
+        # print(f"Reservation ID {i}, Device ID: {entry['device_id']}, Time: {_format_reservation_range(entry['start_time'], entry['end_time'])}")
         
     if sorted_entries == []:
         printf("No reservations found.", Sty.BOLD)
         return    
         
     inpu = session.prompt(stylize(
-        "Enter the ID of the reservation you would like to cancel ", Sty.BOLD,
+        "Enter the reservation ID you would like to cancel ", Sty.BOLD,
         "(abort with non-number input)", Sty.CYAN,
         ": ", Sty.BOLD,
     ))
@@ -270,11 +288,10 @@ def cancel_my_reservation():
                     f'{id}', Sty.CYAN,
                     " Device ID: ", Sty.DEFAULT,
                     f'{entry["device_id"]}', Sty.MAGENTA,
-                    " Start Time: ", Sty.GRAY,
-                    f'{entry["start_time"].strftime("%Y-%m-%d %H:%M:%S")}', Sty.CYAN,
-                    " End Time: ", Sty.DEFAULT,
-                    f'{entry["end_time"]}', Sty.CYAN,
-                    "? (y/n): ", (Sty.BOLD, Sty.GREEN),
+                    " Time: ", Sty.GRAY,
+                    _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN,
+                    "?", Sty.CYAN,
+                    " (y/n): ", (Sty.BOLD, Sty.GREEN),
                 )) == 'y':
                     response = account.cancel_reservation(db_id)
                     if 'ace' in response.results:
@@ -302,7 +319,7 @@ def devices():
 
 def get_datetime(question:str):
     timestamp = session.prompt(stylize(f'{question}', Sty.DEFAULT, ' (YYYY-MM-DD HH:MM): ', Sty.GRAY))
-    return datetime.datetime.strptime(timestamp + ':00', '%Y-%m-%d %H:%M:%S')
+    return _parse_reservation_time(timestamp + ':00')
 
 def reserve():
     try:
@@ -444,8 +461,8 @@ def fetch_all_reservations():
         entry = {
             'username': parts[0],
             'device_id': int(parts[1]),  # Stored as an int
-            'start_time': datetime.datetime.strptime(parts[2], '%Y-%m-%d %H:%M:%S'),
-            'end_time': datetime.datetime.strptime(parts[3], '%Y-%m-%d %H:%M:%S')
+            'start_time': _parse_reservation_time(parts[2]),
+            'end_time': _parse_reservation_time(parts[3])
         }
         entries.append(entry)
     return entries
