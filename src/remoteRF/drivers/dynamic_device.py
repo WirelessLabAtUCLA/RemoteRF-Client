@@ -41,6 +41,7 @@ def fetch_idl(*, token: str = None, device_id: int = None, device_name: str = No
         {
             "schema_version": "1.0",
             "device_type":    "pluto",
+            "client_class":   "Pluto",
             "driver_version": "0.0.1",
             "getters":  {"get_tx_lo": {"doc": "..."}, ...},
             "setters":  {"set_tx_lo": {"doc": "..."}, ...},
@@ -69,6 +70,13 @@ def fetch_idl(*, token: str = None, device_id: int = None, device_name: str = No
 # ─────────────────────────────────────────────────────────────────────────────
 # Code generator
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _default_class_name(device_type: str) -> str:
+    return "".join(part[:1].upper() + part[1:] for part in str(device_type or "unknown").split("_") if part)
+
+
+def _client_class_name(schema: dict) -> str:
+    return str(schema.get("client_class") or _default_class_name(schema.get("device_type", "unknown")))
 
 # Static helper block written verbatim into every generated driver file.
 # Regular string (not f-string) — {_PREFIX}/{prop}/{e} are literal text
@@ -116,7 +124,7 @@ def _codegen(schema: dict) -> str:
     driver_version = schema.get("driver_version", "?")
     schema_hash    = schema.get("schema_hash", "?")
     rpc_prefix     = device_type[0].upper() + device_type[1:]   # "pluto" → "Pluto"
-    class_name     = rpc_prefix
+    class_name     = _client_class_name(schema)
 
     getters: dict = schema.get("getters", {})   # "get_tx_lo" → {"doc": ...}
     setters: dict = schema.get("setters", {})   # "set_tx_lo" → {"doc": ...}
@@ -199,7 +207,7 @@ _DRIVERS_DIR = Path(__file__).parent
 
 def _write_driver_files(schema: dict) -> Path:
     device_type = schema.get("device_type", "unknown")
-    class_name = device_type[0].upper() + device_type[1:]  # "pluto" → "Pluto"
+    class_name = _client_class_name(schema)
     pkg_dir = _DRIVERS_DIR / device_type
     pkg_dir.mkdir(exist_ok=True)
     (pkg_dir / f"{device_type}_remote.py").write_text(_codegen(schema), encoding="utf-8")
