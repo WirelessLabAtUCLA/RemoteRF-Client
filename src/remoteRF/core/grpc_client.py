@@ -9,12 +9,40 @@ from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
 
-load_dotenv(Path.home() / ".config" / "remoterf-client" / ".env")
-addr = os.getenv("REMOTERF_ADDR")  # "host:port"
-ca_path = os.getenv("REMOTERF_CA_CERT")  # path to saved CA cert
+_CONFIG_PATH = Path.home() / ".config" / "remoterf-client" / ".env"
+_CONFIG_HELP = (
+    "Run:\n"
+    "  remoterf --config --addr <host:port>\n"
+    "Example:\n"
+    "  remoterf --config --addr 123.45.654.321:12321"
+)
 
-addr = addr.strip().strip('"').strip("'")
-ca_path = ca_path.strip().strip('"').strip("'")
+
+def _load_client_config() -> tuple[str, str]:
+    load_dotenv(_CONFIG_PATH)
+    addr = (os.getenv("REMOTERF_ADDR") or "").strip().strip('"').strip("'")
+    ca_path = (os.getenv("REMOTERF_CA_CERT") or "").strip().strip('"').strip("'")
+
+    if not addr or not ca_path:
+        raise RuntimeError(
+            "RemoteRF client is not configured.\n"
+            f"Expected REMOTERF_ADDR and REMOTERF_CA_CERT in:\n  {_CONFIG_PATH}\n"
+            f"{_CONFIG_HELP}"
+        )
+
+    certs_path = Path(ca_path).expanduser()
+    if not certs_path.exists():
+        raise RuntimeError(
+            "RemoteRF client config points to a missing CA certificate.\n"
+            f"REMOTERF_CA_CERT={ca_path}\n"
+            "Re-run RemoteRF client config to fetch the certificate again.\n"
+            f"{_CONFIG_HELP}"
+        )
+
+    return addr, ca_path
+
+
+addr, ca_path = _load_client_config()
 
 options = [
       ('grpc.max_send_message_length', 100 * 1024 * 1024),
