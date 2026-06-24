@@ -5,8 +5,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="remoterf-testing",
-    version="0.0.31",
+    name="remoterf",
+    version="2.0.0",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
     description="A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts.",
@@ -14,7 +14,6 @@ setup(
     long_description_content_type="text/markdown",  # Specify that it's Markdown
     packages=find_packages(where="src"),  # Automatically finds subpackages like core, deviceA, deviceB
     package_dir={"": "src"},
-    package_data={"remoteRF.core": ["*.txt"], "remoteRF.common": ["*.txt"]},
     license_file='MIT',
     include_package_data=True,  # Includes files specified in MANIFEST.in
     install_requires=[
