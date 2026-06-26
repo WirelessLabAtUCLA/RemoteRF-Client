@@ -17,6 +17,7 @@ session = PromptSession()
 DEFAULT_TIMEZONE_NOTE = "All times are in Pacific Time (Los Angeles)"
 DEFAULT_TOS_URL = "https://remoterf.net/tos"
 SERVER_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+BANNER_CREDIT = "Created at UCLA by E. Ge and I. Roberts."
 
 
 def _banner_note() -> str:
@@ -26,6 +27,10 @@ def _banner_note() -> str:
     except OSError:
         return DEFAULT_TIMEZONE_NOTE
     return text or DEFAULT_TIMEZONE_NOTE
+
+
+def _banner_details() -> str:
+    return f"\n{BANNER_CREDIT}\nCurrent version: {print_my_version()}\n{_banner_note()}"
 
 
 def _tos_notice_text() -> str:
@@ -66,7 +71,7 @@ def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.
     return f"{start} - {end}"
 
 def welcome():
-    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \n{_banner_note()}", (Sty.GRAY))
+    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), _banner_details(), (Sty.GRAY))
     try:
         inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':
@@ -103,7 +108,7 @@ def welcome():
         exit()
 
 def title():
-    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), f"\nCurrent version: {print_my_version()} \n{_banner_note()}", (Sty.GRAY))
+    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), _banner_details(), (Sty.GRAY))
     printf("Terms of Service: ", Sty.BOLD, _tos_url(), Sty.DEFAULT)
     # printf(f"Logged in as: ", Sty.DEFAULT, f'{account.username}', Sty.MAGENTA)
     printf(f"Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for a list of avaliable commands.", Sty.DEFAULT)  

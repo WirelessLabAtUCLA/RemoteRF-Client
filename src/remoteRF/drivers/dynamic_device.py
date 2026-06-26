@@ -115,6 +115,20 @@ def _try_call(prop, token, arg=_NO_ARG):
         )
     result = resp.results.get(prop)
     return unmap_arg(result) if result is not None else None
+
+
+def _try_calln(prop, token, kwargs):
+    payload = {'a': map_arg(token)}
+    for key, value in dict(kwargs).items():
+        if value is _NO_ARG:
+            continue
+        payload[str(key)] = map_arg(value)
+    resp = rpc_client(
+        function_name=f"{_PREFIX}:{prop}:CALLN",
+        args=payload,
+    )
+    result = resp.results.get(prop)
+    return unmap_arg(result) if result is not None else None
 '''
 
 
@@ -188,10 +202,49 @@ def _codegen(schema: dict) -> str:
     # ── Call methods ──────────────────────────────────────────────────
     for method, info in sorted(call_map.items()):
         doc = info.get("doc", "")
-        lines.append(f"    def {method}(self, _v=_NO_ARG):")
+        args_meta = info.get("args")
+
+        if args_meta is None:
+            lines.append(f"    def {method}(self, _v=_NO_ARG):")
+            if doc:
+                lines.append(f'        """{doc}"""')
+            lines.append(f'        return _try_call("{method}", self.token, _v)')
+            lines.append("")
+            continue
+
+        params = []
+        inserted_keyword_marker = False
+        for arg in args_meta:
+            name = str(arg.get("name", "")).strip()
+            if not name:
+                continue
+            if arg.get("kind") == "keyword_only" and not inserted_keyword_marker:
+                params.append("*")
+                inserted_keyword_marker = True
+            if arg.get("required", True):
+                params.append(name)
+            else:
+                params.append(f"{name}=_NO_ARG")
+
+        signature = ", ".join(["self", *params])
+        lines.append(f"    def {method}({signature}):")
         if doc:
             lines.append(f'        """{doc}"""')
-        lines.append(f'        return _try_call("{method}", self.token, _v)')
+
+        arg_names = [
+            str(arg.get("name", "")).strip()
+            for arg in args_meta
+            if str(arg.get("name", "")).strip()
+        ]
+        if len(arg_names) == 0:
+            lines.append(f'        return _try_call("{method}", self.token)')
+        elif len(arg_names) == 1 and args_meta[0].get("required", True):
+            lines.append(f'        return _try_call("{method}", self.token, {arg_names[0]})')
+        else:
+            lines.append(f'        return _try_calln("{method}", self.token, {{')
+            for arg_name in arg_names:
+                lines.append(f'            "{arg_name}": {arg_name},')
+            lines.append("        })")
         lines.append("")
 
     return "\n".join(lines)

@@ -45,5 +45,6 @@ message Argument {
         bool bool_value = 4;
         ComplexNumpyArray complex_array = 5;
         RealNumpyArray real_array = 6;
+        string json_value = 7;
     }
 }
