@@ -64,6 +64,38 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         self.assertIn("if value is _NO_ARG:", code)
         self.assertIn('function_name=f"{_PREFIX}:{prop}:CALLN"', code)
 
+    def test_pluto_style_schema_preserves_get_set_call0_and_call1(self):
+        code = _codegen({
+            "device_type": "adalm_pluto",
+            "client_class": "Pluto",
+            "driver_version": "0.0.1",
+            "schema_hash": "sha256:pluto",
+            "getters": {
+                "get_sample_rate": {"args": []},
+            },
+            "setters": {
+                "set_sample_rate": {
+                    "args": [{"name": "value", "required": True, "type": "any"}],
+                },
+            },
+            "calls": {
+                "call_rx": {"args": []},
+                "call_tx": {
+                    "args": [{"name": "value", "required": True, "type": "any"}],
+                },
+                "call_disable_dds": {"args": []},
+            },
+        })
+
+        compile(code, "<generated-pluto>", "exec")
+        self.assertIn('function_name=f"{_PREFIX}:{prop}:GET"', code)
+        self.assertIn('function_name=f"{_PREFIX}:{prop}:SET"', code)
+        self.assertIn("def rx(self):", code)
+        self.assertIn('return _try_call("rx", self.token)', code)
+        self.assertIn("def tx(self, value):", code)
+        self.assertIn('return _try_call("tx", self.token, value)', code)
+        self.assertNotIn('return _try_calln("tx"', code)
+
 
 if __name__ == "__main__":
     unittest.main()
