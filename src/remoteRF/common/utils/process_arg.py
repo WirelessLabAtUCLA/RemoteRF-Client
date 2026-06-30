@@ -5,6 +5,8 @@ import numpy as np
 _JSON_TYPE_KEY = "__remoterf_json_type__"
 
 def _json_safe(value):
+    if hasattr(value, "as_payload"):
+        return _json_safe(value.as_payload())
     if isinstance(value, np.ndarray):
         if value.dtype == object:
             raise ValueError(f"Cannot JSON-map object-dtype array: {value!r}")
@@ -82,6 +84,8 @@ def map_arg(value):
     
     if isinstance(value, (bool, np.bool_)):
         arg.bool_value = bool(value)
+    elif hasattr(value, "as_payload"):
+        return map_arg(value.as_payload())
     elif value is None or isinstance(value, dict):
         arg.json_value = json.dumps(_json_safe(value), separators=(",", ":"))
     elif isinstance(value, (int, np.integer)):
