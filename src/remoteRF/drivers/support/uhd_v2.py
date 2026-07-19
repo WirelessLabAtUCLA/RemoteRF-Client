@@ -464,20 +464,181 @@ class SensorValue(_ValueObject):
         return self.to_pp_string()
 
 
+class FilterType(str, Enum):
+    analog_low_pass = "analog_low_pass"
+    analog_band_pass = "analog_band_pass"
+    digital_i16 = "digital_i16"
+    digital_fir_i16 = "digital_fir_i16"
+
+
 class FilterInfoBase(_ValueObject):
     _uhd_type = "FilterInfoBase"
+    _native_class = "filter_info_base"
 
-    def __init__(self, **values):
-        self._values = dict(values)
+    def __init__(
+        self,
+        filter_type=None,
+        bypassed=False,
+        position=0,
+        **values,
+    ):
+        self._values = {
+            "native_class": values.pop("native_class", self._native_class),
+            "filter_type": (
+                filter_type.value
+                if isinstance(filter_type, FilterType)
+                else filter_type
+            ),
+            "bypassed": bool(bypassed),
+            "position": int(position),
+            **values,
+        }
 
     def as_payload(self):
         return {"__uhd_type__": "FilterInfoBase", **payload(self._values)}
+
+    def is_bypassed(self):
+        return bool(self._values.get("bypassed", False))
+
+    def get_type(self):
+        value = self._values.get("filter_type")
+        try:
+            return FilterType(value)
+        except ValueError:
+            return value
 
     def __getattr__(self, name):
         try:
             return self._values[name]
         except KeyError as exc:
             raise AttributeError(name) from exc
+
+
+class AnalogFilterBase(FilterInfoBase):
+    _native_class = "analog_filter_base"
+
+    def __init__(
+        self,
+        filter_type,
+        bypassed,
+        position,
+        analog_type,
+        **values,
+    ):
+        super().__init__(
+            filter_type,
+            bypassed,
+            position,
+            analog_type=str(analog_type),
+            **values,
+        )
+
+    def get_analog_type(self):
+        return self._values["analog_type"]
+
+
+class AnalogFilterLP(AnalogFilterBase):
+    _native_class = "analog_filter_lp"
+
+    def __init__(
+        self,
+        filter_type,
+        bypassed,
+        position,
+        analog_type,
+        cutoff,
+        rolloff,
+        **values,
+    ):
+        super().__init__(
+            filter_type,
+            bypassed,
+            position,
+            analog_type,
+            cutoff=float(cutoff),
+            rolloff=float(rolloff),
+            **values,
+        )
+
+    def get_cutoff(self):
+        return self._values["cutoff"]
+
+    def get_rolloff(self):
+        return self._values["rolloff"]
+
+    def set_cutoff(self, cutoff):
+        self._values["cutoff"] = float(cutoff)
+
+
+class DigitalFilterBaseI16(FilterInfoBase):
+    _native_class = "digital_filter_base_i16"
+
+    def __init__(
+        self,
+        filter_type,
+        bypassed,
+        position,
+        input_rate,
+        interpolation,
+        decimation,
+        tap_full_scale,
+        max_num_taps,
+        taps,
+        **values,
+    ):
+        super().__init__(
+            filter_type,
+            bypassed,
+            position,
+            input_rate=float(input_rate),
+            interpolation=int(interpolation),
+            decimation=int(decimation),
+            tap_full_scale=int(tap_full_scale),
+            max_num_taps=int(max_num_taps),
+            taps=[int(item) for item in taps],
+            **values,
+        )
+
+    def get_output_rate(self):
+        return (
+            self._values["input_rate"]
+            * self._values["interpolation"]
+            / self._values["decimation"]
+        )
+
+    def get_input_rate(self):
+        return self._values["input_rate"]
+
+    def get_interpolation(self):
+        return self._values["interpolation"]
+
+    def get_decimation(self):
+        return self._values["decimation"]
+
+    def get_tap_full_scale(self):
+        return self._values["tap_full_scale"]
+
+    def get_taps(self):
+        return list(self._values["taps"])
+
+
+class DigitalFilterFIRI16(DigitalFilterBaseI16):
+    _native_class = "digital_filter_fir_i16"
+
+    def set_taps(self, taps):
+        values = [int(item) for item in taps]
+        if len(values) > self._values["max_num_taps"]:
+            raise ValueError("filter tap count exceeds max_num_taps")
+        self._values["taps"] = values
+
+
+FILTER_CLASSES = {
+    "filter_info_base": FilterInfoBase,
+    "analog_filter_base": AnalogFilterBase,
+    "analog_filter_lp": AnalogFilterLP,
+    "digital_filter_base_i16": DigitalFilterBaseI16,
+    "digital_filter_fir_i16": DigitalFilterFIRI16,
+}
 
 
 CODEC_CLASSES = {
@@ -563,7 +724,18 @@ def decode_snapshot(value):
     cls = TYPE_CLASSES.get(tag)
     if cls is None:
         return {key: decode_snapshot(item) for key, item in value.items()}
-    if cls in {TuneResult, SensorValue, FilterInfoBase}:
+    if cls is FilterInfoBase:
+        values = {
+            key: decode_snapshot(item)
+            for key, item in value.items()
+            if not key.startswith("__")
+        }
+        target = FILTER_CLASSES.get(
+            values.get("native_class"),
+            FilterInfoBase,
+        )
+        return target(**values)
+    if cls in {TuneResult, SensorValue}:
         return cls(**{key: decode_snapshot(item) for key, item in value.items() if not key.startswith("__")})
     obj = cls()
     return obj.update(value)

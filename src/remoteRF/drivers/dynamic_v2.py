@@ -40,6 +40,14 @@ _PARAMETER_KINDS = {
 _PARAMETER_DIRECTIONS = {"in", "out", "inout"}
 
 
+def _canonical_native_version(value) -> str:
+    """Strip distro/build metadata while retaining the pinned upstream API."""
+    text = str(value or "").strip()
+    if text.lower().startswith("uhd "):
+        text = text[4:].strip()
+    return text.partition("-")[0].strip()
+
+
 def validate_schema_v2(schema: dict) -> dict:
     if not isinstance(schema, dict) or schema.get("schema_version") != "2.0":
         raise RemoteRFProtocolError("Dynamic schema_version must be '2.0'")
@@ -140,9 +148,9 @@ def fetch_schema_v2(token: str, *, transport=None) -> dict:
 
 
 def _matches_type(value, wire_type: str) -> bool:
-    if value is None:
-        return True
     choices = {item.strip() for item in str(wire_type or "any").split("|")}
+    if value is None:
+        return "None" in choices or "any" in choices
     if "any" in choices:
         return True
     for choice in choices:
@@ -160,12 +168,16 @@ def _matches_type(value, wire_type: str) -> bool:
             return True
         if choice == "str" and isinstance(value, str):
             return True
+        if choice == "bytes" and isinstance(value, (bytes, bytearray, memoryview)):
+            return True
+        if choice == "complex" and isinstance(value, (complex, np.complexfloating)):
+            return True
         if choice.startswith("list") and isinstance(value, (list, tuple)):
             if "[" not in choice:
                 return True
             item_type = choice.partition("[")[2].rpartition("]")[0]
             return all(_matches_type(item, item_type) for item in value)
-        if choice == "dict" and isinstance(value, dict):
+        if choice.startswith("dict") and isinstance(value, dict):
             return True
         if choice == "ndarray" and isinstance(value, np.ndarray):
             return True
@@ -201,6 +213,7 @@ class OverloadBinder:
         positional = list(args)
         keywords = dict(kwargs)
         bound = {}
+        call_positional = []
         extra_positional = []
         extra_keywords = {}
         for spec in candidate.get("parameters", ()):
@@ -234,14 +247,17 @@ class OverloadBinder:
                     f"argument {name!r} must match {spec.get('type')}, "
                     f"not {type(value).__name__}"
                 )
-            bound[name] = value
+            if kind == "positional_only":
+                call_positional.append(value)
+            else:
+                bound[name] = value
 
         if positional:
             raise TypeError("too many positional arguments")
         if keywords:
             raise TypeError(f"unexpected keyword arguments: {sorted(keywords)}")
-        if extra_positional:
-            bound["__args__"] = extra_positional
+        if call_positional or extra_positional:
+            bound["__args__"] = call_positional + extra_positional
         if extra_keywords:
             bound["__kwargs__"] = extra_keywords
         return bound
@@ -303,6 +319,14 @@ class RemoteHandleProxy:
         )
         _apply_mutations(bound, mutations)
         return self._owner._wrap_result(result, descriptor, bound)
+
+    def as_payload(self):
+        self._ensure_open()
+        return {
+            "__remoterf_handle_arg__": self._handle,
+            "type_id": self._type_id,
+            "generation": self._generation,
+        }
 
     def close(self):
         if self._closed:
@@ -565,6 +589,7 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
     by_owner = {}
     for descriptor in method_descriptors:
         by_owner.setdefault(descriptor["owner"], []).append(descriptor)
+    generated_handle_classes = {}
 
     class MultiUSRP:
         def __init__(self, token: str):
@@ -575,13 +600,18 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
             required_uhd = str(
                 schema.get("native_api", {}).get("version") or ""
             )
-            if required_uhd and str(opened.get("uhd_version") or "") != required_uhd:
+            actual_uhd = str(opened.get("uhd_version") or "")
+            if (
+                required_uhd
+                and _canonical_native_version(actual_uhd)
+                != _canonical_native_version(required_uhd)
+            ):
                 try:
                     self._transport.close_session(opened["session_id"])
                 finally:
                     raise RemoteRFProtocolError(
                         f"client requires UHD {required_uhd}; "
-                        f"server reports {opened.get('uhd_version') or 'unknown'}"
+                        f"server reports {actual_uhd or 'unknown'}"
                     )
             self._session_id = opened["session_id"]
             self._handle = opened["device_handle"]
@@ -592,6 +622,7 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
             self._handle_classes = {
                 "uhd.usrp.RXStreamer": RXStreamer,
                 "uhd.usrp.TXStreamer": TXStreamer,
+                **generated_handle_classes,
             }
             self._finalizer = weakref.finalize(
                 self,
@@ -638,6 +669,8 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
                     result.get("generation", 0),
                 )
                 stream_args = bound.get("stream_args")
+                if stream_args is None and bound.get("__args__"):
+                    stream_args = bound["__args__"][0]
                 if stream_args is not None:
                     proxy._channels = list(getattr(stream_args, "channels", ()) or ())
                 return proxy
@@ -667,10 +700,27 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
     MultiUSRP.__qualname__ = MultiUSRP.__name__
     MultiUSRP.__init__.__text_signature__ = "($self, /, token)"
 
+    for object_descriptor in schema.get("objects", ()):
+        path = str(object_descriptor.get("python_path") or "")
+        if (
+            object_descriptor.get("kind") == "remote_handle"
+            and path not in {
+                "uhd.usrp.MultiUSRP",
+                "uhd.usrp.RXStreamer",
+                "uhd.usrp.TXStreamer",
+            }
+        ):
+            generated_handle_classes[path] = type(
+                path.replace(".", "_"),
+                (GenericRemoteHandle,),
+                {"_type_id": path},
+            )
+
     owner_classes = {
         "uhd.usrp.MultiUSRP": MultiUSRP,
         "uhd.usrp.RXStreamer": RXStreamer,
         "uhd.usrp.TXStreamer": TXStreamer,
+        **generated_handle_classes,
     }
     for owner, descriptors in by_owner.items():
         cls = owner_classes.get(owner)
@@ -709,7 +759,14 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
         TXMetadataEventCode=uhd_v2.TXMetadataEventCode,
         SensorValue=uhd_v2.SensorValue,
     )
-    uhd.filters = types.SimpleNamespace(FilterInfoBase=uhd_v2.FilterInfoBase)
+    uhd.filters = types.SimpleNamespace(
+        FilterType=uhd_v2.FilterType,
+        FilterInfoBase=uhd_v2.FilterInfoBase,
+        AnalogFilterBase=uhd_v2.AnalogFilterBase,
+        AnalogFilterLP=uhd_v2.AnalogFilterLP,
+        DigitalFilterBaseI16=uhd_v2.DigitalFilterBaseI16,
+        DigitalFilterFIRI16=uhd_v2.DigitalFilterFIRI16,
+    )
     uhd.libpyuhd = types.SimpleNamespace(
         types=types.SimpleNamespace(
             time_spec=uhd_v2.TimeSpec,
@@ -721,6 +778,9 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
 
     for object_descriptor in schema.get("objects", ()):
         path = object_descriptor.get("python_path", "")
+        handle_class = generated_handle_classes.get(path)
+        if handle_class is not None:
+            _assign_path(uhd, path, handle_class)
         codec = object_descriptor.get("codec")
         cls = uhd_v2.CODEC_CLASSES.get(codec)
         if cls is not None:

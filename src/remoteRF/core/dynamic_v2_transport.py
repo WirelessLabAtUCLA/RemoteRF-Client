@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 
 import grpc
@@ -10,6 +11,7 @@ import numpy as np
 from ..common.grpc import grpc_pb2, grpc_pb2_grpc
 from ..common.grpc.v2_codec import decode_value, encode_value
 from .v2_errors import (
+    RemoteRFError,
     RemoteRFProtocolError,
     RemoteRFTransportError,
     raise_for_envelope,
@@ -18,12 +20,33 @@ from .v2_errors import (
 SCHEMA_VERSION = "2.0"
 CONTROL_PROTOCOL_VERSION = "2.0"
 STREAMING_PROTOCOL_VERSION = "1.0"
+_SAMPLE_DTYPES = {
+    "<c8": np.dtype("<c8"),
+    "<c16": np.dtype("<c16"),
+    "<i2": np.dtype("<i2"),
+    "<f4": np.dtype("<f4"),
+    "<f8": np.dtype("<f8"),
+}
 
 
 def _wire_dtype(dtype) -> np.dtype:
     dtype = np.dtype(dtype)
+    if dtype.hasobject or dtype.fields is not None or dtype.subdtype is not None:
+        raise ValueError("sample dtype must be a scalar numeric dtype")
     if dtype.itemsize > 1:
         dtype = dtype.newbyteorder("<")
+    if dtype.str not in _SAMPLE_DTYPES:
+        raise ValueError(f"unsupported sample dtype: {dtype}")
+    return dtype
+
+
+def _response_dtype(value: str) -> np.dtype:
+    dtype = _SAMPLE_DTYPES.get(str(value))
+    if dtype is None:
+        raise RemoteRFProtocolError(
+            f"server returned an unsupported or non-canonical sample dtype: "
+            f"{value!r}"
+        )
     return dtype
 
 
@@ -38,7 +61,30 @@ def _payload(value):
 
 
 class DynamicV2Transport:
-    def __init__(self, *, control_stub=None, sample_stub=None):
+    def __init__(
+        self,
+        *,
+        control_stub=None,
+        sample_stub=None,
+        control_timeout_sec: float = 30.0,
+        stream_timeout_margin_sec: float = 5.0,
+    ):
+        self.control_timeout_sec = float(control_timeout_sec)
+        self.stream_timeout_margin_sec = float(stream_timeout_margin_sec)
+        if (
+            not math.isfinite(self.control_timeout_sec)
+            or self.control_timeout_sec <= 0
+        ):
+            raise ValueError("control_timeout_sec must be finite and positive")
+        if (
+            not math.isfinite(self.stream_timeout_margin_sec)
+            or self.stream_timeout_margin_sec <= 0
+        ):
+            raise ValueError(
+                "stream_timeout_margin_sec must be finite and positive"
+            )
+        self._stream_poisoned = False
+        self._stream_failure_details = {}
         if control_stub is None or sample_stub is None:
             from .grpc_client import channel
             control_stub = control_stub or grpc_pb2_grpc.DynamicControlV2Stub(channel)
@@ -46,10 +92,9 @@ class DynamicV2Transport:
         self.control = control_stub
         self.samples = sample_stub
 
-    @staticmethod
-    def _call(fn, request):
+    def _call(self, fn, request):
         try:
-            return fn(request)
+            return fn(request, timeout=self.control_timeout_sec)
         except grpc.RpcError as exc:
             raise RemoteRFTransportError(
                 f"Dynamic v2 RPC failed: {exc.code().name}: {exc.details()}",
@@ -183,17 +228,59 @@ class DynamicV2Transport:
         raise_for_envelope(response.error)
         return bool(response.closed)
 
-    def _sample_call(self, frames):
+    def _sample_call(self, frames, *, operation_timeout_sec: float):
+        if self._stream_poisoned:
+            raise RemoteRFTransportError(
+                "sample transport previously failed; open a new device "
+                "session and streamer",
+                details={
+                    **self._stream_failure_details,
+                    "requires_new_session": True,
+                },
+                retryable=False,
+                fatal_to_session=True,
+            )
+        operation_timeout_sec = float(operation_timeout_sec)
+        if not math.isfinite(operation_timeout_sec) or operation_timeout_sec < 0:
+            raise ValueError(
+                "sample operation timeout must be finite and non-negative"
+            )
+        rpc_timeout = (
+            operation_timeout_sec + self.stream_timeout_margin_sec
+        )
         try:
-            responses = list(self.samples.SampleStream(iter(frames)))
+            responses = list(
+                self.samples.SampleStream(
+                    iter(frames),
+                    timeout=rpc_timeout,
+                )
+            )
         except grpc.RpcError as exc:
+            self._stream_poisoned = True
+            self._stream_failure_details = {
+                "grpc_code": exc.code().name,
+                "requires_new_session": True,
+            }
             raise RemoteRFTransportError(
                 f"sample stream failed: {exc.code().name}: {exc.details()}",
-                details={"grpc_code": exc.code().name},
-                retryable=False,
+                details=dict(self._stream_failure_details),
+                retryable=exc.code() in {
+                    grpc.StatusCode.UNAVAILABLE,
+                    grpc.StatusCode.DEADLINE_EXCEEDED,
+                },
+                fatal_to_session=True,
             ) from exc
         for response in responses:
-            raise_for_envelope(response.error)
+            try:
+                raise_for_envelope(response.error)
+            except RemoteRFError as exc:
+                if exc.fatal_to_session:
+                    self._stream_poisoned = True
+                    self._stream_failure_details = {
+                        **exc.details,
+                        "requires_new_session": True,
+                    }
+                raise
         return responses
 
     @staticmethod
@@ -264,7 +351,8 @@ class DynamicV2Transport:
                     one_packet=bool(one_packet),
                     metadata_json=json.dumps(_payload(metadata), separators=(",", ":")),
                 ),
-            ]
+            ],
+            operation_timeout_sec=timeout,
         )
         self._validate_sample_responses(responses, common, sequence)
         data_frames = [
@@ -277,7 +365,11 @@ class DynamicV2Transport:
                 "RX operation must return exactly one DATA frame"
             )
         data = data_frames[0]
-        dtype = np.dtype(data.dtype)
+        dtype = _response_dtype(data.dtype)
+        if dtype != wire_dtype:
+            raise RemoteRFProtocolError(
+                "RX response dtype does not match the requested buffer"
+            )
         received_shape = tuple(int(item) for item in data.shape)
         if (
             len(received_shape) not in {1, 2}
@@ -287,15 +379,42 @@ class DynamicV2Transport:
             or int(data.sample_count) > int(sample_count)
         ):
             raise RemoteRFProtocolError("RX response has invalid sample shape/count")
-        expected_bytes = int(np.prod(received_shape)) * dtype.itemsize
+        if len(received_shape) != buffer.ndim:
+            raise RemoteRFProtocolError(
+                "RX response dimensionality does not match the requested buffer"
+            )
+        if (
+            len(received_shape) == 2
+            and received_shape[0] != len(channels)
+        ) or (
+            len(received_shape) == 1
+            and len(channels) != 1
+        ):
+            raise RemoteRFProtocolError(
+                "RX response channel dimension does not match channel metadata"
+            )
+        expected_bytes = math.prod(received_shape) * dtype.itemsize
         if expected_bytes != len(data.payload):
             raise RemoteRFProtocolError(
                 "RX response byte length does not match dtype/shape"
             )
         if list(data.channels) != list(channels):
             raise RemoteRFProtocolError("RX response channels do not match")
-        samples = np.frombuffer(data.payload, dtype=dtype).reshape(received_shape)
-        return int(data.sample_count), samples.copy(), json.loads(data.metadata_json or "{}")
+        try:
+            samples = np.frombuffer(
+                data.payload,
+                dtype=dtype,
+            ).reshape(received_shape)
+            metadata = json.loads(data.metadata_json or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RemoteRFProtocolError(
+                "RX response contains malformed binary data or metadata"
+            ) from exc
+        if not isinstance(metadata, dict):
+            raise RemoteRFProtocolError(
+                "RX response metadata must be a JSON object"
+            )
+        return int(data.sample_count), samples.copy(), metadata
 
     def send(
         self,
@@ -339,7 +458,8 @@ class DynamicV2Transport:
                     timeout_sec=float(timeout),
                     metadata_json=json.dumps(_payload(metadata), separators=(",", ":")),
                 ),
-            ]
+            ],
+            operation_timeout_sec=timeout,
         )
         self._validate_sample_responses(responses, common, sequence)
         result_frames = [

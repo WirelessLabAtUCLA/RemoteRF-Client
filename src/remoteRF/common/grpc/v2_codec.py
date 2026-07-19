@@ -11,6 +11,8 @@ from . import grpc_pb2
 _JSON_TYPE_KEY = "__remoterf_json_type__"
 _MAX_CONTROL_ARRAY_BYTES = 16 * 1024 * 1024
 _MAX_CONTROL_ARRAY_DIMENSIONS = 8
+_MIN_INT64 = -(1 << 63)
+_MAX_INT64 = (1 << 63) - 1
 
 
 def _validate_array(dtype: np.dtype, shape) -> int:
@@ -38,6 +40,11 @@ def _json_safe(value):
             "real": float(value.real),
             "imag": float(value.imag),
         }
+    if isinstance(value, int) and not _MIN_INT64 <= value <= _MAX_INT64:
+        return {
+            _JSON_TYPE_KEY: "integer",
+            "value": str(value),
+        }
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -49,6 +56,8 @@ def _json_restore(value):
     if isinstance(value, dict):
         if value.get(_JSON_TYPE_KEY) == "complex":
             return complex(value.get("real", 0.0), value.get("imag", 0.0))
+        if value.get(_JSON_TYPE_KEY) == "integer":
+            return int(value["value"])
         return {key: _json_restore(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_json_restore(item) for item in value]
@@ -62,7 +71,15 @@ def encode_value(value) -> grpc_pb2.DynamicValue:
     elif isinstance(value, (bool, np.bool_)):
         out.bool_value = bool(value)
     elif isinstance(value, (int, np.integer)):
-        out.int64_value = int(value)
+        integer = int(value)
+        if _MIN_INT64 <= integer <= _MAX_INT64:
+            out.int64_value = integer
+        else:
+            out.json_value = json.dumps(
+                _json_safe(integer),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
     elif isinstance(value, (float, np.floating)):
         out.double_value = float(value)
     elif isinstance(value, str):
