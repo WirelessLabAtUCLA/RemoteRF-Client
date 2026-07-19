@@ -27,6 +27,65 @@ source venv/bin/activate    # Activate virtual environment
 pip install remoterf        # Install remoteRF
 ```
 
+## NI USRP-2901 / B200-family
+
+After reserving a server-local `usrp` inventory entry, fetch or refresh its
+Dynamic v2 package with the reservation token:
+
+```python
+from remoteRF.drivers import ensure_driver
+
+ensure_driver(token="reservation-token")
+```
+
+Both supported initialization forms then use the same generated runtime:
+
+```python
+from remoteRF.drivers.usrp import uhd
+
+with uhd.usrp.MultiUSRP(token="reservation-token") as usrp:
+    print(usrp.remoterf_capabilities)
+    usrp.set_rx_rate(1e6)
+```
+
+```python
+from remoteRF.drivers.usrp import MultiUSRP
+
+usrp = MultiUSRP("reservation-token")
+try:
+    print(usrp.get_pp_string())
+finally:
+    usrp.close()
+```
+
+Streaming uses NumPy buffers and native-like UHD value objects. Only the
+leading region reported by native UHD is changed on a partial receive:
+
+```python
+import numpy as np
+from remoteRF.drivers.usrp import uhd
+
+with uhd.usrp.MultiUSRP(token="reservation-token") as usrp:
+    stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    stream_args.channels = [0]
+    with usrp.get_rx_stream(stream_args) as rx:
+        samples = np.empty(4096, dtype=np.complex64)
+        metadata = uhd.types.RXMetadata()
+        count = rx.recv(samples, metadata, 0.25)
+        valid_samples = samples[:count]
+```
+
+The generated package includes native-like namespaces, aliases, overload
+stubs, deterministic `close()`, context managers, opaque session-bound
+handles, and typed errors in `remoteRF.core.v2_errors`. Streamers are never
+silently recreated after a disconnect; reopen a new device session and
+configure a new stream explicitly.
+
+Methods marked `deferred` in the fetched schema remain available through
+generic native dispatch, but are not release-qualified as exact UHD overload
+parity until the server's UHD 4.10 target-introspection and hardware
+differential gates pass.
+
 If `pip install` doesn't work, you can clone the [source](https://github.com/WirelessLabAtUCLA/RemoteRF-Client) directly from github.
 
 <!-- 1. **Clone the repository:**

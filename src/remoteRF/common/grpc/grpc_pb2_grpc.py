@@ -5,7 +5,7 @@ import warnings
 
 from . import grpc_pb2 as grpc__pb2
 
-GRPC_GENERATED_VERSION = '1.71.0'
+GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in grpc_pb2_grpc.py depends on'
+        + ' but the generated code in grpc_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -86,6 +86,371 @@ class GenericRPC(object):
             '/remote_rf.GenericRPC/Call',
             grpc__pb2.GenericRPCRequest.SerializeToString,
             grpc__pb2.GenericRPCResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class DynamicControlV2Stub(object):
+    """Dynamic protocol v2 is deliberately additive. GenericRPC remains the v1
+    compatibility surface for existing generated clients and device schemas.
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.Negotiate = channel.unary_unary(
+                '/remote_rf.DynamicControlV2/Negotiate',
+                request_serializer=grpc__pb2.NegotiateRequest.SerializeToString,
+                response_deserializer=grpc__pb2.NegotiateResponse.FromString,
+                _registered_method=True)
+        self.GetSchema = channel.unary_unary(
+                '/remote_rf.DynamicControlV2/GetSchema',
+                request_serializer=grpc__pb2.GetSchemaRequest.SerializeToString,
+                response_deserializer=grpc__pb2.GetSchemaResponse.FromString,
+                _registered_method=True)
+        self.OpenSession = channel.unary_unary(
+                '/remote_rf.DynamicControlV2/OpenSession',
+                request_serializer=grpc__pb2.OpenSessionRequest.SerializeToString,
+                response_deserializer=grpc__pb2.OpenSessionResponse.FromString,
+                _registered_method=True)
+        self.Invoke = channel.unary_unary(
+                '/remote_rf.DynamicControlV2/Invoke',
+                request_serializer=grpc__pb2.InvokeRequest.SerializeToString,
+                response_deserializer=grpc__pb2.InvokeResponse.FromString,
+                _registered_method=True)
+        self.CloseHandle = channel.unary_unary(
+                '/remote_rf.DynamicControlV2/CloseHandle',
+                request_serializer=grpc__pb2.CloseHandleRequest.SerializeToString,
+                response_deserializer=grpc__pb2.CloseResponse.FromString,
+                _registered_method=True)
+        self.CloseSession = channel.unary_unary(
+                '/remote_rf.DynamicControlV2/CloseSession',
+                request_serializer=grpc__pb2.CloseSessionRequest.SerializeToString,
+                response_deserializer=grpc__pb2.CloseResponse.FromString,
+                _registered_method=True)
+
+
+class DynamicControlV2Servicer(object):
+    """Dynamic protocol v2 is deliberately additive. GenericRPC remains the v1
+    compatibility surface for existing generated clients and device schemas.
+    """
+
+    def Negotiate(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetSchema(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def OpenSession(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Invoke(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloseHandle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloseSession(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_DynamicControlV2Servicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'Negotiate': grpc.unary_unary_rpc_method_handler(
+                    servicer.Negotiate,
+                    request_deserializer=grpc__pb2.NegotiateRequest.FromString,
+                    response_serializer=grpc__pb2.NegotiateResponse.SerializeToString,
+            ),
+            'GetSchema': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSchema,
+                    request_deserializer=grpc__pb2.GetSchemaRequest.FromString,
+                    response_serializer=grpc__pb2.GetSchemaResponse.SerializeToString,
+            ),
+            'OpenSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.OpenSession,
+                    request_deserializer=grpc__pb2.OpenSessionRequest.FromString,
+                    response_serializer=grpc__pb2.OpenSessionResponse.SerializeToString,
+            ),
+            'Invoke': grpc.unary_unary_rpc_method_handler(
+                    servicer.Invoke,
+                    request_deserializer=grpc__pb2.InvokeRequest.FromString,
+                    response_serializer=grpc__pb2.InvokeResponse.SerializeToString,
+            ),
+            'CloseHandle': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloseHandle,
+                    request_deserializer=grpc__pb2.CloseHandleRequest.FromString,
+                    response_serializer=grpc__pb2.CloseResponse.SerializeToString,
+            ),
+            'CloseSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloseSession,
+                    request_deserializer=grpc__pb2.CloseSessionRequest.FromString,
+                    response_serializer=grpc__pb2.CloseResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'remote_rf.DynamicControlV2', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('remote_rf.DynamicControlV2', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class DynamicControlV2(object):
+    """Dynamic protocol v2 is deliberately additive. GenericRPC remains the v1
+    compatibility surface for existing generated clients and device schemas.
+    """
+
+    @staticmethod
+    def Negotiate(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remote_rf.DynamicControlV2/Negotiate',
+            grpc__pb2.NegotiateRequest.SerializeToString,
+            grpc__pb2.NegotiateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetSchema(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remote_rf.DynamicControlV2/GetSchema',
+            grpc__pb2.GetSchemaRequest.SerializeToString,
+            grpc__pb2.GetSchemaResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def OpenSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remote_rf.DynamicControlV2/OpenSession',
+            grpc__pb2.OpenSessionRequest.SerializeToString,
+            grpc__pb2.OpenSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Invoke(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remote_rf.DynamicControlV2/Invoke',
+            grpc__pb2.InvokeRequest.SerializeToString,
+            grpc__pb2.InvokeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloseHandle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remote_rf.DynamicControlV2/CloseHandle',
+            grpc__pb2.CloseHandleRequest.SerializeToString,
+            grpc__pb2.CloseResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloseSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/remote_rf.DynamicControlV2/CloseSession',
+            grpc__pb2.CloseSessionRequest.SerializeToString,
+            grpc__pb2.CloseResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class SampleDataV1Stub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.SampleStream = channel.stream_stream(
+                '/remote_rf.SampleDataV1/SampleStream',
+                request_serializer=grpc__pb2.SampleFrame.SerializeToString,
+                response_deserializer=grpc__pb2.SampleFrame.FromString,
+                _registered_method=True)
+
+
+class SampleDataV1Servicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def SampleStream(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_SampleDataV1Servicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'SampleStream': grpc.stream_stream_rpc_method_handler(
+                    servicer.SampleStream,
+                    request_deserializer=grpc__pb2.SampleFrame.FromString,
+                    response_serializer=grpc__pb2.SampleFrame.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'remote_rf.SampleDataV1', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('remote_rf.SampleDataV1', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class SampleDataV1(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def SampleStream(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_stream(
+            request_iterator,
+            target,
+            '/remote_rf.SampleDataV1/SampleStream',
+            grpc__pb2.SampleFrame.SerializeToString,
+            grpc__pb2.SampleFrame.FromString,
             options,
             channel_credentials,
             insecure,

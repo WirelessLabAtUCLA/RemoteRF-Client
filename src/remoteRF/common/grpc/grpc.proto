@@ -9,6 +9,21 @@ service GenericRPC {
     rpc Call (GenericRPCRequest) returns (GenericRPCResponse);
 }
 
+// Dynamic protocol v2 is deliberately additive. GenericRPC remains the v1
+// compatibility surface for existing generated clients and device schemas.
+service DynamicControlV2 {
+    rpc Negotiate (NegotiateRequest) returns (NegotiateResponse);
+    rpc GetSchema (GetSchemaRequest) returns (GetSchemaResponse);
+    rpc OpenSession (OpenSessionRequest) returns (OpenSessionResponse);
+    rpc Invoke (InvokeRequest) returns (InvokeResponse);
+    rpc CloseHandle (CloseHandleRequest) returns (CloseResponse);
+    rpc CloseSession (CloseSessionRequest) returns (CloseResponse);
+}
+
+service SampleDataV1 {
+    rpc SampleStream (stream SampleFrame) returns (stream SampleFrame);
+}
+
 message GenericRPCRequest {
     string function_name = 1;
     map<string, Argument> args = 2;
@@ -47,4 +62,158 @@ message Argument {
         RealNumpyArray real_array = 6;
         string json_value = 7;
     }
+}
+
+message NDArrayValue {
+    string dtype = 1;
+    repeated int64 shape = 2;
+    bytes data = 3;
+}
+
+message DynamicValue {
+    oneof value {
+        bool null_value = 1;
+        bool bool_value = 2;
+        sint64 int64_value = 3;
+        double double_value = 4;
+        string string_value = 5;
+        bytes bytes_value = 6;
+        string json_value = 7;
+        NDArrayValue ndarray_value = 8;
+    }
+}
+
+message NamedValue {
+    string name = 1;
+    DynamicValue value = 2;
+}
+
+message Mutation {
+    string target = 1;
+    DynamicValue value = 2;
+}
+
+message ErrorEnvelope {
+    string code = 1;
+    string message = 2;
+    string details_json = 3;
+    string method = 4;
+    string native_exception = 5;
+    string uhd_version = 6;
+    bool retryable = 7;
+    bool fatal_to_session = 8;
+}
+
+message NegotiateRequest {
+    repeated string schema_versions = 1;
+    repeated string control_protocol_versions = 2;
+    repeated string streaming_protocol_versions = 3;
+}
+
+message NegotiateResponse {
+    string schema_version = 1;
+    string control_protocol_version = 2;
+    string streaming_protocol_version = 3;
+    ErrorEnvelope error = 4;
+}
+
+message GetSchemaRequest {
+    string token = 1;
+    repeated string schema_versions = 2;
+}
+
+message GetSchemaResponse {
+    string schema_version = 1;
+    string schema_json = 2;
+    string schema_hash = 3;
+    ErrorEnvelope error = 4;
+}
+
+message OpenSessionRequest {
+    string token = 1;
+    string requested_schema_hash = 2;
+    string control_protocol_version = 3;
+    string streaming_protocol_version = 4;
+}
+
+message OpenSessionResponse {
+    string session_id = 1;
+    string device_handle = 2;
+    string schema_json = 3;
+    string schema_hash = 4;
+    string capabilities_json = 5;
+    string uhd_version = 6;
+    string uhd_abi = 7;
+    string hardware_profile = 8;
+    ErrorEnvelope error = 9;
+}
+
+message InvokeRequest {
+    string session_id = 1;
+    string handle = 2;
+    string method = 3;
+    string overload_id = 4;
+    repeated NamedValue args = 5;
+}
+
+message InvokeResponse {
+    DynamicValue result = 1;
+    repeated Mutation mutations = 2;
+    ErrorEnvelope error = 3;
+}
+
+message CloseHandleRequest {
+    string session_id = 1;
+    string handle = 2;
+}
+
+message CloseSessionRequest {
+    string session_id = 1;
+}
+
+message CloseResponse {
+    bool closed = 1;
+    ErrorEnvelope error = 2;
+}
+
+enum SampleDirection {
+    SAMPLE_DIRECTION_UNSPECIFIED = 0;
+    SAMPLE_DIRECTION_RX = 1;
+    SAMPLE_DIRECTION_TX = 2;
+}
+
+enum SampleFrameKind {
+    SAMPLE_FRAME_UNSPECIFIED = 0;
+    SAMPLE_FRAME_OPEN = 1;
+    SAMPLE_FRAME_REQUEST = 2;
+    SAMPLE_FRAME_DATA = 3;
+    SAMPLE_FRAME_RESULT = 4;
+    SAMPLE_FRAME_CREDIT = 5;
+    SAMPLE_FRAME_CANCEL = 6;
+    SAMPLE_FRAME_CLOSE = 7;
+    SAMPLE_FRAME_ERROR = 8;
+}
+
+message SampleFrame {
+    string session_id = 1;
+    string handle = 2;
+    uint64 generation = 3;
+    string operation_id = 4;
+    uint64 sequence = 5;
+    SampleDirection direction = 6;
+    SampleFrameKind kind = 7;
+    string dtype = 8;
+    repeated int64 shape = 9;
+    repeated uint32 channels = 10;
+    uint64 sample_count = 11;
+    bytes payload = 12;
+    string metadata_json = 13;
+    double device_time_secs = 14;
+    uint32 credits = 15;
+    double timeout_sec = 16;
+    bool one_packet = 17;
+    bool end_of_stream = 18;
+    bool cancelled = 19;
+    ErrorEnvelope error = 20;
+    uint64 flags = 21;
 }

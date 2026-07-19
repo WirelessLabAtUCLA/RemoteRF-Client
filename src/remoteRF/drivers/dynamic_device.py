@@ -31,7 +31,13 @@ from ..common.utils import map_arg, unmap_arg
 # IDL fetch
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_idl(*, token: str = None, device_id: int = None, device_name: str = None) -> dict:
+def fetch_idl(
+    *,
+    token: str = None,
+    device_id: int = None,
+    device_name: str = None,
+    prefer_v2: bool = True,
+) -> dict:
     """
     Fetch the IDL schema from the server.
 
@@ -50,6 +56,20 @@ def fetch_idl(*, token: str = None, device_id: int = None, device_name: str = No
             "schema_hash": "sha256:...",
         }
     """
+    if token is not None and prefer_v2:
+        from .dynamic_v2 import fetch_schema_v2
+        from ..core.v2_errors import RemoteRFProtocolError, RemoteRFTransportError
+
+        try:
+            return fetch_schema_v2(str(token))
+        except RemoteRFProtocolError:
+            # The selected device may only publish v1 (for example Pluto).
+            pass
+        except RemoteRFTransportError as exc:
+            # Old servers report the additive v2 service as UNIMPLEMENTED.
+            if exc.details.get("grpc_code") != "UNIMPLEMENTED":
+                raise
+
     args: dict = {}
     if token is not None:
         args['token'] = map_arg(str(token))
@@ -1294,6 +1314,9 @@ _DRIVERS_DIR = Path(__file__).parent
 
 
 def _write_driver_files(schema: dict) -> Path:
+    if str(schema.get("schema_version")) == "2.0":
+        return _write_v2_driver_files(schema)
+
     (
         device_type,
         _driver_version,
@@ -1349,6 +1372,62 @@ def _write_driver_files(schema: dict) -> Path:
     return pkg_dir
 
 
+def _write_v2_driver_files(schema: dict) -> Path:
+    from .dynamic_v2 import render_stub, validate_schema_v2
+
+    validate_schema_v2(schema)
+
+    device_type = _require_package_name(
+        schema.get("device_type", "unknown"),
+        field="device_type",
+    )
+    class_name = _require_identifier(
+        schema.get("client_class", _default_class_name(device_type)),
+        field="client_class",
+    )
+    schema_hash = str(schema.get("schema_hash") or "")
+    if not schema_hash:
+        raise ValueError("schema v2 requires schema_hash")
+    _json_checked(schema, field="schema v2")
+
+    pkg_dir = _DRIVERS_DIR / device_type
+    pkg_dir.mkdir(exist_ok=True)
+    remote_path = pkg_dir / f"{device_type}_remote.py"
+    remote_path.write_text(
+        "\n".join(
+            [
+                "# Auto-generated from Dynamic IDL schema v2 — do not edit.",
+                "from ..dynamic_v2 import build_uhd_bindings",
+                "",
+                f"_SCHEMA_HASH = {schema_hash!r}",
+                f"_SCHEMA = {schema!r}",
+                "uhd, " + class_name + " = build_uhd_bindings(_SCHEMA)",
+                "",
+                f"__all__ = ['uhd', {class_name!r}]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (pkg_dir / f"{device_type}_remote.pyi").write_text(
+        render_stub(schema),
+        encoding="utf-8",
+    )
+    (pkg_dir / "__init__.py").write_text(
+        "\n".join(
+            [
+                f"from . import {device_type}_remote as adi",
+                f"from .{device_type}_remote import {class_name}, uhd",
+                "",
+                f"__all__ = ['adi', {class_name!r}, 'uhd']",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return pkg_dir
+
+
 def _print_driver_cached(pkg_dir: Path) -> None:
     print("Device drivers updated successfully.")
 
@@ -1367,7 +1446,12 @@ def install_driver(*, token: str = None, device_id: int = None, device_name: str
 
     Returns the path to the generated package directory.
     """
-    schema = fetch_idl(token=token, device_id=device_id, device_name=device_name)
+    schema = fetch_idl(
+        token=token,
+        device_id=device_id,
+        device_name=device_name,
+        prefer_v2=True,
+    )
     pkg_dir = _write_driver_files(schema)
     _print_driver_cached(pkg_dir)
     return pkg_dir
@@ -1390,8 +1474,17 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
     One IDL:get_drivers RPC is always made (to resolve device_type and hash).
     Files are only written when missing or stale.
     """
-    schema = fetch_idl(token=token, device_id=device_id, device_name=device_name)
-    device_type = _schema_maps(schema)[0]
+    schema = fetch_idl(
+        token=token,
+        device_id=device_id,
+        device_name=device_name,
+        prefer_v2=True,
+    )
+    device_type = (
+        _require_package_name(schema.get("device_type"), field="device_type")
+        if str(schema.get("schema_version")) == "2.0"
+        else _schema_maps(schema)[0]
+    )
     remote_path = _DRIVERS_DIR / device_type / f"{device_type}_remote.py"
 
     if not remote_path.exists():
@@ -1417,7 +1510,7 @@ def _read_schema_hash(path: Path) -> str | None:
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.startswith("_SCHEMA_HASH"):
                 # _SCHEMA_HASH = "sha256:..."
-                return line.split("=", 1)[1].strip().strip('"')
+                return line.split("=", 1)[1].strip().strip("\"'")
     except OSError:
         pass
     return None
@@ -1438,7 +1531,7 @@ def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
 
         from remoteRF.drivers.pluto import *
     """
-    schema = fetch_idl(token=token)
+    schema = fetch_idl(token=token, prefer_v2=False)
     if schema.get("schema_hash") == current_hash:
         return False
 

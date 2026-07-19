@@ -110,6 +110,9 @@ def map_arg(value):
     elif isinstance(value, np.ndarray):
         if value.dtype == object:
             raise ValueError(f"Cannot map object-dtype array: {value!r}")
+        if value.dtype.kind not in {"b", "i", "u", "f", "c"}:
+            arg.json_value = json.dumps(_json_safe(value.tolist()), separators=(",", ":"))
+            return arg
         if np.iscomplexobj(value):
             complex_array = arg.complex_array
             complex_array.shape.dim.extend(value.shape)
