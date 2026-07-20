@@ -23,7 +23,6 @@ import json
 import keyword
 from pathlib import Path
 
-from ..core.grpc_client import rpc_client
 from ..common.utils import map_arg, unmap_arg
 
 
@@ -79,6 +78,8 @@ def fetch_idl(
         args['device_name'] = map_arg(str(device_name))
     else:
         raise ValueError("fetch_idl requires token, device_id, or device_name")
+
+    from ..core.grpc_client import rpc_client
 
     resp = rpc_client(function_name="IDL:get_drivers", args=args)
 

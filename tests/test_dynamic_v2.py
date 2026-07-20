@@ -1,5 +1,8 @@
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -334,6 +337,29 @@ class MalformedRXStub:
 
 
 class DynamicV2Tests(unittest.TestCase):
+    def test_protocol_runtime_import_does_not_require_legacy_client_config(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = dict(os.environ)
+            env["HOME"] = home
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "from remoteRF.core.dynamic_v2_transport "
+                        "import DynamicV2Transport; "
+                        "from remoteRF.drivers.dynamic_v2 "
+                        "import build_uhd_bindings"
+                    ),
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
     def test_schema_hash_and_identifiers_are_validated_before_generation(self):
         tampered = schema()
         tampered["driver_version"] = "tampered"
@@ -424,6 +450,20 @@ class DynamicV2Tests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "requires UHD 4.10.0.0"):
             MultiUSRP("token")
         self.assertEqual(transport.closed_sessions, ["session"])
+
+    def test_client_accepts_conda_forge_uhd_main_release_version(self):
+        class CondaForgeTransport(FakeTransport):
+            def open_session(self, token, schema_hash):
+                result = super().open_session(token, schema_hash)
+                result["uhd_version"] = "4.10.0.main-release"
+                return result
+
+        transport = CondaForgeTransport()
+        _, MultiUSRP = build_uhd_bindings(
+            schema(), transport_factory=lambda: transport
+        )
+        device = MultiUSRP("token")
+        self.assertTrue(device.close())
 
     def test_stream_handles_mutate_only_received_buffer_prefix_and_metadata(self):
         transport = FakeTransport()

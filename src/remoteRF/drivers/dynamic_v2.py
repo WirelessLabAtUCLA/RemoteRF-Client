@@ -6,6 +6,7 @@ import hashlib
 import json
 import keyword
 import numbers
+import re
 import types
 import weakref
 
@@ -45,7 +46,17 @@ def _canonical_native_version(value) -> str:
     text = str(value or "").strip()
     if text.lower().startswith("uhd "):
         text = text[4:].strip()
-    return text.partition("-")[0].strip()
+    match = re.match(
+        r"^(\d+)\.(\d+)\.(\d+)(?:\.(\d+|main|head))?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return text.partition("-")[0].strip()
+    major, minor, patch, build = match.groups()
+    if build is None or build.lower() in {"main", "head"}:
+        build = "0"
+    return ".".join((major, minor, patch, build))
 
 
 def validate_schema_v2(schema: dict) -> dict:
