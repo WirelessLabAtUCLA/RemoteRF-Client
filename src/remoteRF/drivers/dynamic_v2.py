@@ -14,7 +14,16 @@ import numpy as np
 
 from ..core.dynamic_v2_transport import DynamicV2Transport
 from ..core.v2_errors import RemoteRFProtocolError
-from .support import uhd_v2
+from .support import uhd_dsp, uhd_v2
+
+_REMOTE_STREAM_BATCH_SAMPS = 64 * 1024
+_CPU_FORMAT_DTYPES = {
+    "fc32": np.dtype(np.complex64),
+    "fc64": np.dtype(np.complex128),
+    "f32": np.dtype(np.float32),
+    "f64": np.dtype(np.float64),
+    "s16": np.dtype(np.int16),
+}
 
 _SUPPORTED_SAMPLE_DTYPES = {
     np.dtype(np.complex64),
@@ -295,6 +304,7 @@ class RemoteHandleProxy:
         self._generation = int(generation)
         self._closed = False
         self._channels = []
+        self._cpu_format = "fc32"
         self._sequence = 1
         self._finalizer = weakref.finalize(
             self,
@@ -357,6 +367,20 @@ class RemoteHandleProxy:
 
 class RXStreamer(RemoteHandleProxy):
     _type_id = "uhd.usrp.RXStreamer"
+
+    def get_max_num_samps(self):
+        """Return the efficient RemoteRF batch size, bounded by wire limits."""
+        self._ensure_open()
+        maximum_bytes = int(
+            self._owner._capabilities.get("remote_resource_limits", {}).get(
+                "maximum_sample_payload_bytes",
+                4 * 1024 * 1024,
+            )
+        )
+        dtype = _CPU_FORMAT_DTYPES.get(self._cpu_format, np.dtype(np.complex64))
+        channels = max(1, len(self._channels))
+        payload_samps = maximum_bytes // (dtype.itemsize * channels)
+        return max(1, min(_REMOTE_STREAM_BATCH_SAMPS, payload_samps))
 
     def recv(self, buffs, *args, **kwargs):
         self._ensure_open()
@@ -435,6 +459,20 @@ class RXStreamer(RemoteHandleProxy):
 
 class TXStreamer(RemoteHandleProxy):
     _type_id = "uhd.usrp.TXStreamer"
+
+    def get_max_num_samps(self):
+        """Return the efficient RemoteRF batch size, bounded by wire limits."""
+        self._ensure_open()
+        maximum_bytes = int(
+            self._owner._capabilities.get("remote_resource_limits", {}).get(
+                "maximum_sample_payload_bytes",
+                4 * 1024 * 1024,
+            )
+        )
+        dtype = _CPU_FORMAT_DTYPES.get(self._cpu_format, np.dtype(np.complex64))
+        channels = max(1, len(self._channels))
+        payload_samps = maximum_bytes // (dtype.itemsize * channels)
+        return max(1, min(_REMOTE_STREAM_BATCH_SAMPS, payload_samps))
 
     def send(self, buffs, *args, **kwargs):
         self._ensure_open()
@@ -684,6 +722,9 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
                     stream_args = bound["__args__"][0]
                 if stream_args is not None:
                     proxy._channels = list(getattr(stream_args, "channels", ()) or ())
+                    proxy._cpu_format = str(
+                        getattr(stream_args, "cpu_format", "fc32") or "fc32"
+                    ).lower()
                 return proxy
             return uhd_v2.decode_snapshot(result)
 
@@ -769,6 +810,13 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
         AsyncMetadata=uhd_v2.AsyncMetadata,
         TXMetadataEventCode=uhd_v2.TXMetadataEventCode,
         SensorValue=uhd_v2.SensorValue,
+    )
+    uhd.dsp = types.SimpleNamespace(
+        signals=types.SimpleNamespace(
+            get_continuous_tone=uhd_dsp.get_continuous_tone,
+            get_power_dbfs=uhd_dsp.get_power_dbfs,
+            get_usrp_power=uhd_dsp.make_get_usrp_power(uhd),
+        )
     )
     uhd.filters = types.SimpleNamespace(
         FilterType=uhd_v2.FilterType,

@@ -465,6 +465,52 @@ class DynamicV2Tests(unittest.TestCase):
         device = MultiUSRP("token")
         self.assertTrue(device.close())
 
+    def test_generated_uhd_exposes_native_compatible_dsp_signals(self):
+        uhd, _ = build_uhd_bindings(
+            schema(), transport_factory=FakeTransport
+        )
+
+        tone = uhd.dsp.signals.get_continuous_tone(
+            1_000,
+            100,
+            0.25,
+            desired_size=100,
+            waveform="sine",
+        )
+        self.assertEqual(tone.dtype, np.dtype(np.complex64))
+        self.assertEqual(tone.shape, (100,))
+        self.assertAlmostEqual(abs(tone[0]), 0.25)
+        self.assertAlmostEqual(
+            uhd.dsp.signals.get_power_dbfs(tone / 0.25),
+            0.0,
+            places=5,
+        )
+
+        class PowerStreamer:
+            def __init__(self):
+                self.command = None
+
+            def get_num_channels(self):
+                return 1
+
+            def issue_stream_cmd(self, command):
+                self.command = command
+
+            def recv(self, buffer, metadata, timeout):
+                buffer[0] = np.exp(
+                    2j * np.pi * np.arange(buffer.shape[-1]) / buffer.shape[-1]
+                )
+                return buffer.shape[-1]
+
+        streamer = PowerStreamer()
+        self.assertAlmostEqual(
+            uhd.dsp.signals.get_usrp_power(streamer, num_samps=8),
+            0.0,
+            places=5,
+        )
+        self.assertEqual(streamer.command.num_samps, 8)
+        self.assertTrue(streamer.command.stream_now)
+
     def test_stream_handles_mutate_only_received_buffer_prefix_and_metadata(self):
         transport = FakeTransport()
         uhd, MultiUSRP = build_uhd_bindings(
@@ -474,7 +520,7 @@ class DynamicV2Tests(unittest.TestCase):
         stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
         stream_args.channels = [0]
         rx = device.get_rx_stream(stream_args)
-        self.assertEqual(rx.get_max_num_samps(), 256)
+        self.assertEqual(rx.get_max_num_samps(), 64 * 1024)
         self.assertEqual(
             rx.as_payload(),
             {
