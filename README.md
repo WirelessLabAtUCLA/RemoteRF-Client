@@ -29,7 +29,7 @@ pip install remoterf        # Install remoteRF
 
 ## NI USRP-2901 / B200-family
 
-After reserving a server-local `usrp` inventory entry, fetch or refresh its
+After reserving a server-local or HostRF-owned `usrp` inventory entry, fetch or refresh its
 Dynamic v2 package with the reservation token:
 
 ```python

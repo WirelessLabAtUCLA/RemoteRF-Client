@@ -61,6 +61,7 @@ message Argument {
         ComplexNumpyArray complex_array = 5;
         RealNumpyArray real_array = 6;
         string json_value = 7;
+        bytes bytes_value = 8;
     }
 }
 

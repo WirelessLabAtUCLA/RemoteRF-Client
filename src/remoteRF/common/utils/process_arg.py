@@ -76,6 +76,8 @@ def unmap_arg(arg):
         return np.array(data, dtype=np.complex64).reshape(shape)
     elif arg.HasField('json_value'):
         return _json_restore(json.loads(arg.json_value))
+    elif arg.HasField('bytes_value'):
+        return bytes(arg.bytes_value)
     else:
         raise ValueError(f"Unknown argument type during unmapping: {arg}")
     
@@ -94,6 +96,8 @@ def map_arg(value):
         arg.float_value = float(value)
     elif isinstance(value, str):
         arg.string_value = value
+    elif isinstance(value, (bytes, bytearray, memoryview)):
+        arg.bytes_value = bytes(value)
     elif isinstance(value, (list, tuple)):
         try:
             array = np.asarray(value)
