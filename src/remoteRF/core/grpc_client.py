@@ -49,6 +49,18 @@ options = [
       ('grpc.max_receive_message_length', 100 * 1024 * 1024),
 ]
 
+# A server reached over Tailscale may present the same certificate it uses on
+# its public or LAN address. Keep certificate verification enabled while
+# allowing the configured certificate identity to differ from REMOTERF_ADDR.
+tls_server_name = (os.getenv("REMOTERF_TLS_SERVER_NAME") or "").strip()
+if tls_server_name:
+    options.extend(
+        [
+            ("grpc.ssl_target_name_override", tls_server_name),
+            ("grpc.default_authority", tls_server_name),
+        ]
+    )
+
 # Server.crt
 certs_path = Path(ca_path).expanduser().resolve()
 with certs_path.open('rb') as f:

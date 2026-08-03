@@ -178,6 +178,72 @@ def _uhd_client_objects():
 
 
 class DynamicDeviceCodegenTests(unittest.TestCase):
+    def test_rtl_sdr_schema_generates_native_style_receive_client(self):
+        schema = {
+            "schema_version": "1.0",
+            "device_type": "rtl_sdr",
+            "client_class": "RtlSdr",
+            "driver_version": "0.1.0",
+            "schema_hash": "sha256:rtl-sdr-test",
+            "getters": {
+                "get_center_freq": {},
+                "get_sample_rate": {},
+                "get_gain": {},
+                "get_valid_gains_db": {},
+                "get_tuner_type": {},
+            },
+            "setters": {
+                "set_center_freq": {
+                    "args": [{"name": "value", "required": True, "type": "any"}],
+                },
+                "set_sample_rate": {
+                    "args": [{"name": "value", "required": True, "type": "any"}],
+                },
+                "set_gain": {
+                    "args": [{"name": "value", "required": True, "type": "any"}],
+                },
+            },
+            "calls": {
+                "call_read_samples": {
+                    "args": [
+                        {
+                            "name": "num_samples",
+                            "required": False,
+                            "type": "int",
+                            "default": 1024,
+                        },
+                    ],
+                },
+                "call_read_bytes": {
+                    "args": [
+                        {
+                            "name": "num_bytes",
+                            "required": False,
+                            "type": "int",
+                            "default": 1024,
+                        },
+                    ],
+                },
+                "call_reset_buffer": {"args": []},
+                "call_get_capabilities": {"args": []},
+            },
+        }
+
+        code = _codegen(schema)
+
+        compile(code, "<generated-rtl-sdr>", "exec")
+        self.assertIn("class RtlSdr:", code)
+        self.assertIn("def read_samples(self, num_samples=_NO_ARG):", code)
+        self.assertIn('return _try_calln("read_samples", self.token, {', code)
+        self.assertIn('"num_samples": num_samples,', code)
+        self.assertIn("def read_bytes(self, num_bytes=_NO_ARG):", code)
+        self.assertIn("def reset_buffer(self):", code)
+        self.assertIn("def get_capabilities(self):", code)
+        self.assertIn("@property\n    def center_freq(self):", code)
+        self.assertIn("@center_freq.setter", code)
+        self.assertIn("@property\n    def sample_rate(self):", code)
+        self.assertIn("@property\n    def valid_gains_db(self):", code)
+
     def test_codegen_emits_calln_for_named_optional_or_multi_arg_methods(self):
         code = _codegen({
             "device_type": "fake_device",

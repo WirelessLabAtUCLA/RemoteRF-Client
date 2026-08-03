@@ -89,6 +89,43 @@ generic native dispatch, but are not release-qualified as exact UHD overload
 parity until the server's UHD 4.10 target-introspection and hardware
 differential gates pass.
 
+## RTL-SDR
+
+RTL-SDR clients are generated from the server's `rtl_sdr` schema. The machine
+running client code does not need `librtlsdr` or PyRtlSdr:
+
+```python
+from remoteRF.drivers import ensure_driver
+
+token = "reservation-token"
+ensure_driver(token=token)
+
+from remoteRF.drivers.rtl_sdr import RtlSdr
+
+sdr = RtlSdr(token)
+sdr.sample_rate = 2_048_000
+sdr.center_freq = 100_000_000
+sdr.gain = "auto"
+sdr.agc_mode = True
+
+print(sdr.get_capabilities())
+samples = sdr.read_samples(16_384)  # NumPy complex64
+raw_iq = sdr.read_bytes(4096)       # packed uint8 I/Q bytes
+```
+
+The server owns the USB handle for its lifetime, so the generated client does
+not close the physical radio. `read_samples` and `read_bytes` are bounded to a
+4 MiB response. Call them repeatedly for longer captures. Native asynchronous
+callbacks are not transported remotely.
+
+When a Tailscale address differs from the IP or DNS identity in the server
+certificate, keep TLS verification enabled and set the expected identity:
+
+```bash
+export REMOTERF_ADDR=rrf2.example.ts.net:61005
+export REMOTERF_TLS_SERVER_NAME=certificate-name.example
+```
+
 If `pip install` doesn't work, you can clone the [source](https://github.com/WirelessLabAtUCLA/RemoteRF-Client) directly from github.
 
 <!-- 1. **Clone the repository:**
