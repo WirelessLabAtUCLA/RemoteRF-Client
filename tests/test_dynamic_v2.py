@@ -337,6 +337,56 @@ class MalformedRXStub:
 
 
 class DynamicV2Tests(unittest.TestCase):
+    def test_packaged_usrp_schema_advertises_n210_ethernet_support(self):
+        from remoteRF.drivers.usrp import usrp_remote
+
+        self.assertEqual(usrp_remote._SCHEMA["driver_version"], "0.0.7")
+        self.assertIn("n210", usrp_remote._SCHEMA["hardware_profiles"])
+        self.assertIn("usrp2", usrp_remote._SCHEMA["hardware_profiles"])
+        profiles = {
+            item["profile_id"]: item
+            for item in usrp_remote._SCHEMA["hardware_profile_definitions"]
+        }
+        self.assertEqual(
+            profiles["usrp2901"]["support_level"],
+            "qualified_native",
+        )
+        self.assertEqual(profiles["n210"]["support_level"], "qualified_native")
+        self.assertEqual(profiles["x3xx"]["support_level"], "generic_uhd")
+        self.assertIn(
+            "transport_address",
+            usrp_remote._SCHEMA["capability_fields"],
+        )
+        self.assertIn(
+            "device_profile",
+            usrp_remote._SCHEMA["capability_fields"],
+        )
+        self.assertIn(
+            "profile_resolution",
+            usrp_remote._SCHEMA["capability_fields"],
+        )
+        self.assertIn(
+            "stream_format_capabilities",
+            usrp_remote._SCHEMA["capability_fields"],
+        )
+
+    def test_meta_range_uses_aggregate_fields_when_ranges_are_empty(self):
+        decoded = uhd_v2.decode_snapshot(
+            {
+                "__uhd_type__": "MetaRange",
+                "ranges": [],
+                "start": 42e6,
+                "stop": 6.008e9,
+                "step": 0.25,
+            }
+        )
+
+        self.assertIsInstance(decoded, uhd_v2.MetaRange)
+        self.assertEqual(len(decoded), 1)
+        self.assertEqual(decoded.start(), 42e6)
+        self.assertEqual(decoded.stop(), 6.008e9)
+        self.assertEqual(decoded.step(), 0.25)
+
     def test_protocol_runtime_import_does_not_require_legacy_client_config(self):
         with tempfile.TemporaryDirectory() as home:
             env = dict(os.environ)

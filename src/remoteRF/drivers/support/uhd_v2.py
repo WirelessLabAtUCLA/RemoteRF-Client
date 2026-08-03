@@ -694,7 +694,23 @@ def decode_snapshot(value):
     if tag == "Range":
         return Range(value.get("start", 0.0), value.get("stop"), value.get("step", 0.0))
     if tag == "MetaRange":
-        return MetaRange(value.get("ranges", ()))
+        ranges = value.get("ranges") or ()
+        if ranges:
+            return MetaRange(ranges)
+        # Some PyUHD MetaRange implementations expose only the aggregate
+        # start/stop/step methods and are not iterable. Servers include those
+        # aggregate fields so the client can still reconstruct a useful range.
+        if any(key in value for key in ("start", "stop", "step")):
+            return MetaRange(
+                [
+                    Range(
+                        value.get("start", 0.0),
+                        value.get("stop"),
+                        value.get("step", 0.0),
+                    )
+                ]
+            )
+        return MetaRange()
     if tag == "SubdevSpec":
         return SubdevSpec(value.get("spec", ""))
     if tag == "SubdevSpecPair":
