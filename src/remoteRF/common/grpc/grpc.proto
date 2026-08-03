@@ -62,6 +62,8 @@ message Argument {
         RealNumpyArray real_array = 6;
         string json_value = 7;
         bytes bytes_value = 8;
+        // Contiguous C-order numeric data; fields 5 and 6 remain decode-compatible.
+        NDArrayValue ndarray_value = 9;
     }
 }
 

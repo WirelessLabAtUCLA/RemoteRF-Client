@@ -1,10 +1,55 @@
-from ..grpc import grpc_pb2, grpc_pb2_grpc
+"""Serialization helpers for the legacy GenericRPC protocol."""
+from __future__ import annotations
+
 import json
+import math
+from typing import Any
+
 import numpy as np
 
-_JSON_TYPE_KEY = "__remoterf_json_type__"
+from ..grpc import grpc_pb2
 
-def _json_safe(value):
+_JSON_TYPE_KEY = "__remoterf_json_type__"
+_MAX_NDARRAY_BYTES = 64 * 1024 * 1024
+_MAX_NDARRAY_DIMENSIONS = 8
+_SUPPORTED_NDARRAY_KINDS = {"b", "i", "u", "f", "c"}
+
+
+def _validate_ndarray(dtype: np.dtype, shape) -> int:
+    """Return the expected payload length for a safe numeric ndarray."""
+    if dtype.hasobject or dtype.kind not in _SUPPORTED_NDARRAY_KINDS:
+        raise ValueError(f"unsupported ndarray dtype: {dtype}")
+
+    normalized_shape = tuple(int(item) for item in shape)
+    if (
+        len(normalized_shape) > _MAX_NDARRAY_DIMENSIONS
+        or any(item < 0 for item in normalized_shape)
+    ):
+        raise ValueError("invalid ndarray shape")
+
+    expected = math.prod(normalized_shape) * dtype.itemsize
+    if expected > _MAX_NDARRAY_BYTES:
+        raise ValueError(f"ndarray exceeds {_MAX_NDARRAY_BYTES} bytes")
+    return expected
+
+
+def _decode_ndarray(descriptor: grpc_pb2.NDArrayValue) -> np.ndarray:
+    try:
+        dtype = np.dtype(descriptor.dtype)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid ndarray dtype: {descriptor.dtype!r}") from exc
+
+    shape = tuple(int(item) for item in descriptor.shape)
+    expected = _validate_ndarray(dtype, shape)
+    actual = len(descriptor.data)
+    if actual != expected:
+        raise ValueError(
+            f"ndarray byte length mismatch: expected {expected}, got {actual}"
+        )
+    return np.frombuffer(descriptor.data, dtype=dtype).reshape(shape).copy()
+
+
+def _json_safe(value: Any):
     if hasattr(value, "as_payload"):
         return _json_safe(value.as_payload())
     if isinstance(value, np.ndarray):
@@ -27,21 +72,26 @@ def _json_safe(value):
             "complex": False,
             "data": array.tolist(),
         }
-    if isinstance(value, (np.bool_,)):
+    if isinstance(value, np.bool_):
         return bool(value)
-    if isinstance(value, (np.integer,)):
+    if isinstance(value, np.integer):
         return int(value)
-    if isinstance(value, (np.floating,)):
+    if isinstance(value, np.floating):
         return float(value)
     if isinstance(value, complex):
-        return {_JSON_TYPE_KEY: "complex", "real": float(value.real), "imag": float(value.imag)}
+        return {
+            _JSON_TYPE_KEY: "complex",
+            "real": float(value.real),
+            "imag": float(value.imag),
+        }
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return value
 
-def _json_restore(value):
+
+def _json_restore(value: Any):
     if isinstance(value, dict):
         kind = value.get(_JSON_TYPE_KEY)
         if kind == "ndarray":
@@ -58,32 +108,36 @@ def _json_restore(value):
         return [_json_restore(item) for item in value]
     return value
 
-def unmap_arg(arg):
-    if arg.HasField('int64_value'):
+
+def unmap_arg(arg: grpc_pb2.Argument):
+    kind = arg.WhichOneof("value")
+    if kind == "int64_value":
         return arg.int64_value
-    elif arg.HasField('float_value'):
+    if kind == "float_value":
         return arg.float_value
-    elif arg.HasField('string_value'):
+    if kind == "string_value":
         return arg.string_value
-    elif arg.HasField('bool_value'):
+    if kind == "bool_value":
         return arg.bool_value
-    elif arg.HasField('real_array'):
+    if kind == "ndarray_value":
+        return _decode_ndarray(arg.ndarray_value)
+    if kind == "real_array":
         shape = tuple(arg.real_array.shape.dim)
         return np.array(arg.real_array.data, dtype=np.float64).reshape(shape)
-    elif arg.HasField('complex_array'):
+    if kind == "complex_array":
         shape = tuple(arg.complex_array.shape.dim)
-        data = [complex(c.real, c.imag) for c in arg.complex_array.data]
+        data = [complex(item.real, item.imag) for item in arg.complex_array.data]
         return np.array(data, dtype=np.complex64).reshape(shape)
-    elif arg.HasField('json_value'):
+    if kind == "json_value":
         return _json_restore(json.loads(arg.json_value))
-    elif arg.HasField('bytes_value'):
+    if kind == "bytes_value":
         return bytes(arg.bytes_value)
-    else:
-        raise ValueError(f"Unknown argument type during unmapping: {arg}")
-    
-def map_arg(value):
+    raise ValueError(f"Unknown argument type during unmapping: {arg}")
+
+
+def map_arg(value: Any) -> grpc_pb2.Argument:
     arg = grpc_pb2.Argument()
-    
+
     if isinstance(value, (bool, np.bool_)):
         arg.bool_value = bool(value)
     elif hasattr(value, "as_payload"):
@@ -114,51 +168,33 @@ def map_arg(value):
     elif isinstance(value, np.ndarray):
         if value.dtype == object:
             raise ValueError(f"Cannot map object-dtype array: {value!r}")
-        if value.dtype.kind not in {"b", "i", "u", "f", "c"}:
-            arg.json_value = json.dumps(_json_safe(value.tolist()), separators=(",", ":"))
+        if value.dtype.kind not in _SUPPORTED_NDARRAY_KINDS:
+            arg.json_value = json.dumps(
+                _json_safe(value.tolist()), separators=(",", ":")
+            )
             return arg
-        if np.iscomplexobj(value):
-            complex_array = arg.complex_array
-            complex_array.shape.dim.extend(value.shape)
-            for num in value.ravel():
-                complex_num = complex_array.data.add()
-                complex_num.real = float(num.real)
-                complex_num.imag = float(num.imag)
-        else:
-            float_array = arg.real_array
-            float_array.shape.dim.extend(value.shape)
-            float_array.data.extend(np.asarray(value, dtype=np.float32).ravel())
+
+        array = np.asarray(value)
+        _validate_ndarray(array.dtype, array.shape)
+        if not array.flags.c_contiguous:
+            array = np.ascontiguousarray(array)
+        descriptor = arg.ndarray_value
+        descriptor.dtype = array.dtype.str
+        descriptor.shape.extend(array.shape)
+        descriptor.data = array.tobytes(order="C")
     else:
         raise ValueError(f"Unknown argument type during mapping: {value}")
     return arg
-        
-def map_array_proto(np_array):
-    arg = grpc_pb2.Argument()
-    
-    # Check if the array is complex
-    if np.iscomplexobj(np_array):
-        complex_array = grpc_pb2.ComplexArray()
-        for num in np_array.flat:
-            complex_number = complex_array.data.add()
-            complex_number.real = num.real
-            complex_number.imag = num.imag
-        arg.complex_array.CopyFrom(complex_array)
-    else:
-        # Handle as a regular float array
-        float_array = grpc_pb2.FloatArray()
-        float_array.data.extend(np_array.flat)
-        arg.float_array.CopyFrom(float_array)
 
-    return arg
 
-def unmap_array_proto(arg):
-    # Check which type of array is available and convert appropriately
-    if arg.HasField('complex_array'):
-        # Convert ComplexArray to a numpy array of complex numbers
-        data = [complex(cn.real, cn.imag) for cn in arg.complex_array.data]
-        return np.array(data, dtype=np.complex64)
-    elif arg.HasField('float_array'):
-        # Convert FloatArray to a numpy array of floats
-        return np.array(arg.float_array.data, dtype=np.float32)
-    else:
+def map_array_proto(np_array) -> grpc_pb2.Argument:
+    """Backward-compatible wrapper around :func:`map_arg`."""
+    return map_arg(np.asarray(np_array))
+
+
+def unmap_array_proto(arg: grpc_pb2.Argument) -> np.ndarray:
+    """Backward-compatible array-only wrapper around :func:`unmap_arg`."""
+    value = unmap_arg(arg)
+    if not isinstance(value, np.ndarray):
         raise ValueError("Argument does not contain a recognizable array.")
+    return value
