@@ -227,10 +227,6 @@ class RtlSdr:
     def valid_gains_db(self):
         return _try_get("valid_gains_db", self.token)
 
-    def get_capabilities(self):
-        'Return runtime identity, controls, and RemoteRF transport limits.'
-        return _try_call("get_capabilities", self.token)
-
     def read_bytes(self, num_bytes=_NO_ARG):
         'Read packed unsigned 8-bit interleaved IQ bytes.'
         return _try_calln("read_bytes", self.token, {

@@ -27,10 +27,13 @@ source venv/bin/activate    # Activate virtual environment
 pip install remoterf        # Install remoteRF
 ```
 
-## NI USRP-2901, B200-family, and USRP N210
+## NI USRP-2901, Ettus B205-mini, B200-family, and USRP N210
 
-The packaged client natively includes the shared USRP schema for the USB/B200
-family and Ethernet-connected N210. No custom client driver is required.
+The packaged client natively includes the shared USRP schema for the qualified
+NI USRP-2901, Ettus Research USRP B205-mini, the broader USB/B200 family, and
+the Ethernet-connected N210. No custom client driver is required. The B205-mini
+uses the same native-style API and reports its live 1 RX/1 TX channel topology
+through `remoterf_capabilities`.
 
 After reserving a server-local `usrp` inventory entry, fetch or refresh its
 Dynamic v2 package with the reservation token:
@@ -108,7 +111,6 @@ sdr.center_freq = 100_000_000
 sdr.gain = "auto"
 sdr.agc_mode = True
 
-print(sdr.get_capabilities())
 samples = sdr.read_samples(16_384)  # NumPy complex64
 raw_iq = sdr.read_bytes(4096)       # packed uint8 I/Q bytes
 ```

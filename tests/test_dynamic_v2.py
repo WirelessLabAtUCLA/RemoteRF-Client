@@ -337,12 +337,14 @@ class MalformedRXStub:
 
 
 class DynamicV2Tests(unittest.TestCase):
-    def test_packaged_usrp_schema_advertises_n210_ethernet_support(self):
+    def test_packaged_usrp_schema_advertises_qualified_profiles(self):
         from remoteRF.drivers.usrp import usrp_remote
 
         self.assertEqual(usrp_remote._SCHEMA["driver_version"], "0.0.7")
         self.assertIn("n210", usrp_remote._SCHEMA["hardware_profiles"])
         self.assertIn("usrp2", usrp_remote._SCHEMA["hardware_profiles"])
+        self.assertIn("b205mini", usrp_remote._SCHEMA["hardware_profiles"])
+        self.assertIn("b205i", usrp_remote._SCHEMA["hardware_profiles"])
         profiles = {
             item["profile_id"]: item
             for item in usrp_remote._SCHEMA["hardware_profile_definitions"]
@@ -351,6 +353,12 @@ class DynamicV2Tests(unittest.TestCase):
             profiles["usrp2901"]["support_level"],
             "qualified_native",
         )
+        self.assertEqual(
+            profiles["b205mini"]["support_level"],
+            "qualified_native",
+        )
+        self.assertEqual(profiles["b205mini"]["selector"], "serial")
+        self.assertEqual(profiles["b205mini"]["uhd_device_type"], "b200")
         self.assertEqual(profiles["n210"]["support_level"], "qualified_native")
         self.assertEqual(profiles["x3xx"]["support_level"], "generic_uhd")
         self.assertIn(

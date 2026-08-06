@@ -225,7 +225,6 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
                     ],
                 },
                 "call_reset_buffer": {"args": []},
-                "call_get_capabilities": {"args": []},
             },
         }
 
@@ -238,7 +237,7 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         self.assertIn('"num_samples": num_samples,', code)
         self.assertIn("def read_bytes(self, num_bytes=_NO_ARG):", code)
         self.assertIn("def reset_buffer(self):", code)
-        self.assertIn("def get_capabilities(self):", code)
+        self.assertNotIn("def get_capabilities(self):", code)
         self.assertIn("@property\n    def center_freq(self):", code)
         self.assertIn("@center_freq.setter", code)
         self.assertIn("@property\n    def sample_rate(self):", code)
