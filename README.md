@@ -128,6 +128,39 @@ export REMOTERF_ADDR=rrf2.example.ts.net:61005
 export REMOTERF_TLS_SERVER_NAME=certificate-name.example
 ```
 
+## TI mmWave radar
+
+TI radar clients are generated from the server's `ti_mmwave` schema. Only the
+machine physically connected to the radar needs `pyserial` or a CP210x driver.
+The initial parser profile supports xWR68xx mmWave SDK 3 out-of-box TLV output.
+
+```python
+from remoteRF.drivers import ensure_driver
+
+token = "reservation-token"
+ensure_driver(token=token)
+
+from remoteRF.drivers.ti_mmwave import TiMmWave, decode_frame
+
+radar = TiMmWave(token)
+print(radar.device_info)
+print(radar.query_version())
+
+radar.apply_config(open("profile.cfg").read(), start=True)
+try:
+    packet = radar.read_frame(timeout=1.0)
+    frame = decode_frame(packet)
+    print(frame.header.frame_number, frame.points, frame.side_info)
+finally:
+    radar.stop()
+```
+
+`read_frame()` returns one complete binary UART packet. Decoding is client-local
+and retains unknown TLVs as raw bytes, allowing custom firmware to be captured
+before a dedicated parser profile is added. `stream_stats` reports dropped
+frames, queued frames, resynchronization bytes, invalid headers, and reader
+health. Remote firmware flashing is deliberately unsupported.
+
 If `pip install` doesn't work, you can clone the [source](https://github.com/WirelessLabAtUCLA/RemoteRF-Client) directly from github.
 
 <!-- 1. **Clone the repository:**
