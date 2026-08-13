@@ -1,3 +1,18 @@
+# Copyright (C) 2026 RemoteRF
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 IDL driver code-generator.
 
@@ -24,6 +39,25 @@ import keyword
 from pathlib import Path
 
 from ..common.utils import map_arg, unmap_arg
+
+
+_GPL_NOTICE_LINES = (
+    "# Copyright (C) 2026 RemoteRF",
+    "#",
+    "# This program is free software: you can redistribute it and/or modify",
+    "# it under the terms of the GNU General Public License as published by",
+    "# the Free Software Foundation, either version 3 of the License, or",
+    "# (at your option) any later version.",
+    "#",
+    "# This program is distributed in the hope that it will be useful,",
+    "# but WITHOUT ANY WARRANTY; without even the implied warranty of",
+    "# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the",
+    "# GNU General Public License for more details.",
+    "#",
+    "# You should have received a copy of the GNU General Public License",
+    "# along with this program.  If not, see <https://www.gnu.org/licenses/>.",
+    "",
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1144,7 +1178,7 @@ def _codegen(schema: dict) -> str:
         call_map,
     ) = _schema_maps(schema)
 
-    lines: list[str] = []
+    lines: list[str] = list(_GPL_NOTICE_LINES)
 
     # ── File header ───────────────────────────────────────────────────
     lines += [
@@ -1334,6 +1368,7 @@ def _write_driver_files(schema: dict) -> Path:
     pkg_dir.mkdir(exist_ok=True)
     (pkg_dir / f"{device_type}_remote.py").write_text(_codegen(schema), encoding="utf-8")
     init_lines = [
+        *_GPL_NOTICE_LINES,
         "from importlib import import_module as _import_module",
         "",
         f"from . import {device_type}_remote as adi",
@@ -1397,6 +1432,7 @@ def _write_v2_driver_files(schema: dict) -> Path:
     remote_path.write_text(
         "\n".join(
             [
+                *_GPL_NOTICE_LINES,
                 "# Auto-generated from Dynamic IDL schema v2 — do not edit.",
                 "from ..dynamic_v2 import build_uhd_bindings",
                 "",
@@ -1417,6 +1453,7 @@ def _write_v2_driver_files(schema: dict) -> Path:
     (pkg_dir / "__init__.py").write_text(
         "\n".join(
             [
+                *_GPL_NOTICE_LINES,
                 f"from . import {device_type}_remote as adi",
                 f"from .{device_type}_remote import {class_name}, uhd",
                 "",

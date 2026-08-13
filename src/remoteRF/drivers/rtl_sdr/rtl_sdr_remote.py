@@ -1,3 +1,18 @@
+# Copyright (C) 2026 RemoteRF
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 # Auto-generated from IDL schema — do not edit by hand.
 # device_type: rtl_sdr  driver_version: 0.1.1  schema_hash: sha256:1c84effc2c21be734398a87d24bb9da52ab5b7ea0def955c503da484b8d818c0
 

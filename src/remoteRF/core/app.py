@@ -1,3 +1,18 @@
+# Copyright (C) 2026 RemoteRF
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from remoteRF.core.grpc_client import handle_admin_command
 from . import *
 from ..common.utils import *
@@ -331,7 +346,7 @@ def reserve():
         id = session.prompt(stylize("Enter the device ID you would like to reserve: ", Sty.DEFAULT))
         token = account.reserve_device(int(id), get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
         if token != '':
-            printf(f"Reservation successful. Thy Token -> ", Sty.BOLD, f"{token}", Sty.BG_GREEN)
+            printf(f"Reservation successful. Your Token -> ", Sty.BOLD, f"{token}", Sty.BG_GREEN)
             printf(f"Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one. ", Sty.DEFAULT)
     except Exception as e:
         printf(f"Error: {e}", Sty.BRIGHT_RED)
@@ -638,7 +653,7 @@ def interactive_reserve_next_days(block_minutes=60):
         token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
         if token:
             printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
-            printf("Thy Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
+            printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
             printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
         
     except Exception as e:
@@ -911,7 +926,7 @@ def interactive_reserve_next_days_auto():
         token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
         if token:
             printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
-            printf("Thy Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
+            printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
             printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
 
     except Exception as e:

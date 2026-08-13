@@ -223,7 +223,7 @@ resdev # To reserve a device
 
 # Input the number of days you want to view, and it will display available reservations in that time span.
 
-Reservation successful. Thy Token -> example_token
+Reservation successful. Your Token -> example_token
 
 # Take note of this token. You will need it to actually access the device.
 ```
