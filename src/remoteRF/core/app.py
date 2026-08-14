@@ -130,16 +130,16 @@ def title():
 
 def commands():
     printf("Commands:", (Sty.BOLD, Sty.BLUE))
+    printf("'help' or 'h' ", Sty.MAGENTA, "   : ", Sty.GRAY, "Show this help message", Sty.DEFAULT)
     printf("'clear' ", Sty.MAGENTA, "         : ", Sty.GRAY, "Clear terminal", Sty.DEFAULT)
     printf("'getdev' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View devices", Sty.DEFAULT)
-    printf("'help' or 'h' ", Sty.MAGENTA, "   : ", Sty.GRAY, "Show this help message", Sty.DEFAULT)
+    printf("'resdev' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Reserve a device", Sty.DEFAULT)
+    printf("'cancelres' ", Sty.MAGENTA, "     : ", Sty.GRAY, "Cancel a reservation", Sty.DEFAULT)
+    printf("'getres' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View all reservations", Sty.DEFAULT)
+    printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
     printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
     printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
     printf("'exit' or 'quit' ", Sty.MAGENTA, ": ", Sty.GRAY, "Exit", Sty.DEFAULT)
-    printf("'getres' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View all reservations", Sty.DEFAULT)
-    printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
-    printf("'cancelres' ", Sty.MAGENTA, "     : ", Sty.GRAY, "Cancel a reservation", Sty.DEFAULT)
-    printf("'resdev' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Reserve a device", Sty.DEFAULT)
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
     
