@@ -13,27 +13,46 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from ...core.grpc_client import rpc_client
 from ...common.utils import *
-from ...common.grpc import grpc_pb2
-from ...core.grpc_client import get_tcp_calls
+from .._virtual import (
+    is_virtual_token,
+    make_virtual_token,
+    retag_virtual_token,
+    virtual_call,
+    virtual_get,
+    virtual_set,
+)
+
+
+def _rpc_client(*, function_name, args):
+    # Keep transport/configuration initialization out of the virtual path.
+    from ...core.grpc_client import rpc_client
+
+    return rpc_client(function_name=function_name, args=args)
 
 def try_get(function_name, token):
+    if is_virtual_token(token):
+        return virtual_get(token, function_name)
     try:
-        return unmap_arg(rpc_client(function_name=f"Pluto:{function_name}:GET", args={'a':map_arg(token)}).results[function_name])
+        return unmap_arg(_rpc_client(function_name=f"Pluto:{function_name}:GET", args={'a':map_arg(token)}).results[function_name])
     except Exception as e:
         input(f"Error: {e}\nHit enter to continue...")
     return None
 
 def try_set(function_name, value, token):
+    if is_virtual_token(token):
+        virtual_set(token, function_name, value)
+        return None
     try:
-        rpc_client(function_name=f"Pluto:{function_name}:SET", args={function_name: map_arg(value), 'a':map_arg(token)})
+        _rpc_client(function_name=f"Pluto:{function_name}:SET", args={function_name: map_arg(value), 'a':map_arg(token)})
     except Exception as e:
         input(f"Error: {e}\nHit enter to continue...")
         
 def try_call_0_arg(function_name, token):   # 0 argument call
+    if is_virtual_token(token):
+        return virtual_call(token, function_name)
     try:
-        response = rpc_client(
+        response = _rpc_client(
             function_name=f"Pluto:{function_name}:CALL0", 
             args={
                 'a': map_arg(token)
@@ -45,8 +64,10 @@ def try_call_0_arg(function_name, token):   # 0 argument call
     return None
         
 def try_call_1_arg(function_name, arg, token):  # 1 argument call
+    if is_virtual_token(token):
+        return virtual_call(token, function_name, arg, has_arg=True)
     try:
-        response = rpc_client(
+        response = _rpc_client(
             function_name=f"Pluto:{function_name}:CALL1", 
             args={
                 'a': map_arg(token),
@@ -73,12 +94,21 @@ class ad9364(rx_tx_def):
 
 class Pluto: # client
     
-    def __init__(self, token:str, debug=False):
+    def __init__(self, token: str | None = None, debug=False, *, virtual=False):
+        self.virtual = bool(virtual)
+        if self.virtual:
+            self.token = make_virtual_token(token, device_type="adalm_pluto")
+            return
+        if token is None:
+            raise ValueError("A reservation token is required unless virtual=True")
         self.token = token
-        response = try_call_0_arg(function_name="ip", token=token)
+        try_call_0_arg(function_name="ip", token=token)
         
         
     def api_token(self, token:str) -> None:
+        if self.virtual:
+            self.token = retag_virtual_token(self.token, token)
+            return
         self.token = token
         try_call_0_arg(function_name="ip", token=token)
     
@@ -201,7 +231,6 @@ class Pluto: # client
         try_call_0_arg("rx_destroy_buffer", self.token)
 
     #endregion
-    
     #region rx_def
     
     def rx(self):
@@ -216,7 +245,6 @@ class Pluto: # client
         try_set("rx_buffer_size", value, self.token)
     
     #endregion
-    
     #region tx_def
     
     def tx(self, value):
@@ -259,6 +287,5 @@ class Pluto: # client
     def tx_int8_filter_en(self, value: bool):    # ! UNTESTED !
         """tx_int8_filter_en: Enable interpolate by 8 filter in FPGA"""
         return try_set("tx_int8_filter_en", value, self.token)
-    
+
     #endregion
- 
