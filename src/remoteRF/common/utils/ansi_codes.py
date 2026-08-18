@@ -39,6 +39,7 @@ class Sty(Enum):
     BRIGHT_RED = 'bright-red'
     BRIGHT_GREEN = 'bright-green'
     BRIGHT_BLUE = 'bright-blue'
+    BRIGHT_MAGENTA = 'bright-magenta'
     
     # Formatting
     BOLD = 'bold'
@@ -70,6 +71,7 @@ _COLOR_STYLE_MAP = {
     'bright-red': 'fg:ansibrightred',
     'bright-green': 'fg:ansibrightgreen',
     'bright-blue': 'fg:ansibrightblue',
+    'bright-magenta': 'fg:ansibrightmagenta',
 }
 
 _MONO_STYLES = {

@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from remoteRF.core.grpc_client import handle_admin_command
+from remoteRF.core.grpc_client import addr as server_addr, handle_admin_command
 from . import *
 from ..common.utils import *
 
@@ -29,23 +29,17 @@ from prompt_toolkit import PromptSession
 account = RemoteRFAccount()
 session = PromptSession()
 
-DEFAULT_TIMEZONE_NOTE = "All times are in Pacific Time (Los Angeles)"
 DEFAULT_TOS_URL = "https://remoterf.net/tos"
 SERVER_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-BANNER_CREDIT = "Created at UCLA by E. Ge and I. Roberts."
 
 
-def _banner_note() -> str:
-    note_path = Path(__file__).with_name("banner_note.txt")
-    try:
-        text = note_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return DEFAULT_TIMEZONE_NOTE
-    return text or DEFAULT_TIMEZONE_NOTE
-
-
-def _banner_details() -> str:
-    return f"\n{BANNER_CREDIT}\nCurrent version: {print_my_version()}\n{_banner_note()}"
+def _clear_terminal() -> None:
+    """Clear without forking after gRPC has started background threads."""
+    if os.name == "nt":
+        os.system("cls")
+        print()
+        return
+    print("\033[2J\033[H")
 
 
 def _tos_notice_text() -> str:
@@ -85,8 +79,9 @@ def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.
         end = f"{end_time.strftime('%Y-%m-%d')} {end}"
     return f"{start} - {end}"
 
-def welcome():
-    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), _banner_details(), (Sty.GRAY))
+def welcome(*, show_banner: bool = True):
+    if show_banner:
+        print_client_banner(print_my_version(), server=server_addr)
     try:
         inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':
@@ -105,28 +100,30 @@ def welcome():
             account.password = password
             account.email = input("Email: ")  # TODO: Email verification.
             # check if login was valid
-            os.system('cls' if os.name == 'nt' else 'clear')
+            _clear_terminal()
             
             if not account.create_user():
-                welcome()
+                welcome(show_banner=False)
         else:
             account.username = input("Username: ")
             account.password = getpass.getpass("Password (Hidden): ")
             # check if login was valid
             if not account.login_user():
-                os.system('cls' if os.name == 'nt' else 'clear')
+                _clear_terminal()
                 print("Invalid login. Try again. Contact admin(s) if you forgot your password.")
-                welcome()
+                welcome(show_banner=False)
     except KeyboardInterrupt:
         exit()
     except EOFError:
         exit()
 
 def title():
-    printf(f"Welcome to the RemoteRF Platform", (Sty.BOLD, Sty.BLUE), _banner_details(), (Sty.GRAY))
-    printf("Terms of Service: ", Sty.BOLD, _tos_url(), Sty.DEFAULT)
-    # printf(f"Logged in as: ", Sty.DEFAULT, f'{account.username}', Sty.MAGENTA)
-    printf(f"Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for a list of avaliable commands.", Sty.DEFAULT)  
+    print_internal_banner(
+        print_my_version(),
+        server=server_addr,
+        tos_url=_tos_url(),
+    )
+    printf("Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for a list of available commands.", Sty.DEFAULT)
 
 def commands():
     printf("Commands:", (Sty.BOLD, Sty.BLUE))
@@ -158,7 +155,7 @@ def commands():
     
     
 def clear():
-    os.system('cls' if os.name == 'nt' else 'clear')
+    _clear_terminal()
     title()
     
 def print_my_version():
@@ -169,23 +166,33 @@ def print_my_version():
         top = __name__.split('.')[0]
         # Try mapping package → distribution (Py3.10+); fall back to same name.
         for dist in getattr(md, "packages_distributions", lambda: {})().get(top, []):
-            if (latest == md.version(dist)):
-                return f"{md.version(dist)} (latest)"
-            else:
-                return f"{md.version(dist)} (OUTDATED)"
+            installed = md.version(dist)
+            if latest is None:
+                return installed
+            if latest == installed:
+                return f"{installed} (latest)"
+            return f"{installed} (OUTDATED)"
         return md.version(top)
     except Exception:
         # Last resort: __version__ attribute if you define it.
         return getattr(sys.modules.get(__name__.split('.')[0]), "__version__", "unknown")
 
 def newest_version_pip(project="remoterf"):
-    import sys, subprocess, re
-    out = subprocess.check_output(
-        [sys.executable, "-m", "pip", "index", "versions", project],
-        text=True, stderr=subprocess.STDOUT
-    )
-    m = re.search(r"(?i)\blatest\s*:\s*([^\s,]+)", out)
-    return m.group(1) if m else None
+    """Fetch the published version without spawning a process beside gRPC."""
+    import json
+    from urllib.parse import quote
+    from urllib.request import Request, urlopen
+
+    try:
+        request = Request(
+            f"https://pypi.org/pypi/{quote(project)}/json",
+            headers={"User-Agent": "RemoteRF-Client"},
+        )
+        with urlopen(request, timeout=2.0) as response:
+            payload = json.load(response)
+        return payload.get("info", {}).get("version")
+    except (OSError, ValueError, TypeError):
+        return None
 
     
 def reservations():

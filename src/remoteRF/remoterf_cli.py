@@ -18,16 +18,49 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib.metadata import PackageNotFoundError, version as distribution_version
+from pathlib import Path
 from typing import Optional, Sequence
 
-import sys
+from .common.utils import Sty, print_client_banner, printf
 
-from pathlib import Path
+SERVER_CONNECT_TIMEOUT_SECONDS = 3.0
 
-from .common.utils import Sty, printf
+
+def _installed_version() -> str:
+    try:
+        return distribution_version("remoterf")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _connected_server(timeout_seconds: float = SERVER_CONNECT_TIMEOUT_SECONDS) -> str | None:
+    """Return the configured endpoint only after its gRPC channel is ready."""
+    import grpc
+
+    from remoteRF.core.grpc_client import addr, channel
+
+    try:
+        grpc.channel_ready_future(channel).result(timeout=timeout_seconds)
+    except (grpc.FutureTimeoutError, grpc.RpcError):
+        return None
+    return addr
+
+
+def _print_server_unavailable() -> None:
+    print_client_banner(_installed_version(), server="")
+    printf("Please configure remoterf properly first.", Sty.DEFAULT)
+    printf(
+        "Run: ",
+        Sty.GRAY,
+        "remoterf --config --addr <host:port>",
+        Sty.CYAN,
+    )
+
 
 def _config_root() -> Path:
     return Path.home() / ".config" / "remoterf-client"
+
 
 def _env_path() -> Path:
     return _config_root() / ".env"
@@ -124,9 +157,13 @@ def main() -> int:
         return 0
 
     if argv[0] in ("--login", "-login", "-l"):
-        ok, msg = _ensure_config_present()
+        ok, _ = _ensure_config_present()
         if not ok:
-            print(msg)
+            _print_server_unavailable()
+            return 2
+
+        if _connected_server() is None:
+            _print_server_unavailable()
             return 2
 
         from remoteRF.core.acc_login import main as _
