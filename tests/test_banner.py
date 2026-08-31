@@ -47,11 +47,11 @@ class BannerTests(unittest.TestCase):
             index for index, line in enumerate(lines) if "╭─ REMOTERF CLIENT" in line
         )
         self.assertIn("◆ www.remoterf.net", lines[panel_top + 1])
-        self.assertIn("Created by E. Ge and I. Roberts", lines[panel_top + 2])
+        self.assertIn("Created by the Wireless Lab at UCLA", lines[panel_top + 2])
         self.assertIn("VERSION  2.0.9 (latest)", lines[panel_top + 3])
         self.assertIn("SERVER   192.0.2.10:61005", lines[panel_top + 4])
         self.assertNotIn("STATUS", text)
-        self.assertNotIn("UCLA", text)
+        self.assertIn("UCLA", text)
         self.assertNotIn("TIME", text)
         self.assertTrue(all(len(line) < SIDE_BY_SIDE_MIN_COLUMNS for line in lines))
 
@@ -81,7 +81,7 @@ class BannerTests(unittest.TestCase):
         self.assertIn(ASCII_COMPAT_BANNER.splitlines()[0], text)
         self.assertNotIn("█", text)
         self.assertIn("* www.remoterf.net", text)
-        self.assertIn("Created by E. Ge and I. Roberts", text)
+        self.assertIn("Created by the Wireless Lab at UCLA", text)
         self.assertIn("SERVER   rrf.example:61005", text)
         self.assertNotIn("TIME", text)
 

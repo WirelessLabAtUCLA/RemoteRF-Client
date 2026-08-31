@@ -47,7 +47,7 @@ COMPACT_BANNER = "RemoteRF"
 ASCII_WORDMARK_WIDTH = max(len(line) for line in ASCII_BANNER.splitlines())
 ASCII_BANNER_WIDTH = max(len(line) for line in BRANDED_ASCII_BANNER.splitlines())
 ASCII_BANNER_MIN_COLUMNS = ASCII_BANNER_WIDTH + 1
-PANEL_CONTENT_WIDTH = 31
+PANEL_CONTENT_WIDTH = 35
 PANEL_INNER_WIDTH = PANEL_CONTENT_WIDTH + 2
 PANEL_WIDTH = PANEL_INNER_WIDTH + 2
 PANEL_GAP = 1
@@ -113,7 +113,7 @@ def _panel_lines(
     top = f"{top_left}{label}{horizontal * (PANEL_INNER_WIDTH - len(label))}{top_right}"
     content = (
         f"{marker} www.remoterf.net",
-        "Created by E. Ge and I. Roberts",
+        "Created by the Wireless Lab at UCLA",
         f"VERSION  {version}",
         f"SERVER   {server or 'NA'}",
     )
