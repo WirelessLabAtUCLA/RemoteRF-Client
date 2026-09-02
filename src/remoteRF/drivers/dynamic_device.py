@@ -1070,6 +1070,8 @@ def _emit_client_object_bindings(client_objects: dict, *, class_name: str) -> li
 # Regular string (not f-string) — {_PREFIX}/{prop}/{e} are literal text
 # that become f-strings inside the *generated* file.
 _HELPERS = '''\
+import os
+
 from importlib import import_module as _import_module
 
 from ...common.utils import map_arg, unmap_arg
@@ -1230,7 +1232,9 @@ def _codegen(schema: dict) -> str:
         f'            self.token = make_virtual_token(token, device_type="{device_type}")',
         "            return",
         '        if token is None:',
-        '            raise ValueError("A reservation token is required unless virtual=True")',
+        '            token = os.getenv("REMOTERF_TOKEN")',
+        '        if not token:',
+        '            raise ValueError("A reservation token is required; pass token= or set REMOTERF_TOKEN")',
         "        self.token = token",
         "        from ..dynamic_device import install_driver_if_stale",
         "        install_driver_if_stale(token=token, current_hash=_SCHEMA_HASH)",

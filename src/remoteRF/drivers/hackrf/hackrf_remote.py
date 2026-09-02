@@ -14,19 +14,33 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Auto-generated from IDL schema — do not edit by hand.
-# device_type: hackrf  driver_version: 0.1.1  schema_hash: sha256:1d6e935e2e33959e753b89d943a1a5696d814ec28aac52a7c39142b3fce89693
+# device_type: hackrf  driver_version: 0.1.1  schema_hash: sha256:6fb625ce99aaf7e190de013ad3e66276265020a5464d9d55d4c0e076dae28f3c
 
 _PREFIX = "Hackrf"
-_SCHEMA_HASH = "sha256:1d6e935e2e33959e753b89d943a1a5696d814ec28aac52a7c39142b3fce89693"
+_SCHEMA_HASH = "sha256:6fb625ce99aaf7e190de013ad3e66276265020a5464d9d55d4c0e076dae28f3c"
 _CLIENT_MODULES = {}
 _CLIENT_OBJECTS = {}
 
+import os
+
 from importlib import import_module as _import_module
 
-from ...core.grpc_client import rpc_client
 from ...common.utils import map_arg, unmap_arg
+from .._virtual import (
+    is_virtual_token,
+    make_virtual_token,
+    virtual_call,
+    virtual_get,
+    virtual_set,
+)
 
 _NO_ARG = object()
+
+
+def _rpc_client(*, function_name, args):
+    from ...core.grpc_client import rpc_client
+
+    return rpc_client(function_name=function_name, args=args)
 
 
 for _alias, _module_path in _CLIENT_MODULES.items():
@@ -71,27 +85,34 @@ def _wrap_client_return(spec, self_obj, result):
 
 
 def _try_get(prop, token):
-    return unmap_arg(rpc_client(
+    if is_virtual_token(token):
+        return virtual_get(token, prop)
+    return unmap_arg(_rpc_client(
         function_name=f"{_PREFIX}:{prop}:GET",
         args={'a': map_arg(token)},
     ).results[prop])
 
 
 def _try_set(prop, value, token):
-    rpc_client(
+    if is_virtual_token(token):
+        virtual_set(token, prop, value)
+        return None
+    _rpc_client(
         function_name=f"{_PREFIX}:{prop}:SET",
         args={prop: map_arg(value), 'a': map_arg(token)},
     )
 
 
 def _try_call(prop, token, arg=_NO_ARG):
+    if is_virtual_token(token):
+        return virtual_call(token, prop, arg, has_arg=arg is not _NO_ARG)
     if arg is _NO_ARG:
-        resp = rpc_client(
+        resp = _rpc_client(
             function_name=f"{_PREFIX}:{prop}:CALL0",
             args={'a': map_arg(token)},
         )
     else:
-        resp = rpc_client(
+        resp = _rpc_client(
             function_name=f"{_PREFIX}:{prop}:CALL1",
             args={'a': map_arg(token), 'arg1': map_arg(arg)},
         )
@@ -100,12 +121,15 @@ def _try_call(prop, token, arg=_NO_ARG):
 
 
 def _try_calln(prop, token, kwargs):
+    if is_virtual_token(token):
+        filtered = {key: value for key, value in dict(kwargs).items() if value is not _NO_ARG}
+        return virtual_call(token, prop, filtered, has_arg=True)
     payload = {'a': map_arg(token)}
     for key, value in dict(kwargs).items():
         if value is _NO_ARG:
             continue
         payload[str(key)] = map_arg(value)
-    resp = rpc_client(
+    resp = _rpc_client(
         function_name=f"{_PREFIX}:{prop}:CALLN",
         args=payload,
     )
@@ -114,7 +138,15 @@ def _try_calln(prop, token, kwargs):
 
 class HackRF:
 
-    def __init__(self, token: str):
+    def __init__(self, token: str = None, *, virtual: bool = False):
+        self.virtual = bool(virtual)
+        if self.virtual:
+            self.token = make_virtual_token(token, device_type="hackrf")
+            return
+        if token is None:
+            token = os.getenv("REMOTERF_TOKEN")
+        if not token:
+            raise ValueError("A reservation token is required; pass token= or set REMOTERF_TOKEN")
         self.token = token
         from ..dynamic_device import install_driver_if_stale
         install_driver_if_stale(token=token, current_hash=_SCHEMA_HASH)
@@ -204,6 +236,10 @@ class HackRF:
         'Clear any captured or queued IQ bytes while the radio is idle.'
         return _try_call("clear_buffer", self.token)
 
+    def close(self):
+        'Safely end this remote TX use without closing the server-owned radio.'
+        return _try_call("close", self.token)
+
     def enumerate(self):
         'Return attached serials as a JSON array for broad client compatibility.'
         return _try_call("enumerate", self.token)
@@ -213,7 +249,7 @@ class HackRF:
         return _try_call("get_serial_no", self.token)
 
     def load_tx_iq(self, samples):
-        'Convert normalized IQ samples and load the native transmit buffer.'
+        'Load normalized complex or native interleaved signed-int8 TX IQ.'
         return _try_call("load_tx_iq", self.token, samples)
 
     def read_samples(self, num_samples=_NO_ARG):
@@ -221,6 +257,18 @@ class HackRF:
         return _try_calln("read_samples", self.token, {
             "num_samples": num_samples,
         })
+
+    def set_freq(self, value):
+        'Compatibility alias for setting the center frequency in Hz.'
+        return _try_call("set_freq", self.token, value)
+
+    def set_sample_rate(self, value):
+        'Compatibility alias for setting the complex sample rate in Hz.'
+        return _try_call("set_sample_rate", self.token, value)
+
+    def setup(self):
+        'Confirm the already-managed remote HackRF is ready for use.'
+        return _try_call("setup", self.token)
 
     def start_tx(self):
         'Start transmitting the IQ bytes previously loaded with load_tx_iq().'

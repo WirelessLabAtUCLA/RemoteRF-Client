@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import os
 import unittest
 import sys
 import tempfile
@@ -413,6 +414,15 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
             exec(code, module.__dict__)
 
             device = module.FakeDevice("token")
+            old_token = os.environ.get("REMOTERF_TOKEN")
+            os.environ["REMOTERF_TOKEN"] = "token-from-env"
+            try:
+                self.assertEqual(module.FakeDevice().token, "token-from-env")
+            finally:
+                if old_token is None:
+                    os.environ.pop("REMOTERF_TOKEN", None)
+                else:
+                    os.environ["REMOTERF_TOKEN"] = old_token
             self.assertEqual(device.status, {"raw": True})
             self.assertEqual(device.echo({"payload": 3}), {"payload": 3})
             self.assertEqual(device.configure(1.0), {"configured": True})
@@ -423,6 +433,7 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         self.assertEqual(
             [item[0] for item in seen],
             [
+                "Fake_device:ip:CALL0",
                 "Fake_device:ip:CALL0",
                 "Fake_device:status:GET",
                 "Fake_device:echo:CALL1",
