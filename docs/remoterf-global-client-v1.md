@@ -109,8 +109,19 @@ $ remoterf use ucla
 6. request a short-lived, deployment-targeted Global access assertion;
 7. redeem it via the deployment's `GlobalAuthV1.ExchangeAssertion`.
 
-Step 7 is where a real v1.0 install currently stops -- see [Current
-limitations](#current-limitations) below.
+The client uses the canonical `GlobalAuthV1` protobuf generated from
+`RemoteRF-Server`. The response contains a deployment-local username and a
+short-lived deployment-local session token. The assertion is single-use and
+is never stored; Global access/refresh tokens are never sent to the
+deployment; and the deployment-local session token is never sent to Global.
+
+After selection, start the usual workflow with `remoterf --login`. In Global
+mode it does not prompt for a deployment password: it verifies the
+deployment-local session through the existing RemoteRF account RPCs and then
+uses the existing device/reservation commands. If that local session expires,
+the client refreshes it with a new Global assertion before the next safe
+request. It never retries a submitted reservation, cancellation, TX, sample
+upload, or other non-idempotent operation automatically.
 
 ## Global catalog vs. owner-authoritative state
 
@@ -144,21 +155,7 @@ This only clears which deployment is "active" -- it never touches your
 existing `~/.config/remoterf-client/.env`, so your direct/LAN configuration
 is exactly as you left it and needs no reconfiguration.
 
-## Current limitations (v1.0)
-
-This client implements every Global-side step through requesting a Global
-access assertion. The remaining step -- redeeming that assertion at the
-deployment via `GlobalAuthV1.ExchangeAssertion` -- is not implemented,
-because **no canonical `GlobalAuthV1` protobuf contract exists yet**
-anywhere in the RemoteRF-Server repository (confirmed at the time this
-client was built; only a federation *research* document exists there, not
-an implementation). Rather than guess that wire contract, `remoterf use
-<slug>` fails with a clear `GlobalAuthUnavailableError` at that exact step
-and does **not** fall back to a deployment's username/password login. See
-[remoterf-global-client-security.md](remoterf-global-client-security.md)
-for the trust model this preserves, and
-[remoterf-global-client-troubleshooting.md](remoterf-global-client-troubleshooting.md)
-for what that error looks like and why it's expected today.
+## Deliberately out of scope
 
 Not implemented in v1.0 (all deliberately out of scope, some by design for
 a much later version):
@@ -176,7 +173,7 @@ a much later version):
 Everything under `remoteRF.global_client` is a plain, importable Python
 API (typed dataclasses/Pydantic models, no CLI coupling) --
 `GlobalApiClient`, `AuthenticatedGlobalClient`, `GlobalSessionManager`,
-etc. It is new in this version and not yet declared stable; expect it to
-evolve alongside `GlobalAuthV1` support. `remoterf_cli.py`'s existing
+and `GrpcGlobalAssertionExchange`. It is new in this version and not yet
+declared stable. `remoterf_cli.py`'s existing
 `--config`/`--login`/`--version` behavior and `remoteRF.core`/`remoteRF.drivers`
 remain the stable, documented public surface.

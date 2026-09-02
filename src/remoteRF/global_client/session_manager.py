@@ -34,7 +34,7 @@ from typing import Optional
 import grpc
 
 from .api_client import GlobalApiHttpError
-from .assertion_exchange import GlobalAuthExchangeClient, GlobalAuthExchangeRequest, UnavailableGlobalAuthV1Client
+from .assertion_exchange import GrpcGlobalAssertionExchange, GlobalAuthExchangeClient, GlobalAuthExchangeRequest
 from .auth_client import AuthenticatedGlobalClient
 from .ca_store import verify_and_store_ca
 from .channel_factory import build_deployment_channel
@@ -46,7 +46,7 @@ from .errors import (
     GlobalAuthUnavailableError,
     GlobalClientError,
 )
-from .local_sessions import LocalDeploymentSession, LocalSessionStore
+from .local_sessions import GlobalDeploymentSession, LocalSessionStore
 from .route_resolver import ResolvedRoute, resolve_route
 from .schemas import DeploymentSummary
 from .state import DeploymentProfile, ca_path, save_deployment_profile
@@ -60,7 +60,7 @@ MAX_ASSERTION_ATTEMPTS = 2
 class UseResult:
     deployment: DeploymentSummary
     route: ResolvedRoute
-    session: LocalDeploymentSession
+    session: GlobalDeploymentSession
 
 
 class GlobalSessionManager:
@@ -75,7 +75,7 @@ class GlobalSessionManager:
         self._config_root = config_root
         self._api = api
         self._local_sessions = local_sessions
-        self._exchange_client = exchange_client or UnavailableGlobalAuthV1Client()
+        self._exchange_client = exchange_client or GrpcGlobalAssertionExchange()
 
     # --- deployment + route resolution --------------------------------------
 
@@ -145,7 +145,7 @@ class GlobalSessionManager:
 
     # --- assertion exchange with bounded, discard-on-ambiguous-failure retry ---
 
-    def _exchange(self, route: ResolvedRoute, channel: grpc.Channel) -> LocalDeploymentSession:
+    def _exchange(self, route: ResolvedRoute, channel: grpc.Channel) -> GlobalDeploymentSession:
         last_exc: Optional[GlobalClientError] = None
         for _attempt in range(MAX_ASSERTION_ATTEMPTS):
             assertion_resp = self._api.request_access_assertion(route.slug)
@@ -173,12 +173,13 @@ class GlobalSessionManager:
                 continue
 
             # The assertion itself is never persisted or logged, win or lose.
-            return LocalDeploymentSession(
+            return GlobalDeploymentSession(
                 deployment_id=route.deployment_id,
+                local_username=result.local_username,
+                local_session_token=result.local_session_token,
+                local_session_expiration=result.local_session_expiration,
                 tls_server_name=route.tls_server_name,
-                session_material=result.session_material,
                 obtained_at=datetime.now(timezone.utc),
-                expires_at=result.expires_at,
             )
 
         assert last_exc is not None

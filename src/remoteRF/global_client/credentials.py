@@ -55,6 +55,22 @@ class CredentialStoreMode(str, Enum):
     FILE = "file"
 
 
+@dataclass(frozen=True)
+class DirectLocalCredentials:
+    """A traditional owner-local RemoteRF username/password credential.
+
+    This type is deliberately separate from ``GlobalDeploymentSession``:
+    the latter carries an owner-issued session token and must never be
+    interpreted as, displayed as, or persisted as a password.
+    """
+
+    username: str
+    password: str
+
+    def __repr__(self) -> str:
+        return f"DirectLocalCredentials(username={self.username!r}, password=<redacted>)"
+
+
 # --- generic opaque secret store --------------------------------------------
 
 

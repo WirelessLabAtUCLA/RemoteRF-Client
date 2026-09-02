@@ -47,6 +47,15 @@ def _assertion() -> AccessAssertionResponse:
     )
 
 
+def _exchange_result(*, token="opaque-session") -> ExchangeResult:
+    return ExchangeResult(
+        local_username="global-test-user",
+        local_session_token=token,
+        local_session_expiration=datetime.now(timezone.utc) + timedelta(minutes=15),
+        deployment_id="550e8400-e29b-41d4-a716-446655440000",
+    )
+
+
 class FakeAuthClient:
     def __init__(self, *, summary=None, descriptor=None, get_deployment_error=None, get_descriptor_error=None):
         self._summary = summary or _summary()
@@ -112,7 +121,7 @@ class DeploymentResolutionTests(unittest.TestCase):
 
     def test_offline_deployment_raises_before_any_network_bootstrap(self):
         auth = FakeAuthClient(summary=_summary(online=False))
-        manager = _manager(auth, FixedResultExchangeClient(ExchangeResult(session_material={})), self.config_root)
+        manager = _manager(auth, FixedResultExchangeClient(_exchange_result()), self.config_root)
         with self.assertRaises(DeploymentOfflineError):
             manager.use_deployment("ucla")
 
@@ -121,7 +130,7 @@ class DeploymentResolutionTests(unittest.TestCase):
 
         err = GlobalApiHttpError(status_code=409, code="route_unavailable", message="no route yet")
         auth = FakeAuthClient(get_descriptor_error=err)
-        manager = _manager(auth, FixedResultExchangeClient(ExchangeResult(session_material={})), self.config_root)
+        manager = _manager(auth, FixedResultExchangeClient(_exchange_result()), self.config_root)
         with self.assertRaises(GlobalClientError) as ctx:
             manager.use_deployment("ucla")
         self.assertNotIsInstance(ctx.exception, DeploymentNotFoundError)
@@ -131,7 +140,7 @@ class DeploymentResolutionTests(unittest.TestCase):
 
         err = GlobalApiHttpError(status_code=404, code="deployment_not_found", message="nope")
         auth = FakeAuthClient(get_deployment_error=err)
-        manager = _manager(auth, FixedResultExchangeClient(ExchangeResult(session_material={})), self.config_root)
+        manager = _manager(auth, FixedResultExchangeClient(_exchange_result()), self.config_root)
         with self.assertRaises(DeploymentNotFoundError):
             manager.use_deployment("nope")
 
@@ -144,7 +153,7 @@ class TrustBootstrapTests(unittest.TestCase):
 
     def test_bootstrap_trust_verifies_ca_and_persists_profile(self):
         auth = FakeAuthClient()
-        manager = _manager(auth, FixedResultExchangeClient(ExchangeResult(session_material={})), self.config_root)
+        manager = _manager(auth, FixedResultExchangeClient(_exchange_result()), self.config_root)
 
         with mock.patch(
             "remoteRF.global_client.session_manager.verify_and_store_ca"
@@ -168,7 +177,7 @@ class TrustBootstrapTests(unittest.TestCase):
         from remoteRF.global_client.errors import CertificateBootstrapError
 
         auth = FakeAuthClient(descriptor=_descriptor(certificate_endpoint=None))
-        manager = _manager(auth, FixedResultExchangeClient(ExchangeResult(session_material={})), self.config_root)
+        manager = _manager(auth, FixedResultExchangeClient(_exchange_result()), self.config_root)
         _, route = manager.resolve_deployment_route("ucla")
         with self.assertRaises(CertificateBootstrapError):
             manager.bootstrap_trust(route)
@@ -216,7 +225,7 @@ class AssertionExchangeRetryPolicyTests(unittest.TestCase):
     def test_ambiguous_failure_retries_once_with_a_fresh_assertion(self):
         script = [
             GlobalClientError("connection dropped after transmission -- ambiguous"),
-            ExchangeResult(session_material={"local_token": "opaque"}),
+            _exchange_result(token="opaque"),
         ]
         auth = FakeAuthClient()
         exchange = ScriptedExchangeClient(script)
@@ -228,7 +237,7 @@ class AssertionExchangeRetryPolicyTests(unittest.TestCase):
         self.assertEqual(auth.assertion_requests, 2)
         # A fresh client_request_id was used on the retry, not the same one.
         self.assertEqual(len(set(exchange.request_ids)), 2)
-        self.assertEqual(result.session.session_material, {"local_token": "opaque"})
+        self.assertEqual(result.session.local_session_token, "opaque")
 
     def test_ambiguous_failure_is_bounded_to_one_retry_not_infinite(self):
         script = [
@@ -245,7 +254,7 @@ class AssertionExchangeRetryPolicyTests(unittest.TestCase):
         self.assertEqual(exchange.calls, 2)  # never a third attempt
 
     def test_successful_exchange_persists_local_session(self):
-        result = ExchangeResult(session_material={"local_token": "opaque-session"})
+        result = _exchange_result(token="opaque-session")
         auth = FakeAuthClient()
         exchange = FixedResultExchangeClient(result)
         manager = _manager(auth, exchange, self.config_root)
@@ -254,12 +263,12 @@ class AssertionExchangeRetryPolicyTests(unittest.TestCase):
 
         loaded = manager._local_sessions.load(use_result.route.deployment_id)
         self.assertIsNotNone(loaded)
-        self.assertEqual(loaded.session_material, {"local_token": "opaque-session"})
+        self.assertEqual(loaded.local_session_token, "opaque-session")
         self.assertEqual(loaded.tls_server_name, "ucla.global.remoterf.net")
 
     def test_valid_cached_session_is_reused_without_a_new_assertion(self):
         auth = FakeAuthClient()
-        exchange = FixedResultExchangeClient(ExchangeResult(session_material={"a": 1}))
+        exchange = FixedResultExchangeClient(_exchange_result())
         manager = _manager(auth, exchange, self.config_root)
 
         first = manager.use_deployment("ucla")
@@ -267,11 +276,11 @@ class AssertionExchangeRetryPolicyTests(unittest.TestCase):
 
         self.assertEqual(auth.assertion_requests, 1)  # not called again on reuse
         self.assertEqual(exchange.calls, 1)
-        self.assertEqual(first.session.session_material, second.session.session_material)
+        self.assertEqual(first.session.local_session_token, second.session.local_session_token)
 
     def test_force_reauth_bypasses_the_cache(self):
         auth = FakeAuthClient()
-        exchange = FixedResultExchangeClient(ExchangeResult(session_material={"a": 1}))
+        exchange = FixedResultExchangeClient(_exchange_result())
         manager = _manager(auth, exchange, self.config_root)
 
         manager.use_deployment("ucla")
@@ -282,15 +291,16 @@ class AssertionExchangeRetryPolicyTests(unittest.TestCase):
 
     def test_expired_cached_session_is_not_reused(self):
         auth = FakeAuthClient()
-        exchange = FixedResultExchangeClient(ExchangeResult(session_material={"a": 1}))
+        exchange = FixedResultExchangeClient(_exchange_result())
         manager = _manager(auth, exchange, self.config_root)
 
         expired = LocalDeploymentSession(
             deployment_id="550e8400-e29b-41d4-a716-446655440000",
+            local_username="global-test-user",
+            local_session_token="expired-token",
+            local_session_expiration=datetime.now(timezone.utc) - timedelta(hours=1),
             tls_server_name="ucla.global.remoterf.net",
-            session_material={"stale": True},
             obtained_at=datetime.now(timezone.utc) - timedelta(hours=2),
-            expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
         )
         manager._local_sessions.save(expired)
 

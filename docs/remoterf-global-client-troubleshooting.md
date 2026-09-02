@@ -1,19 +1,13 @@
 # RemoteRF Global v1.0 -- Troubleshooting
 
-## "GlobalAuthUnavailableError" / "This deployment's RemoteRF Global authentication service ... is not available"
+## "GlobalAuthUnavailableError" / "does not provide ... GlobalAuthV1"
 
-**This is expected in the current v1.0 release**, not a bug in your setup.
-`remoterf use <slug>` completes deployment discovery, connection-descriptor
-validation, CA fingerprint verification, and a secure TLS gRPC connection
-to the real deployment -- then stops at the last step
-(`GlobalAuthV1.ExchangeAssertion`) because no deployment currently
-implements that RPC; there is no canonical protobuf contract for it yet.
-See [remoterf-global-client-v1.md's Current
-limitations](remoterf-global-client-v1.md#current-limitations). Once
-RemoteRF-Server ships `GlobalAuthV1` and this client is updated to match
-it, this step will complete instead of erroring. Until then, use direct
-mode (`remoterf --config --addr <host>:<port>` + your existing account) for
-that deployment if you have LAN/direct access.
+This deployment has not enabled the RemoteRF Global server feature or is
+running an older Server build. `remoterf use <slug>` intentionally stops
+there and does not fall back to prompting for a deployment password. Ask the
+deployment operator to enable the canonical `GlobalAuthV1` service, or use
+direct mode (`remoterf --config --addr <host>:<port>`) only when you have
+authorized LAN/direct access and existing local credentials.
 
 ## "Not logged in to RemoteRF Global"
 

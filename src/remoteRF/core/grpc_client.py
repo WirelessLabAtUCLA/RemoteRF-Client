@@ -13,19 +13,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import socket
-import getpass
-from pathlib import Path
 import os
-from dotenv import load_dotenv
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import grpc
 from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
 from .secure_channel import build_secure_channel
+from ..global_client.profile import ConnectionProfile, DirectConnectionProfile, resolve_active_profile
 
-_CONFIG_PATH = Path.home() / ".config" / "remoterf-client" / ".env"
 _CONFIG_HELP = (
     "Run:\n"
     "  remoterf --config --addr <host:port>\n"
@@ -34,44 +33,121 @@ _CONFIG_HELP = (
 )
 
 
-def _load_client_config() -> tuple[str, str]:
-    load_dotenv(_CONFIG_PATH)
-    addr = (os.getenv("REMOTERF_ADDR") or "").strip().strip('"').strip("'")
-    ca_path = (os.getenv("REMOTERF_CA_CERT") or "").strip().strip('"').strip("'")
+@dataclass
+class _ActiveConnection:
+    profile_key: tuple[str, ...]
+    endpoint: str
+    channel: grpc.Channel
+    stub: grpc_pb2_grpc.GenericRPCStub
 
-    if not addr or not ca_path:
+
+_active_connection: Optional[_ActiveConnection] = None
+
+# Compatibility names. They are populated only when a caller asks for the
+# active connection, rather than forcing direct-mode configuration at import.
+addr = ""
+channel: Optional[grpc.Channel] = None
+stub: Optional[grpc_pb2_grpc.GenericRPCStub] = None
+
+
+def _legacy_environment_profile() -> Optional[DirectConnectionProfile]:
+    """Support callers that supplied the historic env variables explicitly.
+
+    Normal installs use ``profile.load_direct_profile`` and its `.env` file;
+    this fallback keeps scripted/direct callers working without making a
+    module import read or mutate process configuration.
+    """
+    endpoint = (os.getenv("REMOTERF_ADDR") or "").strip().strip('"').strip("'")
+    ca_value = (os.getenv("REMOTERF_CA_CERT") or "").strip().strip('"').strip("'")
+    if not endpoint or not ca_value:
+        return None
+    return DirectConnectionProfile(
+        grpc_endpoint=endpoint,
+        tls_server_name=(os.getenv("REMOTERF_TLS_SERVER_NAME") or "").strip() or None,
+        ca_path=Path(ca_value).expanduser(),
+    )
+
+
+def _current_profile() -> ConnectionProfile:
+    # Explicit process configuration is the historic CLI/test override. It
+    # still cannot displace a deliberately selected Global deployment.
+    profile = resolve_active_profile()
+    env_profile = _legacy_environment_profile()
+    if profile is None or (profile.mode == "direct" and env_profile is not None):
+        profile = env_profile or profile
+    if profile is None:
         raise RuntimeError(
             "RemoteRF client is not configured.\n"
-            f"Expected REMOTERF_ADDR and REMOTERF_CA_CERT in:\n  {_CONFIG_PATH}\n"
-            f"{_CONFIG_HELP}"
+            "Expected a selected Global deployment or REMOTERF_ADDR and REMOTERF_CA_CERT in:\n"
+            f"  {Path.home() / '.config' / 'remoterf-client' / '.env'}\n{_CONFIG_HELP}"
         )
-
-    certs_path = Path(ca_path).expanduser()
-    if not certs_path.exists():
+    if not profile.ca_path.exists():
         raise RuntimeError(
             "RemoteRF client config points to a missing CA certificate.\n"
-            f"REMOTERF_CA_CERT={ca_path}\n"
-            "Re-run RemoteRF client config to fetch the certificate again.\n"
-            f"{_CONFIG_HELP}"
+            f"Re-run RemoteRF client config or select the deployment again.\n{_CONFIG_HELP}"
         )
+    return profile
 
-    return addr, ca_path
+
+def _profile_key(profile: ConnectionProfile) -> tuple[str, ...]:
+    ca_stat = profile.ca_path.stat()
+    deployment_id = getattr(profile, "deployment_id", "")
+    return (
+        profile.mode,
+        deployment_id,
+        profile.grpc_endpoint,
+        profile.tls_server_name or "",
+        str(profile.ca_path.resolve()),
+        str(ca_stat.st_mtime_ns),
+        str(ca_stat.st_size),
+    )
 
 
-addr, ca_path = _load_client_config()
+def close_active_connection() -> None:
+    """Close the cached channel, including when the selected profile changes."""
+    global _active_connection, addr, channel, stub
+    if _active_connection is not None:
+        _active_connection.channel.close()
+    _active_connection = None
+    addr = ""
+    channel = None
+    stub = None
 
-# A server reached over Tailscale may present the same certificate it uses on
-# its public or LAN address. Keep certificate verification enabled while
-# allowing the configured certificate identity to differ from REMOTERF_ADDR.
-tls_server_name = (os.getenv("REMOTERF_TLS_SERVER_NAME") or "").strip()
 
-# Server.crt
-certs_path = Path(ca_path).expanduser().resolve()
-with certs_path.open('rb') as f:
-    trusted_certs = f.read()
+def get_active_connection() -> _ActiveConnection:
+    """Resolve the active profile lazily and replace stale channels safely."""
+    global _active_connection, addr, channel, stub
+    profile = _current_profile()
+    key = _profile_key(profile)
+    if _active_connection is not None and _active_connection.profile_key == key:
+        return _active_connection
 
-channel = build_secure_channel(addr, trusted_certs, tls_server_name=tls_server_name or None)
-stub = grpc_pb2_grpc.GenericRPCStub(channel)
+    close_active_connection()
+    trusted_certs = profile.ca_path.read_bytes()
+    selected_channel = build_secure_channel(
+        profile.grpc_endpoint,
+        trusted_certs,
+        tls_server_name=profile.tls_server_name,
+    )
+    selected_stub = grpc_pb2_grpc.GenericRPCStub(selected_channel)
+    _active_connection = _ActiveConnection(
+        profile_key=key,
+        endpoint=profile.grpc_endpoint,
+        channel=selected_channel,
+        stub=selected_stub,
+    )
+    addr = _active_connection.endpoint
+    channel = _active_connection.channel
+    stub = _active_connection.stub
+    return _active_connection
+
+
+def get_active_channel() -> grpc.Channel:
+    return get_active_connection().channel
+
+
+def active_endpoint() -> str:
+    return get_active_connection().endpoint
 
 tcp_calls = 0
 
@@ -95,7 +171,7 @@ def rpc_client(*, function_name, args):
     # TODO: Handle Errors
     
     # print(f"Calling function: {function_name}")
-    response = stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
+    response = get_active_connection().stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
     
     if 'a' in response.results:
         raise RuntimeError(unmap_arg(response.results['a']))
@@ -145,8 +221,6 @@ def rpc_client(*, function_name, args):
 
 #endregion
     
-from typing import Any, Dict, Optional
-
 def handle_admin_command(inpu: str):
     """
     Parses commands like:

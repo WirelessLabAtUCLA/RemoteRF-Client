@@ -184,17 +184,18 @@ class LocalSessionStoreTests(unittest.TestCase):
     def _session(self, deployment_id="dep-a", tls_name="ucla.global.remoterf.net") -> LocalDeploymentSession:
         return LocalDeploymentSession(
             deployment_id=deployment_id,
+            local_username="global-test-user",
+            local_session_token="opaque-session-token",
+            local_session_expiration=datetime.now(timezone.utc) + timedelta(hours=1),
             tls_server_name=tls_name,
-            session_material={"opaque": "blob"},
             obtained_at=datetime.now(timezone.utc),
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
         )
 
     def test_save_then_load_round_trips(self):
         session = self._session()
         self.store.save(session)
         loaded = self.store.load("dep-a")
-        self.assertEqual(loaded.session_material, {"opaque": "blob"})
+        self.assertEqual(loaded.local_session_token, "opaque-session-token")
 
     def test_sessions_are_isolated_per_deployment(self):
         self.store.save(self._session(deployment_id="dep-a", tls_name="a.example"))
@@ -212,23 +213,16 @@ class LocalSessionStoreTests(unittest.TestCase):
 
     def test_is_expired(self):
         expired = LocalDeploymentSession(
-            deployment_id="dep-a", tls_server_name="a.example", session_material={},
+            deployment_id="dep-a", local_username="global-test-user", local_session_token="expired-token",
+            local_session_expiration=datetime.now(timezone.utc) - timedelta(hours=1), tls_server_name="a.example",
             obtained_at=datetime.now(timezone.utc) - timedelta(hours=2),
-            expires_at=datetime.now(timezone.utc) - timedelta(hours=1),
         )
         self.assertTrue(expired.is_expired())
 
-        no_expiry = LocalDeploymentSession(
-            deployment_id="dep-a", tls_server_name="a.example", session_material={},
-            obtained_at=datetime.now(timezone.utc), expires_at=None,
-        )
-        self.assertFalse(no_expiry.is_expired())
-
-    def test_repr_never_contains_session_material(self):
+    def test_repr_never_contains_local_session_token(self):
         session = self._session()
         text = repr(session)
-        self.assertNotIn("opaque", text)
-        self.assertNotIn("blob", text)
+        self.assertNotIn("opaque-session-token", text)
 
 
 if __name__ == "__main__":

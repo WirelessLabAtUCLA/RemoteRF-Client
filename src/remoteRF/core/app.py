@@ -26,6 +26,10 @@ from pathlib import Path
 
 from prompt_toolkit import PromptSession
 
+from ..global_client.errors import GlobalClientError
+from ..global_client.profile import load_global_profile
+from ..global_client.runtime import get_active_global_session
+
 account = RemoteRFAccount()
 session = PromptSession()
 
@@ -82,6 +86,22 @@ def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.
 def welcome(*, show_banner: bool = True):
     if show_banner:
         print_client_banner(print_my_version(), server=server_addr)
+    # A selected Global profile authenticates through the owner-local session
+    # produced by GlobalAuthV1. It never falls back to prompting for a UCLA
+    # password, because such a fallback would both fail relay ingress policy
+    # and blur the boundary between Global and direct credentials.
+    if load_global_profile() is not None:
+        try:
+            account.use_global_session(
+                get_active_global_session(),
+                refresher=get_active_global_session,
+            )
+            if not account.login_user():
+                raise GlobalClientError("The deployment rejected the owner-local Global session.")
+            return
+        except GlobalClientError as exc:
+            printf(f"RemoteRF Global authentication failed: {exc}", Sty.BRIGHT_RED)
+            raise SystemExit(1) from exc
     try:
         inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
         if inpu == 'r':

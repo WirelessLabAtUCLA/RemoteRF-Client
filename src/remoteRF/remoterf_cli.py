@@ -38,13 +38,14 @@ def _connected_server(timeout_seconds: float = SERVER_CONNECT_TIMEOUT_SECONDS) -
     """Return the configured endpoint only after its gRPC channel is ready."""
     import grpc
 
-    from remoteRF.core.grpc_client import addr, channel
+    from remoteRF.core.grpc_client import active_endpoint, get_active_channel
 
     try:
+        channel = get_active_channel()
         grpc.channel_ready_future(channel).result(timeout=timeout_seconds)
-    except (grpc.FutureTimeoutError, grpc.RpcError):
+        return active_endpoint()
+    except (RuntimeError, grpc.FutureTimeoutError, grpc.RpcError):
         return None
-    return addr
 
 
 def _print_server_unavailable() -> None:
@@ -84,6 +85,13 @@ def _read_dotenv_kv(path: Path) -> dict[str, str]:
     return out
 
 def _ensure_config_present() -> tuple[bool, str]:
+    # An active Global profile replaces the direct `.env` only for this run;
+    # it never rewrites or deletes the direct configuration.
+    from remoteRF.global_client.profile import load_global_profile
+
+    if load_global_profile(_config_root()) is not None:
+        return True, ""
+
     env_file = _env_path()
     if not env_file.exists():
         return (

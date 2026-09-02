@@ -45,6 +45,7 @@ class GrpcClientTargetTests(unittest.TestCase):
              mock.patch("grpc.ssl_channel_credentials", return_value="fake-creds"), \
              mock.patch("dotenv.load_dotenv"):
             module = importlib.import_module("remoteRF.core.grpc_client")
+            module.get_active_connection()
         return module, secure_channel
 
     def test_dns_hostname_used_verbatim_as_target(self):

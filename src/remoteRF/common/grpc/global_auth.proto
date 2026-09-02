@@ -1,0 +1,56 @@
+// Copyright (C) 2026 RemoteRF
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+syntax = "proto3";
+
+package remote_rf;
+
+import "grpc.proto";
+
+// RemoteRF Global v1.0 — additive, optional, and deliberately kept in its
+// own .proto file rather than appended to grpc.proto: grpc.proto is shared
+// byte-for-byte with the RemoteRF client's own copy (both register a
+// descriptor under the identical name "grpc.proto" in protobuf's process-
+// global default pool, so any content drift between the two would collide
+// whenever both are imported in one process — e.g. this repo's own
+// server+client integration tests). global_auth.proto instead registers
+// under its own distinct name and only imports grpc.proto for the existing
+// ErrorEnvelope type, so grpc.proto itself never needs to change for this
+// feature.
+//
+// Registered on the same TLS gRPC server/port as every other service here;
+// when Global is disabled on this deployment, ExchangeAssertion always
+// returns a populated `error` (code "global_disabled") rather than the
+// server refusing to start.
+service GlobalAuthV1 {
+    rpc ExchangeAssertion (ExchangeAssertionRequest) returns (ExchangeAssertionResponse);
+}
+
+message ExchangeAssertionRequest {
+    string assertion = 1;
+    string client_request_id = 2;
+    string protocol_version = 3;
+}
+
+message ExchangeAssertionResponse {
+    string local_username = 1;
+    string local_session_token = 2;
+    int64 local_account_id = 3;
+    string session_expires_at = 4;   // RFC 3339 UTC, e.g. 2026-01-02T03:04:05Z
+    string deployment_id = 5;
+    string effective_policy_summary_json = 6;
+    string protocol_version = 7;
+    ErrorEnvelope error = 8;
+}

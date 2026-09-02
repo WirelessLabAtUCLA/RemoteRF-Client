@@ -1,5 +1,6 @@
 # Exclude virtual environment directories
 venv/
+.venv/
 ENV/
 env/
 venv.bak/

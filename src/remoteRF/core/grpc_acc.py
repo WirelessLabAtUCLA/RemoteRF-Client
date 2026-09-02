@@ -14,8 +14,13 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import ast
+from collections.abc import Callable
 from .grpc_client import rpc_client
 from ..common.utils import *
+from ..global_client.credentials import DirectLocalCredentials
+from ..global_client.errors import NoActiveDeploymentError, OperationDeniedError
+from ..global_client.local_sessions import GlobalDeploymentSession
+from ..global_client.profile import GlobalConnectionProfile, resolve_active_profile
 
 import datetime
 
@@ -26,8 +31,52 @@ class RemoteRFAccount:
         self.email = email
         self.enrollment_code = ""
         self.is_admin = False
+        self._global_session: GlobalDeploymentSession | None = None
+        self._global_session_refresher: Callable[[], GlobalDeploymentSession] | None = None
+
+    @property
+    def is_global_session(self) -> bool:
+        return self._global_session is not None
+
+    def use_global_session(
+        self,
+        session: GlobalDeploymentSession,
+        *,
+        refresher: Callable[[], GlobalDeploymentSession],
+    ) -> None:
+        """Attach deployment-local credentials without ever calling them a password."""
+        self._global_session = session
+        self._global_session_refresher = refresher
+        self.username = session.local_username
+        self.password = None
+
+    def clear_global_session(self) -> None:
+        self._global_session = None
+        self._global_session_refresher = None
+
+    def _rpc_credentials(self) -> tuple[str, str]:
+        if self._global_session is None:
+            direct = DirectLocalCredentials(username=self.username or "", password=self.password or "")
+            return direct.username, direct.password
+
+        active = resolve_active_profile()
+        if not isinstance(active, GlobalConnectionProfile) or active.deployment_id != self._global_session.deployment_id:
+            raise NoActiveDeploymentError(
+                "The cached RemoteRF Global session does not belong to the active deployment. Run: remoterf use <deployment>"
+            )
+        if self._global_session.is_expired():
+            if self._global_session_refresher is None:
+                raise NoActiveDeploymentError("The RemoteRF Global deployment session expired. Run: remoterf use <deployment>")
+            refreshed = self._global_session_refresher()
+            if refreshed.deployment_id != active.deployment_id:
+                raise NoActiveDeploymentError("Refreshed RemoteRF Global session belongs to a different deployment.")
+            self._global_session = refreshed
+            self.username = refreshed.local_username
+        return self._global_session.local_username, self._global_session.local_session_token
     
     def create_user(self):
+        if self.is_global_session:
+            raise OperationDeniedError("Global-selected deployments do not permit local password account creation.")
         response = rpc_client(function_name="ACC:create_user", args={"un":map_arg(self.username), "pw":map_arg(self.password), "em":map_arg(self.email), "ec":map_arg(self.enrollment_code)})
         if 'UC' in response.results:
             print(f'User {unmap_arg(response.results["UC"])} successfully created.')
@@ -37,9 +86,8 @@ class RemoteRFAccount:
             return False
     
     def login_user(self):
-        username = self.username
-        password = self.password
-        response = rpc_client(function_name="ACC:login", args={"un":map_arg(username), "pw":map_arg(password)})
+        username, credential_secret = self._rpc_credentials()
+        response = rpc_client(function_name="ACC:login", args={"un":map_arg(username), "pw":map_arg(credential_secret)})
         if 'UC' in response.results:
             print(f'User {unmap_arg(response.results["UC"])} successful login.')
             return True
@@ -48,7 +96,8 @@ class RemoteRFAccount:
             return False
     
     def reserve_device(self, device_id:int, start_time:datetime, end_time:datetime):
-        response = rpc_client(function_name="ACC:reserve_device", args={"un":map_arg(self.username), "pw":map_arg(self.password), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
+        username, credential_secret = self._rpc_credentials()
+        response = rpc_client(function_name="ACC:reserve_device", args={"un":map_arg(username), "pw":map_arg(credential_secret), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
 
         if 'ace' in response.results:
             raise Exception(f'{unmap_arg(response.results["ace"])}')
@@ -62,18 +111,25 @@ class RemoteRFAccount:
             return token
             
     def get_reservations(self):
-        return rpc_client(function_name='ACC:get_res', args={"un":map_arg(self.username), "pw":map_arg(self.password)})
+        username, credential_secret = self._rpc_credentials()
+        return rpc_client(function_name='ACC:get_res', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def get_devices(self):
-        return rpc_client(function_name='ACC:get_dev', args={"un":map_arg(self.username), "pw":map_arg(self.password)})
+        username, credential_secret = self._rpc_credentials()
+        return rpc_client(function_name='ACC:get_dev', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def cancel_reservation(self, res_id:int):
-        return rpc_client(function_name='ACC:cancel_res', args={"un":map_arg(self.username), "pw":map_arg(self.password), "res_id":map_arg(res_id)})
+        username, credential_secret = self._rpc_credentials()
+        return rpc_client(function_name='ACC:cancel_res', args={"un":map_arg(username), "pw":map_arg(credential_secret), "res_id":map_arg(res_id)})
     
     def get_perms(self):
-        return rpc_client(function_name='ACC:get_perms', args={"un":map_arg(self.username), "pw":map_arg(self.password)})
+        username, credential_secret = self._rpc_credentials()
+        return rpc_client(function_name='ACC:get_perms', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def set_enroll(self):
-        return rpc_client(function_name='ACC:set_enroll', args={"un":map_arg(self.username), "pw":map_arg(self.password), "ec":map_arg(self.enrollment_code)})
+        if self.is_global_session:
+            raise OperationDeniedError("Global-selected deployments do not permit local enrollment changes.")
+        username, credential_secret = self._rpc_credentials()
+        return rpc_client(function_name='ACC:set_enroll', args={"un":map_arg(username), "pw":map_arg(credential_secret), "ec":map_arg(self.enrollment_code)})
     
     
