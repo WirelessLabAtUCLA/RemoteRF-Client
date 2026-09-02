@@ -23,6 +23,7 @@ import grpc
 from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
+from .secure_channel import build_secure_channel
 
 _CONFIG_PATH = Path.home() / ".config" / "remoterf-client" / ".env"
 _CONFIG_HELP = (
@@ -59,30 +60,17 @@ def _load_client_config() -> tuple[str, str]:
 
 addr, ca_path = _load_client_config()
 
-options = [
-      ('grpc.max_send_message_length', 100 * 1024 * 1024),
-      ('grpc.max_receive_message_length', 100 * 1024 * 1024),
-]
-
 # A server reached over Tailscale may present the same certificate it uses on
 # its public or LAN address. Keep certificate verification enabled while
 # allowing the configured certificate identity to differ from REMOTERF_ADDR.
 tls_server_name = (os.getenv("REMOTERF_TLS_SERVER_NAME") or "").strip()
-if tls_server_name:
-    options.extend(
-        [
-            ("grpc.ssl_target_name_override", tls_server_name),
-            ("grpc.default_authority", tls_server_name),
-        ]
-    )
 
 # Server.crt
 certs_path = Path(ca_path).expanduser().resolve()
 with certs_path.open('rb') as f:
     trusted_certs = f.read()
-    
-credentials = grpc.ssl_channel_credentials(root_certificates=trusted_certs)
-channel = grpc.secure_channel(addr, credentials, options=options)
+
+channel = build_secure_channel(addr, trusted_certs, tls_server_name=tls_server_name or None)
 stub = grpc_pb2_grpc.GenericRPCStub(channel)
 
 tcp_calls = 0

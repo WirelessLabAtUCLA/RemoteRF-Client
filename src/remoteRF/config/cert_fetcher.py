@@ -38,6 +38,26 @@ def _ensure_parent_dir(p: Path) -> None:
 def _looks_like_pem_cert(data: bytes) -> bool:
     return b"BEGIN CERTIFICATE" in data and b"END CERTIFICATE" in data
 
+
+def looks_like_pem_cert(data: bytes) -> bool:
+    """Public alias of `_looks_like_pem_cert`, for reuse outside this module
+    (e.g. RemoteRF Global's CA-fingerprint verification, which fetches CA
+    bytes without persisting them until the fingerprint is verified)."""
+    return _looks_like_pem_cert(data)
+
+
+def fetch_ca_bytes(host: str, port: int, *, timeout_sec: float = 3.0) -> bytes:
+    """Fetch raw CA certificate bytes (HTTP first, then raw-TCP fallback),
+    without writing anything to disk. Shared by direct-mode's
+    `fetch_and_save_ca_cert` below and RemoteRF Global's per-deployment CA
+    bootstrap (`global_client/ca_store.py`), which must verify the fetched
+    bytes' SHA-256 fingerprint before persisting them.
+    """
+    try:
+        return _fetch_http(host, port, timeout_sec)
+    except Exception:
+        return _fetch_raw_tcp(host, port, timeout_sec)
+
 def sha256_fingerprint_pem(pem_bytes: bytes) -> str:
     h = hashlib.sha256(pem_bytes).hexdigest()
     return ":".join(h[i:i+2] for i in range(0, len(h), 2))
@@ -48,9 +68,16 @@ def _fetch_http(host: str, port: int, timeout_sec: float) -> bytes:
     with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
         return resp.read()
 
+def _bare_host(host: str) -> str:
+    """Strip IPv6 literal brackets (e.g. '[::1]' -> '::1') for raw-socket use."""
+    host = host.strip()
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
 def _fetch_raw_tcp(host: str, port: int, timeout_sec: float) -> bytes:
     chunks: list[bytes] = []
-    with socket.create_connection((host, port), timeout=timeout_sec) as s:
+    with socket.create_connection((_bare_host(host), port), timeout=timeout_sec) as s:
         s.settimeout(timeout_sec)
         while True:
             try:
@@ -164,10 +191,7 @@ def fetch_and_save_ca_cert(
             return True
 
         # Fetch (HTTP first, then raw TCP fallback)
-        try:
-            data = _fetch_http(host, port, timeout_sec)
-        except Exception:
-            data = _fetch_raw_tcp(host, port, timeout_sec)
+        data = fetch_ca_bytes(host, port, timeout_sec=timeout_sec)
 
         if not data or not _looks_like_pem_cert(data):
             return False

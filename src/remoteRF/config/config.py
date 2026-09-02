@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import shutil
 from pathlib import Path
@@ -67,6 +68,27 @@ def _parse_hostport(s: str) -> Tuple[str, int]:
     if port <= 0 or port > 65535:
         raise ValueError("Port out of range")
     return host, port
+
+
+def _bare_host(host: str) -> str:
+    """Strip IPv6 literal brackets (e.g. '[::1]' -> '::1') for name/address
+    resolution and raw-socket use. IPv4 addresses and DNS hostnames
+    (including plain multi-label names such as ucla.global.remoterf.net)
+    are returned unchanged.
+    """
+    host = host.strip()
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
+def _host_resolves(host: str) -> bool:
+    """Return True if `host` (an IPv4/IPv6 literal or DNS hostname) resolves."""
+    try:
+        socket.getaddrinfo(_bare_host(host), None)
+        return True
+    except socket.gaierror:
+        return False
 
 def _write_env_kv(path: Path, kv: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +197,16 @@ def configure(host: str, port: int, cert_port: int) -> int:
     if port <= 0 or port > 65535:
         print("Error: port out of range", file=sys.stderr)
         return 2
+
+    if not _host_resolves(host):
+        print(
+            "Error: Could not resolve RemoteRF server hostname:\n"
+            f"  {host}\n"
+            "Check the address and your network/DNS connection, then re-run:\n"
+            "  remoterf --config --addr <host:port>",
+            file=sys.stderr,
+        )
+        return 1
 
     grpc_port = int(port)
     cert_port = int(cert_port)

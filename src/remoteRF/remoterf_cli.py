@@ -137,12 +137,22 @@ def print_help() -> None:
     printf("    -w, --wipe, -wipe", Sty.CYAN, "               Delete all local config", Sty.DEFAULT)
     printf("    -y, --yes, -yes", Sty.CYAN, "                 Skip wipe confirmation", Sty.DEFAULT)
     print()
+    printf("RemoteRF Global (optional; see docs/remoterf-global-client-v1.md):", (Sty.BOLD, Sty.MAGENTA))
+    printf("  remoterf global login|status|logout", Sty.CYAN, "  Global account session", Sty.DEFAULT)
+    printf("  remoterf deployments [show|resources] <slug>", Sty.CYAN, "  Discover deployments", Sty.DEFAULT)
+    printf("  remoterf use <slug>|direct", Sty.CYAN, "       Select active deployment / return to direct mode", Sty.DEFAULT)
+    print()
     printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf --login", Sty.GREEN)
     printf("  remoterf --version", Sty.GREEN)
     printf("  remoterf --config --addr 123.45.654.321:12321", Sty.GREEN)
+    printf("  remoterf --config --addr ucla.global.remoterf.net:12321", Sty.GREEN)
     printf("  remoterf --config --wipe", Sty.GREEN)
     printf("  remoterf --config --wipe --yes", Sty.GREEN)
+    printf("  remoterf global login", Sty.GREEN)
+    printf("  remoterf deployments", Sty.GREEN)
+    printf("  remoterf use ucla", Sty.GREEN)
+    printf("  remoterf use direct", Sty.GREEN)
 
 def main() -> int:
     argv = list(sys.argv[1:])
@@ -251,6 +261,20 @@ def main() -> int:
         )
         return 2
 
+    if argv[0] == "global":
+        from remoteRF.global_client.cli import cmd_global
+
+        return cmd_global(argv[1:])
+
+    if argv[0] == "deployments":
+        from remoteRF.global_client.cli import cmd_deployments
+
+        return cmd_deployments(argv[1:])
+
+    if argv[0] == "use":
+        from remoteRF.global_client.cli import cmd_use
+
+        return cmd_use(argv[1:])
 
     # fallback
     print(f"ERROR: unknown command: {argv[0]!r}")
