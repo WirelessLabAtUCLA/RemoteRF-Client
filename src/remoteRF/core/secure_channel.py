@@ -15,12 +15,10 @@
 
 """Shared secure gRPC channel construction.
 
-Extracted from `grpc_client.py`'s module-level setup so that RemoteRF
-Global (`global_client/channel_factory.py`) can build a channel to a
-selected deployment using the exact same TLS behavior as direct/LAN mode,
-without duplicating it. Direct mode's behavior is unchanged by this
-refactor: `grpc_client.py` now calls this function instead of inlining the
-same four lines.
+Extracted from `grpc_client.py`'s module-level setup so every native target
+uses one TLS implementation. Direct mode's behavior is unchanged by this
+refactor: `grpc_client.py` calls this function instead of inlining the same
+four lines.
 
 TLS verification is never disabled here. `tls_server_name`, when given,
 only selects *which* identity gRPC must find in the presented certificate

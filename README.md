@@ -207,29 +207,14 @@ P2P, automatic routing, or global resource IDs. Those are future versions.
 The client-side software behaves identically whether you point it at a LAN
 server or at a RemoteRF Global v0 endpoint.
 
-### RemoteRF Global v1.0 — accounts and deployment discovery (optional)
+### RemoteRF Global v2 development boundary
 
-Building on the v0 relay above, v1.0 adds an *optional* RemoteRF Global
-account so you don't have to already know a deployment's `host:port`:
-
-```bash
-remoterf global login       # device-code sign-in (no password typed here)
-remoterf deployments        # list public deployments
-remoterf use ucla           # select one — CA-verified, TLS-secured
-remoterf use direct         # back to direct/LAN mode any time
-```
-
-Direct mode (`remoterf --config --addr ...`) keeps working exactly as
-before and needs no RemoteRF Global account. See
-[docs/remoterf-global-client-v1.md](docs/remoterf-global-client-v1.md) for
-the full command reference, current limitations, and why `remoterf use
-<slug>` currently stops with a clear error at the final
-deployment-authentication step (no canonical `GlobalAuthV1` server contract
-exists yet — this client does not fall back to a password login when that
-happens). See also
-[docs/remoterf-global-client-security.md](docs/remoterf-global-client-security.md)
-and
-[docs/remoterf-global-client-troubleshooting.md](docs/remoterf-global-client-troubleshooting.md).
+The disposable Global v1 account-selection and deployment-session client was
+removed at Gate C. The normal CLI supports direct/native gRPC accounts and
+clean HTTPS deployment-home accounts; neither path treats a broker identity,
+username, email, or home token as destination credentials. Federation and
+remote resource access remain disabled until their separately reviewed gates.
+See [docs/gate-c-identity-boundary.md](docs/gate-c-identity-boundary.md).
 
 <!-- 1. **Clone the repository:**
 ```bash

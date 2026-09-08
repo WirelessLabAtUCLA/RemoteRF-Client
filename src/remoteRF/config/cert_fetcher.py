@@ -40,18 +40,14 @@ def _looks_like_pem_cert(data: bytes) -> bool:
 
 
 def looks_like_pem_cert(data: bytes) -> bool:
-    """Public alias of `_looks_like_pem_cert`, for reuse outside this module
-    (e.g. RemoteRF Global's CA-fingerprint verification, which fetches CA
-    bytes without persisting them until the fingerprint is verified)."""
+    """Public alias of `_looks_like_pem_cert` for generic callers."""
     return _looks_like_pem_cert(data)
 
 
 def fetch_ca_bytes(host: str, port: int, *, timeout_sec: float = 3.0) -> bytes:
     """Fetch raw CA certificate bytes (HTTP first, then raw-TCP fallback),
     without writing anything to disk. Shared by direct-mode's
-    `fetch_and_save_ca_cert` below and RemoteRF Global's per-deployment CA
-    bootstrap (`global_client/ca_store.py`), which must verify the fetched
-    bytes' SHA-256 fingerprint before persisting them.
+    `fetch_and_save_ca_cert` below.
     """
     try:
         return _fetch_http(host, port, timeout_sec)
