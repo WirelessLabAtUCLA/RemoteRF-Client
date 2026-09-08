@@ -26,12 +26,11 @@ from pathlib import Path
 
 from prompt_toolkit import PromptSession
 
-from ..global_client.errors import GlobalClientError
-from ..global_client.profile import load_global_profile
-from ..global_client.runtime import get_active_global_session
+from ..deployment.http import AccountBackendError
+from remoterf_federation_core import local_capabilities, ValidationError
 
 account = RemoteRFAccount()
-session = PromptSession()
+session = None
 
 DEFAULT_TOS_URL = "https://remoterf.net/tos"
 SERVER_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -83,59 +82,76 @@ def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.
         end = f"{end_time.strftime('%Y-%m-%d')} {end}"
     return f"{start} - {end}"
 
+def _password_confirmation():
+    while True:
+        password = getpass.getpass("Password (Hidden): ")
+        if password == getpass.getpass("Confirm Password: "):
+            return password
+        print("Passwords do not match. Try again.")
+
+
+def _account_command(command):
+    policy = account.backend.capabilities['registration_policy'] if account.backend else local_capabilities()['registration_policy']
+    if command in ('r', 'register'):
+        if not policy['enabled']:
+            raise AccountBackendError('Registration is unavailable at this home')
+        print('Registering new account...')
+        account.enrollment_code = input('Enrollment Code: ') if policy['enrollment_code_required'] else ''
+        account.username = input('Username: ') if policy['username_required'] else ''
+        account.password = _password_confirmation()
+        account.email = input('Email: ') if policy['email_required'] else ''
+        return bool(account.create_user()) and not policy['email_verification_required']
+    if command == 'verify':
+        if not policy['email_verification_required']:
+            raise AccountBackendError('This deployment does not require email verification')
+        account.backend.verify(getpass.getpass('Verification token: '))
+        print('Email verified. You can now log in.')
+        return False
+    if command in ('forgot-password', 'reset-password'):
+        if not account.is_https_home:
+            raise AccountBackendError('Contact the local administrator to reset a password')
+        if command == 'forgot-password':
+            account.backend.forgot(input('Email: '))
+            print('If eligible, check your email for a password reset token.')
+        else:
+            token = getpass.getpass('Password reset token: ')
+            account.backend.reset(token, _password_confirmation())
+            print('Password reset. Log in again.')
+        return False
+    if command in ('l', 'login'):
+        account.username = input('Username or Email: ' if account.is_https_home else 'Username: ')
+        account.password = getpass.getpass('Password (Hidden): ')
+        return bool(account.login_user())
+    print('Choose login or register' + (', verify, forgot-password or reset-password.' if account.is_https_home else '.'))
+    return False
+
+
 def welcome(*, show_banner: bool = True):
     if show_banner:
         print_client_banner(print_my_version(), server=server_addr)
-    # A selected Global profile authenticates through the owner-local session
-    # produced by GlobalAuthV1. It never falls back to prompting for a UCLA
-    # password, because such a fallback would both fail relay ingress policy
-    # and blur the boundary between Global and direct credentials.
-    if load_global_profile() is not None:
+    if account.is_https_home:
         try:
-            account.use_global_session(
-                get_active_global_session(),
-                refresher=get_active_global_session,
-            )
-            if not account.login_user():
-                raise GlobalClientError("The deployment rejected the owner-local Global session.")
-            return
-        except GlobalClientError as exc:
-            printf(f"RemoteRF Global authentication failed: {exc}", Sty.BRIGHT_RED)
-            raise SystemExit(1) from exc
-    try:
-        inpu = session.prompt(stylize("Please ", Sty.DEFAULT, "login", Sty.GREEN, " or ", Sty.DEFAULT, "register", Sty.RED, " to continue. (", Sty.DEFAULT, 'l', Sty.GREEN, "/", Sty.DEFAULT, 'r', Sty.RED, "): ", Sty.DEFAULT))
-        if inpu == 'r':
-            print("Registering new account...")
-            account.enrollment_code = input("Enrollment Code: ")
-            account.username = input("Username: ")
-            double_check = True
-            while double_check:
-                password = getpass.getpass("Password (Hidden): ")
-                password2 = getpass.getpass("Confirm Password: ")
-                if password == password2:
-                    double_check = False
-                else:
-                    print("Passwords do not match. Try again.")
-                    
-            account.password = password
-            account.email = input("Email: ")  # TODO: Email verification.
-            # check if login was valid
-            _clear_terminal()
-            
-            if not account.create_user():
-                welcome(show_banner=False)
-        else:
-            account.username = input("Username: ")
-            account.password = getpass.getpass("Password (Hidden): ")
-            # check if login was valid
-            if not account.login_user():
-                _clear_terminal()
-                print("Invalid login. Try again. Contact admin(s) if you forgot your password.")
-                welcome(show_banner=False)
-    except KeyboardInterrupt:
-        exit()
-    except EOFError:
-        exit()
+            if account.backend.resume():
+                account.username = account.backend.credentials['username']
+                return True
+        except (AccountBackendError, ValidationError):
+            account.backend.credentials = None
+            account.backend.store.clear()
+            print('Stored session is unavailable. Log in again.')
+    while True:
+        try:
+            prompt = 'Please login or register to continue. (l/r): '
+            if account.is_https_home:
+                prompt = 'Choose register, verify, login, forgot-password or reset-password: '
+            command = session.prompt(prompt).strip().lower()
+            if command in ('exit', 'quit'):
+                return False
+            if _account_command(command):
+                return True
+        except (AccountBackendError, ValidationError) as exc:
+            print(f'Account error: {exc}')
+        except (KeyboardInterrupt, EOFError):
+            return False
 
 def title():
     print_internal_banner(
@@ -155,6 +171,7 @@ def commands():
     printf("'getres' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View all reservations", Sty.DEFAULT)
     printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
     printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
+    print('register | verify | login | refresh | logout | forgot-password | reset-password')
     printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
     printf("'exit' or 'quit' ", Sty.MAGENTA, ": ", Sty.GRAY, "Exit", Sty.DEFAULT)
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
@@ -382,6 +399,10 @@ import ast
 import json
 def perms():
     data = account.get_perms()
+    if account.is_https_home:
+        print(account.backend.capabilities['display_name'])
+        print('  Groups: ' + (', '.join(g['group_name'] for g in data['groups']) or '(none)'))
+        return
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
         return
@@ -959,45 +980,76 @@ def interactive_reserve_next_days_auto():
     except Exception as e:
         print(f"Error: {e}")
 
-welcome()
-clear()
 
-while True:
+def run(backend=None):
+    global account, session, server_addr
+    from ..deployment.backend import selected_backend
+    from .grpc_client import active_endpoint
+    backend = backend or selected_backend()
+    account = RemoteRFAccount(backend=backend)
+    session = PromptSession()
+    server_addr = backend.transport.origin if account.is_https_home else active_endpoint()
     try:
-        inpu = session.prompt(stylize(f'{account.username}@remoterf: ', Sty.BOLD))
-        if inpu == "clear":
-            clear()
-        elif inpu == "getdev":
-            devices()
-        elif inpu == "help" or inpu == "h":
-            commands()
-        elif inpu == "perms":
-            perms()
-        elif inpu == "enroll":
-            enroll()
-        elif inpu == "quit" or inpu == "exit":
-            break
-        elif inpu == "getres":
-            reservations()
-        elif inpu == "myres":
-            my_reservations()
-        # elif inpu == "resdev s":
-        #     interactive_reserve_all()
-        elif inpu == "resdev":
-            # interactive_reserve_next_days(block_minutes=30) 
-            interactive_reserve_next_days_auto()
-        elif inpu == 'cancelres':
-            cancel_my_reservation()
-            
-        elif inpu == 'resdev -n':
-            # check if user is admin
-            # if account.get_perms().results['UC'] == 'Admin':
-            reserve()
-        elif account.is_admin and inpu.strip().startswith("admin"):
-            handle_admin_command(inpu)
-        else:
-            print(f"Unknown command: {inpu}")
-    except KeyboardInterrupt:
-        break
-    except EOFError:
-        break
+        if not welcome():
+            return 0
+        clear()
+        while True:
+            try:
+                inpu = session.prompt(stylize(f'{account.username}@remoterf: ', Sty.BOLD))
+                if inpu in ('register', 'verify', 'login', 'forgot-password', 'reset-password'):
+                    authenticated = _account_command(inpu)
+                    if inpu == 'reset-password' and not welcome(show_banner=False):
+                        break
+                elif inpu == 'refresh':
+                    if not account.is_https_home:
+                        raise AccountBackendError('Local passwords do not use refresh sessions')
+                    account.backend.refresh()
+                    print('Home session refreshed.')
+                elif inpu == 'logout':
+                    if account.is_https_home:
+                        account.backend.logout()
+                    account.password = None
+                    account.username = None
+                    if not welcome(show_banner=False):
+                        break
+                elif inpu == "clear":
+                    clear()
+                elif inpu == "getdev":
+                    devices()
+                elif inpu == "help" or inpu == "h":
+                    commands()
+                elif inpu == "perms":
+                    perms()
+                elif inpu == "enroll":
+                    enroll()
+                elif inpu == "quit" or inpu == "exit":
+                    break
+                elif inpu == "getres":
+                    reservations()
+                elif inpu == "myres":
+                    my_reservations()
+                # elif inpu == "resdev s":
+                #     interactive_reserve_all()
+                elif inpu == "resdev":
+                    # interactive_reserve_next_days(block_minutes=30)
+                    interactive_reserve_next_days_auto()
+                elif inpu == 'cancelres':
+                    cancel_my_reservation()
+
+                elif inpu == 'resdev -n':
+                    # check if user is admin
+                    # if account.get_perms().results['UC'] == 'Admin':
+                    reserve()
+                elif account.is_admin and inpu.strip().startswith("admin"):
+                    handle_admin_command(inpu)
+                else:
+                    print(f"Unknown command: {inpu}")
+            except (AccountBackendError, ValidationError) as exc:
+                print(f'Account error: {exc}')
+            except KeyboardInterrupt:
+                break
+            except EOFError:
+                break
+        return 0
+    finally:
+        backend.close()

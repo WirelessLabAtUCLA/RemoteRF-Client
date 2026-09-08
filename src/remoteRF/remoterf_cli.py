@@ -36,6 +36,15 @@ def _installed_version() -> str:
 
 def _connected_server(timeout_seconds: float = SERVER_CONNECT_TIMEOUT_SECONDS) -> str | None:
     """Return the configured endpoint only after its gRPC channel is ready."""
+    from remoteRF.deployment.state import load_target
+    target = load_target()
+    if target and target['transport'] == 'https-json':
+        from remoteRF.deployment.backend import selected_backend
+        backend = selected_backend()
+        try:
+            return backend.transport.origin
+        finally:
+            backend.close()
     import grpc
 
     from remoteRF.core.grpc_client import active_endpoint, get_active_channel
@@ -85,12 +94,14 @@ def _read_dotenv_kv(path: Path) -> dict[str, str]:
     return out
 
 def _ensure_config_present() -> tuple[bool, str]:
-    # An active Global profile replaces the direct `.env` only for this run;
-    # it never rewrites or deletes the direct configuration.
-    from remoteRF.global_client.profile import load_global_profile
-
-    if load_global_profile(_config_root()) is not None:
-        return True, ""
+    from remoteRF.deployment.state import load_target
+    from remoteRF.deployment.direct import resolve_active_profile
+    target = load_target()
+    if target and target['transport'] == 'https-json':
+        return True, ''
+    profile = resolve_active_profile()
+    if profile and profile.ca_path.exists():
+        return True, ''
 
     env_file = _env_path()
     if not env_file.exists():
@@ -145,10 +156,7 @@ def print_help() -> None:
     printf("    -w, --wipe, -wipe", Sty.CYAN, "               Delete all local config", Sty.DEFAULT)
     printf("    -y, --yes, -yes", Sty.CYAN, "                 Skip wipe confirmation", Sty.DEFAULT)
     print()
-    printf("RemoteRF Global (optional; see docs/remoterf-global-client-v1.md):", (Sty.BOLD, Sty.MAGENTA))
-    printf("  remoterf global login|status|logout", Sty.CYAN, "  Global account session", Sty.DEFAULT)
-    printf("  remoterf deployments [show|resources] <slug>", Sty.CYAN, "  Discover deployments", Sty.DEFAULT)
-    printf("  remoterf use <slug>|direct", Sty.CYAN, "       Select active deployment / return to direct mode", Sty.DEFAULT)
+    printf("    --account-transport https-json", Sty.CYAN, "  Select an HTTPS home on a custom port", Sty.DEFAULT)
     print()
     printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf --login", Sty.GREEN)
@@ -157,10 +165,6 @@ def print_help() -> None:
     printf("  remoterf --config --addr ucla.global.remoterf.net:12321", Sty.GREEN)
     printf("  remoterf --config --wipe", Sty.GREEN)
     printf("  remoterf --config --wipe --yes", Sty.GREEN)
-    printf("  remoterf global login", Sty.GREEN)
-    printf("  remoterf deployments", Sty.GREEN)
-    printf("  remoterf use ucla", Sty.GREEN)
-    printf("  remoterf use direct", Sty.GREEN)
 
 def main() -> int:
     argv = list(sys.argv[1:])
@@ -180,12 +184,15 @@ def main() -> int:
             _print_server_unavailable()
             return 2
 
-        if _connected_server() is None:
-            _print_server_unavailable()
+        try:
+            if _connected_server() is None:
+                _print_server_unavailable()
+                return 2
+            from remoteRF.core.acc_login import main as account_main
+            return int(account_main() or 0)
+        except (RuntimeError, ValueError) as exc:
+            print(f'Account connection failed: {exc}')
             return 2
-
-        from remoteRF.core.acc_login import main as _
-        return 0
 
     if argv[0] in ("--version", "-version", "-v"):
         from remoteRF.version import main as version_main
@@ -200,6 +207,7 @@ def main() -> int:
         addr = None
         wipe = False
         yes = False
+        account_transport = None
 
         i = 1
         while i < len(argv):
@@ -210,6 +218,14 @@ def main() -> int:
                     print("ERROR: missing required argument after --addr/-a/-addr")
                     return 2
                 addr = argv[i + 1]
+                i += 2
+                continue
+
+            if tok == '--account-transport':
+                if i + 1 >= len(argv) or argv[i + 1] not in ('grpc', 'https-json'):
+                    print('ERROR: account transport must be grpc or https-json')
+                    return 2
+                account_transport = argv[i + 1]
                 i += 2
                 continue
 
@@ -236,6 +252,29 @@ def main() -> int:
             return int(wipe_config(yes=yes))
 
         if addr is not None:
+            from remoteRF.deployment.state import origin, select_target, select_direct
+            # Explicit host:port (even with a scheme) remains direct by default.
+            stripped = addr.strip().split('://', 1)[-1]
+            use_https = account_transport == 'https-json' or (':' not in stripped and account_transport != 'grpc')
+            if use_https:
+                from remoteRF.deployment.backend import HttpsJsonAccountBackend
+                from remoteRF.config.config import _confirm_tos
+                try:
+                    selected_origin = origin(addr)
+                    if not _confirm_tos():
+                        return 1
+                    backend = HttpsJsonAccountBackend(selected_origin)
+                    try:
+                        select_target({'origin':selected_origin,'transport':'https-json','deployment_id':backend.capabilities['deployment_id']})
+                        print('Configuration Complete!')
+                        print('Account home:', backend.capabilities['display_name'])
+                        print('HTTPS origin:', selected_origin)
+                    finally:
+                        backend.close()
+                    return 0
+                except (RuntimeError, ValueError) as exc:
+                    print(f'Configuration failed: {exc}')
+                    return 2
             # parse host:port (minimal, strict)
             s = addr.strip()
             if "://" in s:
@@ -254,7 +293,10 @@ def main() -> int:
 
             # configure returns the proper exit code
             cert_port = port + 1
-            configure(host, port, cert_port)
+            result = configure(host, port, cert_port)
+            if result not in (None, 0):
+                return int(result)
+            select_direct()
             return 0
 
         # No args -> same behavior as remoterf-config missing addr (exit code 2)
@@ -268,21 +310,6 @@ def main() -> int:
             "  remoterf --config --addr 123.45.678.901:12345\n"
         )
         return 2
-
-    if argv[0] == "global":
-        from remoteRF.global_client.cli import cmd_global
-
-        return cmd_global(argv[1:])
-
-    if argv[0] == "deployments":
-        from remoteRF.global_client.cli import cmd_deployments
-
-        return cmd_deployments(argv[1:])
-
-    if argv[0] == "use":
-        from remoteRF.global_client.cli import cmd_use
-
-        return cmd_use(argv[1:])
 
     # fallback
     print(f"ERROR: unknown command: {argv[0]!r}")

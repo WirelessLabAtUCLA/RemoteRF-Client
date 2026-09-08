@@ -23,7 +23,7 @@ from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
 from .secure_channel import build_secure_channel
-from ..global_client.profile import ConnectionProfile, DirectConnectionProfile, resolve_active_profile
+from ..deployment.direct import ConnectionProfile, DirectConnectionProfile, resolve_active_profile
 
 _CONFIG_HELP = (
     "Run:\n"
@@ -69,8 +69,11 @@ def _legacy_environment_profile() -> Optional[DirectConnectionProfile]:
 
 
 def _current_profile() -> ConnectionProfile:
-    # Explicit process configuration is the historic CLI/test override. It
-    # still cannot displace a deliberately selected Global deployment.
+    # Native process configuration remains an explicit device transport override.
+    from ..deployment.state import load_target
+    target = load_target()
+    if target and target['transport'] == 'https-json' and _legacy_environment_profile() is None:
+        raise RuntimeError('Selected HTTPS account home has no local device transport')
     profile = resolve_active_profile()
     env_profile = _legacy_environment_profile()
     if profile is None or (profile.mode == "direct" and env_profile is not None):
@@ -78,7 +81,7 @@ def _current_profile() -> ConnectionProfile:
     if profile is None:
         raise RuntimeError(
             "RemoteRF client is not configured.\n"
-            "Expected a selected Global deployment or REMOTERF_ADDR and REMOTERF_CA_CERT in:\n"
+            "Expected REMOTERF_ADDR and REMOTERF_CA_CERT in:\n"
             f"  {Path.home() / '.config' / 'remoterf-client' / '.env'}\n{_CONFIG_HELP}"
         )
     if not profile.ca_path.exists():

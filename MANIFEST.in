@@ -1,3 +1,5 @@
 # Include all .crt, .key, and .pem files
 recursive-include src/remoteRF *.crt *.key *.pem
 recursive-include src/remoteRF *.txt
+
+recursive-include src/remoteRF *.proto
