@@ -36,7 +36,7 @@ class RemoteRFAccount:
     def _rpc_credentials(self):
         if self.is_https_home:
             from ..deployment.http import AccountBackendError
-            raise AccountBackendError('Device and reservation operations are unavailable at this account home')
+            raise AccountBackendError('This operation is unavailable at this account home')
         return self.username or '', self.password or ''
 
     def _call(self, *, function_name, args):

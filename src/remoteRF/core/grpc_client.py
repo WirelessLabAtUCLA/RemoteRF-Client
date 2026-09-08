@@ -157,7 +157,7 @@ tcp_calls = 0
 def get_tcp_calls():
     return tcp_calls
         
-def rpc_client(*, function_name, args):
+def rpc_client(*, function_name, args, connection=None):
     global tcp_calls
     tcp_calls += 1
     # print(tcp_calls)
@@ -174,7 +174,7 @@ def rpc_client(*, function_name, args):
     # TODO: Handle Errors
     
     # print(f"Calling function: {function_name}")
-    response = get_active_connection().stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
+    response = (connection or get_active_connection()).stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
     
     if 'a' in response.results:
         raise RuntimeError(unmap_arg(response.results['a']))
