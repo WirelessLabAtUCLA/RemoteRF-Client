@@ -456,6 +456,11 @@ def perms():
             + (", ".join(g["group_name"] for g in local["groups"]) or "(none)")
         )
         _render_federation_permissions(data.get("federation", []))
+        if data.get("incomplete"):
+            print(
+                f"  Federation summary incomplete: {data.get('omitted_count', 0)} "
+                "contracted destination(s) omitted by the HOME limit"
+            )
         return
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
@@ -469,9 +474,30 @@ def perms():
         details = json.loads(details_raw) if details_raw else {}
     except Exception:
         details = {}
-    remote_permissions = (details.get("home_permissions") or {}).get(
-        "federation", []
-    )
+    remote_permissions = []
+    remote_permissions_incomplete = 0
+    additive = details.get("home_permissions")
+    if additive is not None:
+        try:
+            from remoterf_federation_core import validate_home_permissions_summary
+
+            checked = validate_home_permissions_summary(additive)
+            capabilities = getattr(getattr(account, "backend", None), "capabilities", {})
+            advertised = (
+                capabilities.get("deployment_id")
+                if isinstance(capabilities, dict)
+                else None
+            )
+            if advertised is not None and checked["local"]["deployment_id"] != advertised:
+                raise ValueError("HOME identity mismatch")
+            remote_permissions = checked["federation"]
+            remote_permissions_incomplete = checked["omitted_count"]
+        except (TypeError, ValueError):
+            # The additive section is untrusted even over GenericRPC.  Keep
+            # rendering the protected legacy permission fields and ignore only
+            # malformed federation data.
+            remote_permissions = []
+            remote_permissions_incomplete = 0
 
     printf("Permission Level: ", (Sty.BOLD, Sty.BLUE), f"{perm_level}", Sty.MAGENTA)
 
@@ -497,6 +523,11 @@ def perms():
         if not devices:
             printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
             _render_federation_permissions(remote_permissions)
+            if remote_permissions_incomplete:
+                print(
+                    f"Federation summary incomplete: {remote_permissions_incomplete} "
+                    "destination(s) omitted"
+                )
             return
 
         printf("Accessible Devices: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)

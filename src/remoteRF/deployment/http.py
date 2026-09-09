@@ -1,8 +1,15 @@
 """Verified same-origin JSON transport with bounded responses and no retries."""
 
 import ssl
+import time
 import httpx
-from remoterf_federation_core import strict_json, ValidationError
+from remoterf_federation_core import (
+    MAX_HOME_PERMISSIONS_HTTP_RESPONSE_BYTES,
+    PERMISSIONS_CLIENT_OVERALL_TIMEOUT_SECONDS,
+    PERMISSIONS_CONNECT_TIMEOUT_SECONDS,
+    strict_json,
+    ValidationError,
+)
 from .state import origin
 
 
@@ -23,7 +30,16 @@ class JsonTransport:
             trust_env=False,
         )
 
-    def request(self, method, path, *, data=None, access=None):
+    def request(
+        self,
+        method,
+        path,
+        *,
+        data=None,
+        access=None,
+        overall_timeout=None,
+        max_response_bytes=65536,
+    ):
         if (
             not path.startswith("/")
             or path.startswith("//")
@@ -33,6 +49,18 @@ class JsonTransport:
         headers = {"Accept": "application/json"}
         if access:
             headers["Authorization"] = "Bearer " + access
+        overall_timeout = (
+            5.0 if overall_timeout is None else float(overall_timeout)
+        )
+        if overall_timeout <= 0 or max_response_bytes <= 0:
+            raise ValueError("invalid account operation budget")
+        deadline = time.monotonic() + overall_timeout
+        timeout = httpx.Timeout(
+            connect=min(PERMISSIONS_CONNECT_TIMEOUT_SECONDS, overall_timeout),
+            read=overall_timeout,
+            write=overall_timeout,
+            pool=min(PERMISSIONS_CONNECT_TIMEOUT_SECONDS, overall_timeout),
+        )
         try:
             with self.client.stream(
                 method,
@@ -40,17 +68,20 @@ class JsonTransport:
                 json=data,
                 headers=headers,
                 follow_redirects=False,
+                timeout=timeout,
             ) as response:
                 raw = bytearray()
-                for chunk in response.iter_bytes():
+                for chunk in response.iter_bytes(chunk_size=1):
+                    if time.monotonic() >= deadline:
+                        raise AccountBackendError("Account operation deadline exceeded")
                     raw.extend(chunk)
-                    if len(raw) > 65536:
+                    if len(raw) > max_response_bytes:
                         raise AccountBackendError(
                             "Response exceeds account protocol limit"
                         )
                 if 300 <= response.status_code < 400:
                     raise AccountBackendError("Account redirects are not allowed")
-                value = strict_json(bytes(raw), max_bytes=65536)
+                value = strict_json(bytes(raw), max_bytes=max_response_bytes)
                 if response.status_code >= 400:
                     # Never print arbitrary server text (could contain secrets/terminal escapes).
                     error = value.get("error") if isinstance(value, dict) else None
@@ -74,6 +105,15 @@ class JsonTransport:
             raise AccountBackendError(
                 "Account connection failed; verify the target and TLS configuration"
             ) from exc
+
+    def permissions(self, path, *, access):
+        return self.request(
+            "GET",
+            path,
+            access=access,
+            overall_timeout=PERMISSIONS_CLIENT_OVERALL_TIMEOUT_SECONDS,
+            max_response_bytes=MAX_HOME_PERMISSIONS_HTTP_RESPONSE_BYTES,
+        )
 
     def close(self):
         self.client.close()

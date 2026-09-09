@@ -2,6 +2,7 @@
 
 import re
 import time
+import inspect
 from remoterf_federation_core import (
     validate_capabilities,
     validate_home_permissions_summary,
@@ -235,17 +236,31 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
 
     def permissions(self):
         self._operation("ACC:get_perms")
-        value = self._own(
-            self.transport.request(
+        permission_request = inspect.getattr_static(
+            self.transport, "permissions", None
+        )
+        if permission_request is None:
+            response = self.transport.request(
                 "GET", self.base + "/permissions", access=self._access()
             )
+        else:
+            response = self.transport.permissions(
+                self.base + "/permissions", access=self._access()
+            )
+        value = self._own(
+            response
         )
         has_summary = "local" in value or "federation" in value
         if not has_summary:
             return value
         try:
             summary = validate_home_permissions_summary(
-                {"local": value.get("local"), "federation": value.get("federation")}
+                {
+                    "local": value.get("local"),
+                    "federation": value.get("federation"),
+                    "incomplete": value.get("incomplete", False),
+                    "omitted_count": value.get("omitted_count", 0),
+                }
             )
         except (HomePermissionsError, TypeError, ValueError) as exc:
             raise AccountBackendError("Invalid home permissions response") from exc

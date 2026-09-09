@@ -11,6 +11,10 @@ from remoteRF.deployment.backend import (
     HttpsJsonAccountBackend,
 )
 from remoteRF.deployment.http import JsonTransport, AccountBackendError
+from remoterf_federation_core import (
+    MAX_HOME_PERMISSIONS_HTTP_RESPONSE_BYTES,
+    PERMISSIONS_CLIENT_OVERALL_TIMEOUT_SECONDS,
+)
 from remoteRF.deployment.state import (
     CredentialStore,
     select_target,
@@ -159,6 +163,64 @@ def test_tls_failure_never_downgrades():
     )
     with pytest.raises(AccountBackendError):
         HttpsJsonAccountBackend(transport.origin, transport=transport, store=Mock())
+
+
+def test_permissions_has_operation_specific_time_and_byte_budget(monkeypatch):
+    budget = MAX_HOME_PERMISSIONS_HTTP_RESPONSE_BYTES
+    raw = b'{"x":"' + (b"a" * (budget - 8)) + b'"}'
+    assert len(raw) == budget
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=raw))
+    )
+    transport = JsonTransport("https://home.example", client=client)
+    # Deterministically model a response arriving after the ordinary five
+    # second account budget but within the shared permissions budget.
+    first_tick = [True]
+
+    def clock():
+        if first_tick:
+            first_tick.pop()
+            return 0.0
+        return 6.0
+
+    monkeypatch.setattr("remoteRF.deployment.http.time.monotonic", clock)
+    assert transport.permissions("/v2/deployment/permissions", access="token")["x"]
+
+
+def test_permissions_exact_consumer_limit_and_one_byte_over(monkeypatch):
+    budget = MAX_HOME_PERMISSIONS_HTTP_RESPONSE_BYTES
+    good = b'{"x":"' + (b"a" * (budget - 8)) + b'"}'
+    responses = iter(
+        [
+            httpx.Response(200, content=good),
+            httpx.Response(200, content=good[:-2] + b'a"}'),
+        ]
+    )
+    transport = JsonTransport(
+        "https://home.example",
+        client=httpx.Client(
+            transport=httpx.MockTransport(lambda _request: next(responses))
+        ),
+    )
+    monkeypatch.setattr("remoteRF.deployment.http.time.monotonic", lambda: 0.0)
+    assert transport.permissions("/v2/deployment/permissions", access="token")["x"]
+    with pytest.raises(AccountBackendError, match="protocol limit"):
+        transport.permissions("/v2/deployment/permissions", access="token")
+
+
+def test_permissions_overall_deadline_is_enforced(monkeypatch):
+    transport = JsonTransport(
+        "https://home.example",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, content=b'{"ok":true}')
+            )
+        ),
+    )
+    clock = iter([0.0, PERMISSIONS_CLIENT_OVERALL_TIMEOUT_SECONDS + 0.001])
+    monkeypatch.setattr("remoteRF.deployment.http.time.monotonic", lambda: next(clock))
+    with pytest.raises(AccountBackendError, match="deadline"):
+        transport.permissions("/v2/deployment/permissions", access="token")
 
 
 @pytest.mark.parametrize(
