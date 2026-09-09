@@ -7,7 +7,10 @@ from .state import origin
 
 
 class AccountBackendError(RuntimeError):
-    pass
+    def __init__(self, code, *, provenance=None):
+        self.code = code
+        self.provenance = provenance
+        super().__init__(code)
 
 
 class JsonTransport:
@@ -58,7 +61,12 @@ class JsonTransport:
                         "[a-z_]{1,64}", code
                     ):
                         code = "account_request_failed"
-                    raise AccountBackendError(code)
+                    provenance = (
+                        error.get("provenance") if isinstance(error, dict) else None
+                    )
+                    if provenance not in {None, "home", "transport", "destination"}:
+                        provenance = None
+                    raise AccountBackendError(code, provenance=provenance)
                 if type(value) is not dict:
                     raise AccountBackendError("Invalid account response")
                 return value

@@ -20,7 +20,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="remoterf",
-    version="2.1.0.dev2",
+    version="2.1.0.dev3",
     author="Ethan Ge",
     author_email="ethoGalaxy@gmail.com",
     description="A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts.",
@@ -31,7 +31,7 @@ setup(
     license='GPL-3.0-or-later',
     include_package_data=True,  # Includes files specified in MANIFEST.in
     install_requires=[
-        "remoterf-federation-core==0.3.0",
+        "remoterf-federation-core==0.7.0",
         "grpcio>=1.78.1,<2.0.0", "protobuf>=6.31.1,<7.0.0", "numpy", "prompt_toolkit", "python-dotenv", "prompt-toolkit",
         "httpx>=0.27,<1.0", "pydantic>=2.6,<3.0", "keyring>=24,<26",
     ],

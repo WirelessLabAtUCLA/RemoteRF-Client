@@ -111,6 +111,8 @@ class RemoteRFAccount:
         return self._call(function_name='ACC:get_perms', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def set_enroll(self):
+        if self.is_https_home:
+            return self.backend.enroll(self.enrollment_code)
         username, credential_secret = self._rpc_credentials()
         return self._call(function_name='ACC:set_enroll', args={"un":map_arg(username), "pw":map_arg(credential_secret), "ec":map_arg(self.enrollment_code)})
     

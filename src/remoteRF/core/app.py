@@ -502,17 +502,33 @@ def perms():
         printf(f"Error: Unknown permission level {perm_level}", Sty.BRIGHT_RED)
 
         
-def enroll():
-    code = session.prompt(stylize("Enter your enrollment code: ", Sty.DEFAULT))
+def enroll(code=None):
+    code = code or session.prompt(stylize("Enter your enrollment code: ", Sty.DEFAULT))
     account.enrollment_code = code
     data = account.set_enroll()
-    
-    if 'ace' in data.results:
-        print(f"Error: {unmap_arg(data.results['ace'])}")
-        return
-    else:
-        # todo: print out specifics, like group name (ie: successfully enrolled in ECE 132A)
-        printf("Enrollment successful.", Sty.BG_GREEN)
+
+    if account.is_https_home:
+        if data.get("status") != "enrolled":
+            print("Error: enrollment_not_confirmed")
+            return False
+    elif 'ace' in data.results:
+        provenance = (
+            unmap_arg(data.results['federation_provenance'])
+            if 'federation_provenance' in data.results else None
+        )
+        label = f" [{provenance}]" if provenance else ""
+        print(f"Error{label}: {unmap_arg(data.results['ace'])}")
+        return False
+    elif 'UE' in data.results:
+        provenance = (
+            unmap_arg(data.results['federation_provenance'])
+            if 'federation_provenance' in data.results else None
+        )
+        label = f" [{provenance}]" if provenance else ""
+        print(f"Error{label}: {unmap_arg(data.results['UE'])}")
+        return False
+    printf("Enrollment successful.", Sty.BG_GREEN)
+    return True
 
 # New block scheduling
 
@@ -1022,6 +1038,11 @@ def run(backend=None):
                     perms()
                 elif inpu == "enroll":
                     enroll()
+                elif inpu.startswith("enroll "):
+                    inline_code = inpu[len("enroll "):]
+                    if not inline_code or inline_code != inline_code.strip():
+                        raise AccountBackendError("invalid_enrollment_code")
+                    enroll(inline_code)
                 elif inpu == "quit" or inpu == "exit":
                     break
                 elif inpu == "getres":
@@ -1044,7 +1065,10 @@ def run(backend=None):
                     handle_admin_command(inpu)
                 else:
                     print(f"Unknown command: {inpu}")
-            except (AccountBackendError, ValidationError) as exc:
+            except AccountBackendError as exc:
+                label = f" [{exc.provenance}]" if exc.provenance else ""
+                print(f'Account error{label}: {exc}')
+            except ValidationError as exc:
                 print(f'Account error: {exc}')
             except KeyboardInterrupt:
                 break

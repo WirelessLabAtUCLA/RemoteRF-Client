@@ -239,6 +239,21 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             )
         )
 
+    def enroll(self, code):
+        self._operation("ACC:set_enroll")
+        if not isinstance(code, str) or not 1 <= len(code) <= 1024:
+            raise AccountBackendError("invalid_enrollment_code")
+        result = self.transport.request(
+            "POST", self.base + "/enroll", data={"code": code}, access=self._access()
+        )
+        if result.get("status") != "enrolled" or result.get("provenance") not in {
+            "home", "destination"
+        }:
+            raise AccountBackendError("Invalid enrollment response")
+        if "code" in result or "code_name" in result:
+            raise AccountBackendError("Enrollment response exposed secret material")
+        return result
+
     def logout(self):
         self._operation("ACC:logout")
         if self.credentials:

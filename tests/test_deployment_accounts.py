@@ -299,6 +299,56 @@ def test_untrusted_error_shape_is_redacted(value):
         transport.request("POST", "/v2/deployment/login", data={"password": "secret"})
 
 
+def test_enrollment_uses_authenticated_account_api_and_never_echoes_code():
+    transport = Mock()
+    transport.origin = "https://home.example"
+    transport.request.return_value = caps()
+    backend = HttpsJsonAccountBackend(
+        transport.origin, transport=transport, store=Mock(), clock=lambda: 100
+    )
+    backend.credentials = {
+        "access_token": "access-token",
+        "access_expires_at": 200,
+    }
+    transport.request.return_value = {
+        "status": "enrolled",
+        "provenance": "destination",
+        "enrollment": {"membership_present": True},
+    }
+    result = backend.enroll("rrf2.opaque-invitation")
+    assert result["status"] == "enrolled"
+    assert "rrf2.opaque-invitation" not in repr(result)
+    transport.request.assert_called_with(
+        "POST",
+        "/v2/deployment/enroll",
+        data={"code": "rrf2.opaque-invitation"},
+        access="access-token",
+    )
+
+
+def test_enrollment_failure_preserves_bounded_provenance():
+    transport = JsonTransport(
+        "https://home.example",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    409,
+                    json={
+                        "error": {
+                            "code": "code_exhausted",
+                            "provenance": "destination",
+                        }
+                    },
+                )
+            )
+        ),
+    )
+    with pytest.raises(AccountBackendError) as raised:
+        transport.request("POST", "/v2/deployment/enroll", data={"code": "secret"})
+    assert raised.value.code == "code_exhausted"
+    assert raised.value.provenance == "destination"
+
+
 def test_grpc_account_operations_remain_on_the_negotiated_channel():
     # Some protected driver tests replace grpc_client during collection;
     # a fresh interpreter verifies the real transport implementation.

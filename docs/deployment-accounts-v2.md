@@ -16,9 +16,16 @@ remoterf -l
 
 Use register, verify, login and perms in that same shell. Prompts follow the
 home's advertised registration policy. HTTPS accounts also support refresh,
-logout, forgot-password and reset-password. Verification/reset tokens are
+logout, forgot-password, reset-password, and the ordinary `enroll` command.
+Gate F accepts either the established prompt or `enroll <rrf2...>` and sends
+the opaque value only to the authenticated home. The home—not the Client—owns
+contract checks, grant issuance, broker routing, and signed-result validation.
+Success is printed only after the home confirms an owner-signed result, and
+bounded home/transport/destination failure provenance is retained. The Client
+does not persist destination membership or expose a user-chosen request ID.
+Verification/reset tokens are
 entered in hidden prompts, never as command arguments. Groups display even
-with zero devices. Gate B performs no remote enrollment or remote permissions.
+with zero devices. Remote permissions aggregation remains outside Gate F.
 
 All HTTPS requests stay on the verified origin, reject redirects and bind
 credentials to origin/deployment UUID/subject UUID. New state lives under
@@ -27,10 +34,9 @@ credentials to origin/deployment UUID/subject UUID. New state lives under
 credentials are ignored; the old global/use/deployments CLI entry points are
 removed. Dormant v1 support modules remain only for later Gate C/E work.
 
-Install the verified `remoterf-federation-core 0.2.0` wheel before this Client
-wheel (`remoterf 2.1.0.dev1`). The core source is Server commit
-`a627550e1915c79d385734fb5b25f53deaa5d5e0`, wheel SHA-256
-`512c4b57fa16ab656f9a48c9c50e1e8da5a83830f48d71802d97803ee563b4c0`.
+Install the verified `remoterf-federation-core 0.7.0` wheel before this Client
+wheel (`remoterf 2.1.0.dev3`). The exact Gate F source commit and wheel hash are
+recorded in the integration manifest and Gate F report.
 The VPS repo records the lock and reproducible build/verification scripts.
 No sibling runtime checkout, browser or server hardware dependency is needed.
 
