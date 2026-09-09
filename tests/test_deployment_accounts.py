@@ -1,6 +1,7 @@
 from uuid import uuid4
 from pathlib import Path
 from unittest.mock import patch, Mock
+import json
 import grpc
 import httpx
 import pytest
@@ -370,3 +371,112 @@ with patch('remoteRF.core.grpc_client.get_active_connection',side_effect=Asserti
 backend.connection.stub.Call.assert_called_once()
 """
     subprocess.run([sys.executable, '-c', code], check=True)
+
+
+def _remote_permission(**changes):
+    value = {
+        "deployment_id": "22222222-2222-4222-8222-222222222222",
+        "display_name": "Destination",
+        "contract_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "contract_version": 1,
+        "state": "active",
+        "groups": [{"group_id": "7", "group_name": "remote-readers"}],
+        "retrieved_at": 100,
+        "status": "ok",
+        "provenance": "destination_signed",
+        "error_code": None,
+    }
+    value.update(changes)
+    return value
+
+
+def test_https_permissions_enforces_typed_provenance_and_alias_binding():
+    subject = str(uuid4())
+    transport = Mock(origin="https://home.example")
+    transport.request.return_value = caps()
+    backend = HttpsJsonAccountBackend(
+        transport.origin, transport=transport, store=Mock(), clock=lambda: 100
+    )
+    backend.credentials = {
+        "subject_id": subject,
+        "access_token": "access",
+        "access_expires_at": 200,
+    }
+    response = {
+        "deployment_id": ID,
+        "subject_id": subject,
+        "display_name": "RemoteRF Server",
+        "groups": [{"group_id": "3", "group_name": "local-readers"}],
+        "local": {
+            "deployment_id": ID,
+            "display_name": "RemoteRF Server",
+            "groups": [{"group_id": "3", "group_name": "local-readers"}],
+        },
+        "federation": [_remote_permission()],
+    }
+    transport.request.return_value = response
+    assert backend.permissions()["federation"][0]["status"] == "ok"
+
+    response["federation"] = [
+        _remote_permission(status="unavailable", provenance="transport")
+    ]
+    with pytest.raises(AccountBackendError, match="Invalid home permissions"):
+        backend.permissions()
+
+    response["federation"] = []
+    response["display_name"] = "Unsigned alias substitution"
+    with pytest.raises(AccountBackendError, match="identity mismatch"):
+        backend.permissions()
+
+
+def test_ordinary_perms_renders_remote_results_even_with_zero_local_devices():
+    summary = {
+        "local": {
+            "deployment_id": ID,
+            "display_name": "Home",
+            "groups": [],
+        },
+        "federation": [
+            _remote_permission(),
+            _remote_permission(
+                deployment_id="33333333-3333-4333-8333-333333333333",
+                display_name="Offline destination",
+                contract_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                groups=[],
+                retrieved_at=None,
+                status="unavailable",
+                provenance="transport",
+            ),
+        ],
+    }
+    # Protected driver tests install a deliberately partial grpc_client module
+    # during collection. Exercise the real shell in a fresh interpreter.
+    import subprocess
+    import sys
+
+    details = json.dumps(
+        {"devices": [], "caps": {}, "groups": [], "home_permissions": summary}
+    )
+    code = f"""
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+from remoteRF.common.utils import map_arg
+import remoteRF.core.app as client_app
+response=SimpleNamespace(results={{
+    'UC': map_arg(str([['Normal User']])),
+    'details': map_arg({details!r}),
+}})
+fake=Mock(is_https_home=False)
+fake.get_perms.return_value=response
+with patch.object(client_app, 'account', fake):
+    client_app.perms()
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code], check=True, text=True, capture_output=True
+    )
+    rendered = completed.stdout
+    assert "Devices: None" in rendered
+    assert "Federated Permissions:" in rendered
+    assert "Destination" in rendered and "remote-readers" in rendered
+    assert "Offline destination" in rendered and "destination unavailable" in rendered
+    assert "destination-signed" in rendered

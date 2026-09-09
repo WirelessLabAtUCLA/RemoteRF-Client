@@ -4,6 +4,8 @@ import re
 import time
 from remoterf_federation_core import (
     validate_capabilities,
+    validate_home_permissions_summary,
+    HomePermissionsError,
     local_capabilities,
     canonical_uuid,
 )
@@ -233,11 +235,29 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
 
     def permissions(self):
         self._operation("ACC:get_perms")
-        return self._own(
+        value = self._own(
             self.transport.request(
                 "GET", self.base + "/permissions", access=self._access()
             )
         )
+        has_summary = "local" in value or "federation" in value
+        if not has_summary:
+            return value
+        try:
+            summary = validate_home_permissions_summary(
+                {"local": value.get("local"), "federation": value.get("federation")}
+            )
+        except (HomePermissionsError, TypeError, ValueError) as exc:
+            raise AccountBackendError("Invalid home permissions response") from exc
+        local = summary["local"]
+        if (
+            local["deployment_id"] != value["deployment_id"]
+            or local["display_name"] != value.get("display_name")
+            or local["groups"] != value["groups"]
+        ):
+            raise AccountBackendError("Home permissions identity mismatch")
+        value.update(summary)
+        return value
 
     def enroll(self, code):
         self._operation("ACC:set_enroll")

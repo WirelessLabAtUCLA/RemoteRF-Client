@@ -207,14 +207,23 @@ P2P, automatic routing, or global resource IDs. Those are future versions.
 The client-side software behaves identically whether you point it at a LAN
 server or at a RemoteRF Global v0 endpoint.
 
-### RemoteRF Global v2 development boundary
+### RemoteRF Global v2 Phase-1 development boundary
 
 The disposable Global v1 account-selection and deployment-session client was
 removed at Gate C. The normal CLI supports direct/native gRPC accounts and
 clean HTTPS deployment-home accounts; neither path treats a broker identity,
-username, email, or home token as destination credentials. Federation and
-remote resource access remain disabled until their separately reviewed gates.
-See [docs/gate-c-identity-boundary.md](docs/gate-c-identity-boundary.md).
+username, email, or home token as destination credentials.
+
+Gate G adds permission visibility to the ordinary `perms` command. It renders
+HOME-local groups plus current destination-signed federated groups with their
+contract/version/state and retrieval time. An unreachable destination is
+explicitly labeled as unsigned transport status, never as an authoritative
+empty group result. This works when the HOME has zero devices.
+
+Phase 1 still grants no federated device discovery, reservation, lease,
+session, streaming, RX, TX, or radio access. Production remains unchanged.
+See [deployment accounts](docs/deployment-accounts-v2.md) and
+[identity boundary](docs/gate-c-identity-boundary.md).
 
 <!-- 1. **Clone the repository:**
 ```bash

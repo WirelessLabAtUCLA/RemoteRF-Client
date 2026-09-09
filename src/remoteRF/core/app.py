@@ -397,11 +397,65 @@ def reserve():
 
 import ast
 import json
+
+
+def _render_federation_permissions(entries):
+    """Render typed remote snapshots without upgrading transport text to fact."""
+
+    if not entries:
+        return
+    printf("Federated Permissions:", (Sty.BOLD, Sty.BLUE))
+    friendly_errors = {
+        "principal_disabled": "principal disabled",
+        "group_lifetime_invalid": "destination group data is invalid",
+        "contract_not_active": "contract is not active",
+        "contract_selection_ambiguous": "contract selection is ambiguous",
+    }
+    for entry in entries:
+        print(f"  {entry['display_name']}")
+        print(
+            "    Contract: "
+            f"{entry['contract_id']} v{entry['contract_version']} ({entry['state']})"
+        )
+        status = entry["status"]
+        print(f"    Status: {status}")
+        if status == "ok":
+            groups = ", ".join(g["group_name"] for g in entry["groups"])
+            print(f"    Groups: {groups or '(none)'}")
+            checked = datetime.datetime.fromtimestamp(
+                entry["retrieved_at"], tz=datetime.timezone.utc
+            ).isoformat().replace("+00:00", "Z")
+            print(f"    Source: {entry['display_name']} (destination-signed)")
+            print(f"    Checked: {checked}")
+        elif status == "blocked":
+            reason = friendly_errors.get(
+                entry["error_code"], entry["error_code"].replace("_", " ")
+            )
+            source = (
+                f"{entry['display_name']} (destination-signed)"
+                if entry["provenance"] == "destination_signed"
+                else "local HOME policy"
+            )
+            print(f"    Reason: {reason}")
+            print(f"    Source: {source}")
+        else:
+            print("    Reason: destination unavailable")
+            print("    Source: unsigned transport status")
+
+
 def perms():
     data = account.get_perms()
     if account.is_https_home:
-        print(account.backend.capabilities['display_name'])
-        print('  Groups: ' + (', '.join(g['group_name'] for g in data['groups']) or '(none)'))
+        local = data.get("local") or {
+            "display_name": account.backend.capabilities["display_name"],
+            "groups": data["groups"],
+        }
+        print(local["display_name"])
+        print(
+            "  Groups: "
+            + (", ".join(g["group_name"] for g in local["groups"]) or "(none)")
+        )
+        _render_federation_permissions(data.get("federation", []))
         return
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
@@ -410,15 +464,18 @@ def perms():
     results = ast.literal_eval(unmap_arg(data.results['UC']))[0]
     perm_level = results[0]
 
+    details_raw = unmap_arg(data.results.get("details", map_arg("{}")))
+    try:
+        details = json.loads(details_raw) if details_raw else {}
+    except Exception:
+        details = {}
+    remote_permissions = (details.get("home_permissions") or {}).get(
+        "federation", []
+    )
+
     printf("Permission Level: ", (Sty.BOLD, Sty.BLUE), f"{perm_level}", Sty.MAGENTA)
 
     if perm_level == "Normal User":
-        details_raw = unmap_arg(data.results.get("details", map_arg("{}")))
-        try:
-            details = json.loads(details_raw) if details_raw else {}
-        except Exception:
-            details = {}
-
         devices = details.get("devices", []) or []
         caps = details.get("caps", {}) or {}
         groups = details.get("groups", []) or []
@@ -439,6 +496,7 @@ def perms():
         # ---- Devices ----
         if not devices:
             printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
+            _render_federation_permissions(remote_permissions)
             return
 
         printf("Accessible Devices: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)
@@ -457,6 +515,7 @@ def perms():
 
         if not buckets:
             print("Limits per device: (none)")
+            _render_federation_permissions(remote_permissions)
             return
 
         # If everything shares the same limits, print once
@@ -465,6 +524,7 @@ def perms():
             printf("Permissions:", (Sty.BOLD, Sty.BLUE))
             printf("  Max Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN)
             printf("  Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN)
+            _render_federation_permissions(remote_permissions)
             return
 
         # Otherwise print grouped limits
@@ -490,13 +550,17 @@ def perms():
             dev_str = ",".join(ranges)
             printf("  devices[", Sty.GRAY, f"{dev_str}", Sty.MAGENTA, "]: ", Sty.GRAY, f"max_reservations={max_r}, max_time_min={max_t // 60}", Sty.CYAN)
 
+        _render_federation_permissions(remote_permissions)
+
     elif perm_level == "Power User":
         printf("Max Reservations: ", (Sty.BOLD, Sty.BLUE), f"{results[3]}", Sty.CYAN)
         printf("Max Reservation Duration (min): ", (Sty.BOLD, Sty.BLUE), f"{int(results[4]/60)}", Sty.CYAN)
         printf("Device IDs allowed Access to: ", (Sty.BOLD, Sty.BLUE), f"{results[5]}", Sty.MAGENTA)
+        _render_federation_permissions(remote_permissions)
 
     elif perm_level == "Admin":
         printf("No restrictions on reservation count or duration.", (Sty.BOLD, Sty.GREEN))
+        _render_federation_permissions(remote_permissions)
 
     else:
         printf(f"Error: Unknown permission level {perm_level}", Sty.BRIGHT_RED)

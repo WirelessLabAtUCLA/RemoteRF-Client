@@ -23,20 +23,22 @@ contract checks, grant issuance, broker routing, and signed-result validation.
 Success is printed only after the home confirms an owner-signed result, and
 bounded home/transport/destination failure provenance is retained. The Client
 does not persist destination membership or expose a user-chosen request ID.
-Verification/reset tokens are
-entered in hidden prompts, never as command arguments. Groups display even
-with zero devices. Remote permissions aggregation remains outside Gate F.
+Verification/reset tokens are entered in hidden prompts, never as command
+arguments. Groups display even with zero devices. Gate G extends the same
+ordinary `perms` command with the exact HOME `local`/`federation` summary.
+Remote successes show destination-signed source and retrieval time; local
+policy blocks and unsigned transport failures remain visibly distinct.
 
 All HTTPS requests stay on the verified origin, reject redirects and bind
 credentials to origin/deployment UUID/subject UUID. New state lives under
 `deployment/` and keyring namespace `remoterf-deployment`; file fallback is
 0700/0600. Native configuration is not overwritten. Old Global profiles and
 credentials are ignored; the old global/use/deployments CLI entry points are
-removed. Dormant v1 support modules remain only for later Gate C/E work.
+removed. The retired v1 support modules and runtime are gone.
 
-Install the verified `remoterf-federation-core 0.7.0` wheel before this Client
-wheel (`remoterf 2.1.0.dev3`). The exact Gate F source commit and wheel hash are
-recorded in the integration manifest and Gate F report.
+Install the verified `remoterf-federation-core` wheel before this Client
+wheel. The exact Gate G source commits and wheel hashes are recorded in the
+integration manifest and Gate G report.
 The VPS repo records the lock and reproducible build/verification scripts.
 No sibling runtime checkout, browser or server hardware dependency is needed.
 
