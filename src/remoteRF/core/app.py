@@ -499,6 +499,14 @@ def perms():
             remote_permissions = []
             remote_permissions_incomplete = 0
 
+    def render_remote_permissions():
+        _render_federation_permissions(remote_permissions)
+        if remote_permissions_incomplete:
+            print(
+                f"Federation summary incomplete: {remote_permissions_incomplete} "
+                "destination(s) omitted"
+            )
+
     printf("Permission Level: ", (Sty.BOLD, Sty.BLUE), f"{perm_level}", Sty.MAGENTA)
 
     if perm_level == "Normal User":
@@ -522,12 +530,7 @@ def perms():
         # ---- Devices ----
         if not devices:
             printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
-            _render_federation_permissions(remote_permissions)
-            if remote_permissions_incomplete:
-                print(
-                    f"Federation summary incomplete: {remote_permissions_incomplete} "
-                    "destination(s) omitted"
-                )
+            render_remote_permissions()
             return
 
         printf("Accessible Devices: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)
@@ -546,7 +549,7 @@ def perms():
 
         if not buckets:
             print("Limits per device: (none)")
-            _render_federation_permissions(remote_permissions)
+            render_remote_permissions()
             return
 
         # If everything shares the same limits, print once
@@ -555,7 +558,7 @@ def perms():
             printf("Permissions:", (Sty.BOLD, Sty.BLUE))
             printf("  Max Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN)
             printf("  Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN)
-            _render_federation_permissions(remote_permissions)
+            render_remote_permissions()
             return
 
         # Otherwise print grouped limits
@@ -581,17 +584,17 @@ def perms():
             dev_str = ",".join(ranges)
             printf("  devices[", Sty.GRAY, f"{dev_str}", Sty.MAGENTA, "]: ", Sty.GRAY, f"max_reservations={max_r}, max_time_min={max_t // 60}", Sty.CYAN)
 
-        _render_federation_permissions(remote_permissions)
+        render_remote_permissions()
 
     elif perm_level == "Power User":
         printf("Max Reservations: ", (Sty.BOLD, Sty.BLUE), f"{results[3]}", Sty.CYAN)
         printf("Max Reservation Duration (min): ", (Sty.BOLD, Sty.BLUE), f"{int(results[4]/60)}", Sty.CYAN)
         printf("Device IDs allowed Access to: ", (Sty.BOLD, Sty.BLUE), f"{results[5]}", Sty.MAGENTA)
-        _render_federation_permissions(remote_permissions)
+        render_remote_permissions()
 
     elif perm_level == "Admin":
         printf("No restrictions on reservation count or duration.", (Sty.BOLD, Sty.GREEN))
-        _render_federation_permissions(remote_permissions)
+        render_remote_permissions()
 
     else:
         printf(f"Error: Unknown permission level {perm_level}", Sty.BRIGHT_RED)

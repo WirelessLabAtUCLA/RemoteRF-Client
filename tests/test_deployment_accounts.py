@@ -542,3 +542,41 @@ with patch.object(client_app, 'account', fake):
     assert "Destination" in rendered and "remote-readers" in rendered
     assert "Offline destination" in rendered and "destination unavailable" in rendered
     assert "destination-signed" in rendered
+
+
+def test_grpc_perms_always_renders_explicit_incomplete_notice():
+    summary = {
+        "local": {"deployment_id": ID, "display_name": "Home", "groups": []},
+        "federation": [],
+        "incomplete": True,
+        "omitted_count": 3,
+    }
+    import subprocess
+    import sys
+
+    details = json.dumps(
+        {
+            "devices": [1],
+            "caps": {"1": {"max_reservations": 1, "max_reservation_time_sec": 60}},
+            "groups": [],
+            "home_permissions": summary,
+        }
+    )
+    code = f"""
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+from remoteRF.common.utils import map_arg
+import remoteRF.core.app as client_app
+response=SimpleNamespace(results={{
+    'UC': map_arg(str([['Normal User']])),
+    'details': map_arg({details!r}),
+}})
+fake=Mock(is_https_home=False)
+fake.get_perms.return_value=response
+with patch.object(client_app, 'account', fake):
+    client_app.perms()
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code], check=True, text=True, capture_output=True
+    )
+    assert "Federation summary incomplete: 3 destination(s) omitted" in completed.stdout
