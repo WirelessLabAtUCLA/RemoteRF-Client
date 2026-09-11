@@ -134,6 +134,7 @@ def print_help() -> None:
     printf("Config:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf -c | --config [options]", Sty.CYAN)
     printf("    -a, --addr, -addr <host:port>", Sty.CYAN, "   Set target server", Sty.DEFAULT)
+    printf("    --cert-port <port>", Sty.CYAN, "              Cert server port (default: grpc port + 1)", Sty.DEFAULT)
     printf("    -w, --wipe, -wipe", Sty.CYAN, "               Delete all local config", Sty.DEFAULT)
     printf("    -y, --yes, -yes", Sty.CYAN, "                 Skip wipe confirmation", Sty.DEFAULT)
     print()
@@ -182,6 +183,7 @@ def main() -> int:
         addr = None
         wipe = False
         yes = False
+        cert_port_arg = None
 
         i = 1
         while i < len(argv):
@@ -192,6 +194,18 @@ def main() -> int:
                     print("ERROR: missing required argument after --addr/-a/-addr")
                     return 2
                 addr = argv[i + 1]
+                i += 2
+                continue
+
+            if tok in ("--cert-port", "-cert-port"):
+                if i + 1 >= len(argv):
+                    print("ERROR: missing required argument after --cert-port")
+                    return 2
+                try:
+                    cert_port_arg = int(argv[i + 1].strip())
+                except Exception:
+                    print("ERROR: --cert-port must be an integer")
+                    return 2
                 i += 2
                 continue
 
@@ -235,7 +249,7 @@ def main() -> int:
                 return 2
 
             # configure returns the proper exit code
-            cert_port = port + 1
+            cert_port = cert_port_arg if cert_port_arg is not None else port + 1
             configure(host, port, cert_port)
             return 0
 

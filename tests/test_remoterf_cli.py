@@ -48,6 +48,32 @@ class RemoteRFCliTests(unittest.TestCase):
         connected_server.assert_called_once_with()
         print_unavailable.assert_called_once_with()
 
+    @mock.patch("remoteRF.config.config.configure")
+    @mock.patch.object(
+        remoterf_cli.sys, "argv", ["remoterf", "--config", "--addr", "10.0.0.1:12321"]
+    )
+    def test_config_without_cert_port_defaults_to_grpc_port_plus_one(self, configure):
+        self.assertEqual(remoterf_cli.main(), 0)
+        configure.assert_called_once_with("10.0.0.1", 12321, 12322)
+
+    @mock.patch("remoteRF.config.config.configure")
+    @mock.patch.object(
+        remoterf_cli.sys,
+        "argv",
+        ["remoterf", "--config", "--addr", "10.0.0.1:12321", "--cert-port", "9999"],
+    )
+    def test_config_with_explicit_cert_port_overrides_default(self, configure):
+        self.assertEqual(remoterf_cli.main(), 0)
+        configure.assert_called_once_with("10.0.0.1", 12321, 9999)
+
+    @mock.patch("remoteRF.config.config.configure")
+    @mock.patch.object(
+        remoterf_cli.sys, "argv", ["remoterf", "-c", "-a", "10.0.0.1:12321"]
+    )
+    def test_existing_short_flag_usage_remains_compatible(self, configure):
+        self.assertEqual(remoterf_cli.main(), 0)
+        configure.assert_called_once_with("10.0.0.1", 12321, 12322)
+
 
 if __name__ == "__main__":
     unittest.main()
