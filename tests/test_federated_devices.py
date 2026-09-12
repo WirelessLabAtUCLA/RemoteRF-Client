@@ -64,6 +64,15 @@ def test_device_rpc_relays_serialized_frames_through_the_home(monkeypatch):
     sent.ParseFromString(base64.b64decode(body["data"]["request_b64"]))
     assert sent.function_name == "pluto:tx_lo:GET" and unmap_arg(sent.args["a"]) == REF
 
+    # A setter's empty frame decodes to an empty results map.
+    transport.request.return_value = {"provenance": "destination", "response_b64": ""}
+    empty = grpc_client.rpc_client(function_name="pluto:rx_lo:SET", args={"rx_lo": map_arg(1), "a": map_arg(REF)})
+    assert dict(empty.results) == {}
+    transport.request.return_value = {
+        "provenance": "destination",
+        "response_b64": base64.b64encode(answer.SerializeToString()).decode(),
+    }
+
     # IDL lookups route by the reference in token/device_id, too.
     grpc_client.rpc_client(function_name="IDL:get_drivers", args={"device_id": map_arg(REF)})
     assert transport.request.call_args.kwargs["data"]["device_id"] == REF

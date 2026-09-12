@@ -367,7 +367,8 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
         )
         encoded = value.get("response_b64")
-        if value.get("provenance") != "destination" or type(encoded) is not str or not encoded:
+        # An empty frame is a valid setter response (no results).
+        if value.get("provenance") != "destination" or type(encoded) is not str:
             raise AccountBackendError("Invalid home device response")
         try:
             return base64.b64decode(encoded, validate=True)
