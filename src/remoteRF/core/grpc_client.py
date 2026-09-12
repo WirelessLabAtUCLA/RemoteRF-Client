@@ -156,10 +156,68 @@ tcp_calls = 0
 
 def get_tcp_calls():
     return tcp_calls
-        
+
+
+# ── federated device relay ───────────────────────────────────────────
+#
+# At an HTTPS account home there is no direct device transport.  A driver
+# constructed with a HOME-minted ``<deployment_id>:<local_id>`` reference
+# instead of a Server bearer token has its GenericRPCRequest serialized and
+# relayed through the HOME; the response is the destination's ordinary
+# GenericRPCResponse, so generated drivers do not know the difference.
+
+_federated_backend = None
+
+
+def bind_federated_backend(backend) -> None:
+    """Reuse the interactive session's authenticated HTTPS backend."""
+    global _federated_backend
+    _federated_backend = backend
+
+
+def federated_backend():
+    global _federated_backend
+    if _federated_backend is None:
+        from ..deployment.backend import selected_backend
+        backend = selected_backend()
+        if backend.capabilities["account_transport"] != "https-json":
+            raise RuntimeError("Federated device references require an HTTPS account home")
+        if not backend.resume():
+            raise RuntimeError("Log in to the account home first (run `remoterf`, then `login`)")
+        _federated_backend = backend
+    return _federated_backend
+
+
+def _federated_ref(function_name, args):
+    """The global device reference this call targets, or None for native calls."""
+    from remoterf_federation_core import is_global_ref
+    keys = ("token", "device_id") if function_name == "IDL:get_drivers" else ("a",)
+    for key in keys:
+        if key in args:
+            value = unmap_arg(args[key])
+            return value if is_global_ref(value) else None
+    return None
+
+
+def _federated_call(ref, function_name, args):
+    from ..deployment.http import AccountBackendError
+    request = grpc_pb2.GenericRPCRequest(function_name=function_name, args=args)
+    try:
+        raw = federated_backend().device_rpc(ref, request.SerializeToString())
+    except AccountBackendError as exc:
+        label = f" [{exc.provenance}]" if exc.provenance else ""
+        raise RuntimeError(f"{exc}{label}") from None
+    response = grpc_pb2.GenericRPCResponse()
+    response.ParseFromString(raw)
+    return response
+
+
 def rpc_client(*, function_name, args, connection=None):
     global tcp_calls
     tcp_calls += 1
+    ref = _federated_ref(function_name, args) if connection is None else None
+    if ref is not None:
+        return _finish(_federated_call(ref, function_name, args))
     # print(tcp_calls)
     # if not is_connected:
     #     response = rpc_client(function_name="UserLogin", args={"username": grpc_pb2.Argument(string_value=input("Username: ")), "password": grpc_pb2.Argument(string_value=getpass.getpass("Password: ")), "client_ip": grpc_pb2.Argument(string_value=local_ip)})
@@ -175,7 +233,10 @@ def rpc_client(*, function_name, args, connection=None):
     
     # print(f"Calling function: {function_name}")
     response = (connection or get_active_connection()).stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
-    
+    return _finish(response)
+
+
+def _finish(response):
     if 'a' in response.results:
         raise RuntimeError(unmap_arg(response.results['a']))
         

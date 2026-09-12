@@ -232,7 +232,87 @@ def newest_version_pip(project="remoterf"):
         return None
 
     
+# ── HTTPS (federated) home rendering ─────────────────────────────────
+#
+# At a Global HOME every device and reservation is an opaque
+# ``<deployment_id>:<local_id>`` reference minted by the HOME.  Each
+# destination's provenance is shown so an unreachable deployment is never
+# mistaken for an empty one.
+
+def _render_destinations(entries):
+    for dest in entries:
+        if dest["status"] == "ok":
+            continue
+        reason = "unavailable (transport, unsigned)" if dest["status"] == "unavailable" else f"blocked ({dest['provenance']}: {dest['error_code']})"
+        printf("Deployment ", Sty.GRAY, f"{dest['display_name']}", Sty.MAGENTA, f": {reason}", Sty.WARNING)
+    if any(dest["status"] != "ok" for dest in entries):
+        print()
+
+
+def _federated_devices():
+    data = account.get_devices()
+    _render_destinations(data["destinations"])
+    if not data["devices"]:
+        printf("No devices visible through this home.", Sty.BOLD)
+        return data
+    printf("Devices:", (Sty.BOLD, Sty.BLUE))
+    for dev in data["devices"]:
+        state = "online" if dev["online"] else "offline"
+        printf("Device ID: ", Sty.GRAY, f"{dev['device_id']}", Sty.MAGENTA, " Name: ", Sty.GRAY, f"{dev['display_name']}", Sty.DEFAULT,
+               f" ({dev['device_type'] or 'unknown'}, {state}, @{dev['deployment_name']})", Sty.GRAY)
+    if data.get("incomplete"):
+        printf(f"{data['omitted_count']} more deployment(s) were not queried.", Sty.WARNING)
+    return data
+
+
+def _federated_reservations(*, mine_only):
+    data = account.get_reservations()
+    _render_destinations(data["destinations"])
+    rows = [r for r in data["reservations"] if r["mine"] or not mine_only]
+    rows.sort(key=lambda r: (r["device_id"], r["start_time"]))
+    if not rows:
+        printf("No reservations found.", Sty.BOLD)
+        return rows
+    printf("My reservations:" if mine_only else "Reservations:", (Sty.BOLD, Sty.BLUE))
+    for r in rows:
+        start, end = datetime.datetime.fromtimestamp(r["start_time"]), datetime.datetime.fromtimestamp(r["end_time"])
+        who = "you" if r["mine"] else r["display_name"]
+        printf("Device ID: ", Sty.GRAY, f"{r['device_id']}", Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(start, end), Sty.CYAN, f" ({who})", Sty.GRAY)
+    return rows
+
+
+def _federated_cancel():
+    rows = _federated_reservations(mine_only=True)
+    if not rows:
+        return
+    for i, r in enumerate(rows):
+        printf("Reservation ID: ", Sty.GRAY, f"{i}", Sty.CYAN, " -> ", Sty.GRAY, f"{r['reservation_id']}", Sty.MAGENTA)
+    inpu = session.prompt(stylize("Enter the reservation ID you would like to cancel ", Sty.BOLD, "(abort with non-number input)", Sty.CYAN, ": ", Sty.BOLD))
+    if not inpu.isdigit() or int(inpu) >= len(rows):
+        printf("Aborting.", Sty.WARNING)
+        return
+    chosen = rows[int(inpu)]
+    if session.prompt(stylize(f"Cancel {chosen['reservation_id']}? (y/n): ", (Sty.BOLD, Sty.GREEN))) != 'y':
+        printf("Aborting. User canceled action.", Sty.WARNING)
+        return
+    account.cancel_reservation(chosen["reservation_id"])
+    printf("Reservation successfully canceled.", (Sty.BOLD, Sty.GREEN))
+
+
+def _federated_reserve():
+    data = _federated_devices()
+    if not data["devices"]:
+        return
+    device_id = session.prompt(stylize("Enter the device ID you would like to reserve: ", Sty.DEFAULT)).strip()
+    handle = account.reserve_device(device_id, get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
+    printf("Reservation successful. Your device handle -> ", Sty.BOLD, f"{handle}", Sty.BG_GREEN)
+    printf("Use it where a token goes, e.g. adi.Pluto(\"" + handle + "\"); it works while you are logged in to this home.", Sty.DEFAULT)
+
+
 def reservations():
+    if account.is_https_home:
+        _federated_reservations(mine_only=False)
+        return
     data = account.get_reservations()
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
@@ -264,6 +344,9 @@ def reservations():
         printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
         
 def my_reservations():
+    if account.is_https_home:
+        _federated_reservations(mine_only=True)
+        return
     data = account.get_reservations()
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
@@ -295,6 +378,9 @@ def my_reservations():
             printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
 
 def cancel_my_reservation():
+    if account.is_https_home:
+        _federated_cancel()
+        return
     ## print all of ur reservations and their ids
     ## ask for id to cancel
     ## remove said reservation
@@ -371,6 +457,9 @@ def cancel_my_reservation():
         print("Aborting. A non integer key was given.")
 
 def devices():
+    if account.is_https_home:
+        _federated_devices()
+        return
     data = account.get_devices()
     if 'ace' in data.results:
         print(f"Error: {unmap_arg(data.results['ace'])}")
@@ -387,6 +476,9 @@ def get_datetime(question:str):
 
 def reserve():
     try:
+        if account.is_https_home:
+            _federated_reserve()
+            return
         id = session.prompt(stylize("Enter the device ID you would like to reserve: ", Sty.DEFAULT))
         token = account.reserve_device(int(id), get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
         if token != '':
@@ -1101,6 +1193,9 @@ def run(backend=None):
     from .grpc_client import active_endpoint
     backend = backend or selected_backend()
     account = RemoteRFAccount(backend=backend)
+    if account.is_https_home:
+        from .grpc_client import bind_federated_backend
+        bind_federated_backend(backend)
     session = PromptSession()
     server_addr = backend.transport.origin if account.is_https_home else active_endpoint()
     try:
@@ -1150,8 +1245,12 @@ def run(backend=None):
                 # elif inpu == "resdev s":
                 #     interactive_reserve_all()
                 elif inpu == "resdev":
-                    # interactive_reserve_next_days(block_minutes=30)
-                    interactive_reserve_next_days_auto()
+                    # ponytail: the slot picker needs native perms tables; a
+                    # federated home uses the plain start/end prompt.
+                    if account.is_https_home:
+                        reserve()
+                    else:
+                        interactive_reserve_next_days_auto()
                 elif inpu == 'cancelres':
                     cancel_my_reservation()
 

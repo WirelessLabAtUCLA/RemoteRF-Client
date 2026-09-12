@@ -3,10 +3,17 @@
 import re
 import time
 import inspect
+import base64
 from remoterf_federation_core import (
+    DEVICE_AGGREGATION_TIMEOUT_SECONDS,
+    DEVICE_RPC_CLIENT_TIMEOUT_SECONDS,
+    DEVICE_WRITE_TIMEOUT_SECONDS,
+    MAX_DEVICE_HTTP_RESPONSE_BYTES,
+    MAX_DEVICE_LIST_HTTP_RESPONSE_BYTES,
     validate_capabilities,
     validate_home_permissions_summary,
     HomePermissionsError,
+    is_global_ref,
     local_capabilities,
     canonical_uuid,
 )
@@ -288,6 +295,84 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
         if "code" in result or "code_name" in result:
             raise AccountBackendError("Enrollment response exposed secret material")
         return result
+
+    # ── federated device plane ──────────────────────────────────────
+    #
+    # Device and reservation ids are opaque ``<deployment_id>:<local_id>``
+    # references minted by the HOME; the Client never parses them.
+
+    @staticmethod
+    def _ref(value, what):
+        if not is_global_ref(value):
+            raise AccountBackendError(f"invalid_{what}")
+        return value
+
+    def devices(self):
+        self._operation("ACC:get_dev")
+        value = self.transport.request(
+            "GET", self.base + "/devices", access=self._access(),
+            overall_timeout=DEVICE_AGGREGATION_TIMEOUT_SECONDS + 3,
+            max_response_bytes=MAX_DEVICE_LIST_HTTP_RESPONSE_BYTES,
+        )
+        if type(value.get("devices")) is not list or type(value.get("destinations")) is not list:
+            raise AccountBackendError("Invalid home device response")
+        return value
+
+    def reservations(self):
+        self._operation("ACC:get_res")
+        value = self.transport.request(
+            "GET", self.base + "/reservations", access=self._access(),
+            overall_timeout=DEVICE_AGGREGATION_TIMEOUT_SECONDS + 3,
+            max_response_bytes=MAX_DEVICE_LIST_HTTP_RESPONSE_BYTES,
+        )
+        if type(value.get("reservations")) is not list or type(value.get("destinations")) is not list:
+            raise AccountBackendError("Invalid home reservation response")
+        return value
+
+    def reserve(self, device_id, start_time, end_time):
+        self._operation("ACC:reserve_device")
+        value = self.transport.request(
+            "POST", self.base + "/reservations", access=self._access(),
+            data={"device_id": self._ref(device_id, "device_id"),
+                  "start_time": int(start_time), "end_time": int(end_time)},
+            overall_timeout=DEVICE_WRITE_TIMEOUT_SECONDS + 3,
+        )
+        reservation = value.get("reservation")
+        if value.get("provenance") != "destination" or type(reservation) is not dict:
+            raise AccountBackendError("Invalid home reservation response")
+        self._ref(reservation.get("reservation_id"), "reservation_id")
+        self._ref(reservation.get("device_id"), "device_id")
+        return reservation
+
+    def cancel(self, reservation_id):
+        self._operation("ACC:cancel_res")
+        value = self.transport.request(
+            "POST", self.base + "/reservations/cancel", access=self._access(),
+            data={"reservation_id": self._ref(reservation_id, "reservation_id")},
+            overall_timeout=DEVICE_WRITE_TIMEOUT_SECONDS + 3,
+        )
+        if value.get("provenance") != "destination" or value.get("cancelled") is not True:
+            raise AccountBackendError("Invalid home cancel response")
+        return True
+
+    def device_rpc(self, device_id, request_bytes):
+        """Relay one serialized GenericRPCRequest; returns the response bytes."""
+
+        self._operation("DEV:rpc")
+        value = self.transport.request(
+            "POST", self.base + "/devices/rpc", access=self._access(),
+            data={"device_id": self._ref(device_id, "device_id"),
+                  "request_b64": base64.b64encode(bytes(request_bytes)).decode("ascii")},
+            overall_timeout=DEVICE_RPC_CLIENT_TIMEOUT_SECONDS,
+            max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
+        )
+        encoded = value.get("response_b64")
+        if value.get("provenance") != "destination" or type(encoded) is not str or not encoded:
+            raise AccountBackendError("Invalid home device response")
+        try:
+            return base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise AccountBackendError("Invalid home device response") from exc
 
     def logout(self):
         self._operation("ACC:logout")

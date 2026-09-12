@@ -89,7 +89,12 @@ def fetch_idl(
             "schema_hash": "sha256:...",
         }
     """
-    if token is not None and prefer_v2:
+    from remoterf_federation_core import is_global_ref
+
+    # A HOME-minted device reference has no direct v2 control channel; the
+    # schema is fetched through the same relayed IDL RPC every driver uses.
+    federated = is_global_ref(token) or is_global_ref(device_id)
+    if token is not None and prefer_v2 and not federated:
         from .dynamic_v2 import fetch_schema_v2
         from ..core.v2_errors import RemoteRFProtocolError, RemoteRFTransportError
 
@@ -107,7 +112,7 @@ def fetch_idl(
     if token is not None:
         args['token'] = map_arg(str(token))
     elif device_id is not None:
-        args['device_id'] = map_arg(int(device_id))
+        args['device_id'] = map_arg(device_id if is_global_ref(device_id) else int(device_id))
     elif device_name is not None:
         args['device_name'] = map_arg(str(device_name))
     else:

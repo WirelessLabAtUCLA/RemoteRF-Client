@@ -77,7 +77,16 @@ class RemoteRFAccount:
             print(f'Error: {unmap_arg(response.results["UE"])}')
             return False
     
-    def reserve_device(self, device_id:int, start_time:datetime, end_time:datetime):
+    def reserve_device(self, device_id, start_time:datetime, end_time:datetime):
+        if self.is_https_home:
+            reservation = self.backend.reserve(device_id, int(start_time.timestamp()), int(end_time.timestamp()))
+            try:
+                from ..drivers.dynamic_device import install_driver
+                install_driver(device_id=reservation['device_id'])
+            except Exception as e:
+                print(f"Warning: could not install driver for device {reservation['device_id']}: {e}")
+            # The HOME reference is the driver handle: adi.Pluto("<deployment>:<id>")
+            return reservation['device_id']
         username, credential_secret = self._rpc_credentials()
         response = self._call(function_name="ACC:reserve_device", args={"un":map_arg(username), "pw":map_arg(credential_secret), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
 
@@ -93,14 +102,20 @@ class RemoteRFAccount:
             return token
             
     def get_reservations(self):
+        if self.is_https_home:
+            return self.backend.reservations()
         username, credential_secret = self._rpc_credentials()
         return self._call(function_name='ACC:get_res', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def get_devices(self):
+        if self.is_https_home:
+            return self.backend.devices()
         username, credential_secret = self._rpc_credentials()
         return self._call(function_name='ACC:get_dev', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
-    def cancel_reservation(self, res_id:int):
+    def cancel_reservation(self, res_id):
+        if self.is_https_home:
+            return self.backend.cancel(res_id)
         username, credential_secret = self._rpc_credentials()
         return self._call(function_name='ACC:cancel_res', args={"un":map_arg(username), "pw":map_arg(credential_secret), "res_id":map_arg(res_id)})
     
