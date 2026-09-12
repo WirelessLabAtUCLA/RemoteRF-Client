@@ -1561,8 +1561,16 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
         else _schema_maps(schema)[0]
     )
     remote_path = _DRIVERS_DIR / device_type / f"{device_type}_remote.py"
+    init_path = remote_path.with_name("__init__.py")
 
-    if not remote_path.exists():
+    # A shipped legacy package can share the generated package's name; a
+    # reinstall then restores its __init__ while the generated remote module
+    # survives.  Regenerate unless __init__ actually binds the generated module.
+    init_binds_generated = (
+        init_path.exists()
+        and f"from .{device_type}_remote import" in init_path.read_text(encoding="utf-8")
+    )
+    if not remote_path.exists() or not init_binds_generated:
         pkg_dir = _write_driver_files(schema)
         _print_driver_cached(pkg_dir)
         return
