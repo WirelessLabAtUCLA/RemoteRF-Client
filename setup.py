@@ -33,7 +33,7 @@ setup(
     install_requires=[
         "remoterf-federation-core==0.10.1",
         "grpcio>=1.78.1,<2.0.0", "protobuf>=6.31.1,<7.0.0", "numpy", "prompt_toolkit", "python-dotenv", "prompt-toolkit",
-        "httpx>=0.27,<1.0", "pydantic>=2.6,<3.0", "keyring>=24,<26",
+        "httpx>=0.27,<1.0", "certifi", "pydantic>=2.6,<3.0", "keyring>=24,<26",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

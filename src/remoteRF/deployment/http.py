@@ -1,7 +1,9 @@
 """Verified same-origin JSON transport with bounded responses and no retries."""
 
+import os
 import ssl
 import time
+import certifi
 import httpx
 from remoterf_federation_core import (
     MAX_HOME_PERMISSIONS_HTTP_RESPONSE_BYTES,
@@ -24,7 +26,7 @@ class JsonTransport:
     def __init__(self, selected_origin, *, client=None):
         self.origin = origin(selected_origin)
         self.client = client or httpx.Client(
-            verify=ssl.create_default_context(),
+            verify=ssl.create_default_context(cafile=os.environ.get("SSL_CERT_FILE") or certifi.where()),
             timeout=5,
             follow_redirects=False,
             trust_env=False,

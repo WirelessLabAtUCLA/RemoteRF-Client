@@ -82,12 +82,35 @@ def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.
         end = f"{end_time.strftime('%Y-%m-%d')} {end}"
     return f"{start} - {end}"
 
-def _password_confirmation():
+# ponytail: bounds mirror Global's policy (6-128 chars); not advertised by discovery.
+PASSWORD_MIN, PASSWORD_MAX = 6, 128
+
+def _ask(label, *, hidden=False):
+    """One styled account field: indented bold label. Secrets go through
+    getpass (tty echo off) because prompt_toolkit's is_password echoes
+    plaintext on dumb terminals."""
+    if not hidden:
+        return session.prompt(stylize("  ", Sty.DEFAULT, f"{label}: ", Sty.BOLD))
+    # getpass must write the prompt itself: it flushes pending tty input when
+    # it switches echo off, so anything typed against an earlier print is lost.
+    return getpass.getpass(f"  \x1b[1m{label}: \x1b[0m")
+
+
+def _home_name():
+    return account.backend.capabilities['display_name'] if account.is_https_home else server_addr
+
+
+def _password_confirmation(*, enforce_policy=False):
+    if enforce_policy:
+        printf(f"  Password must be {PASSWORD_MIN}-{PASSWORD_MAX} characters.", Sty.GRAY)
     while True:
-        password = getpass.getpass("Password (Hidden): ")
-        if password == getpass.getpass("Confirm Password: "):
+        password = _ask("Password (Hidden)", hidden=True)
+        if enforce_policy and not PASSWORD_MIN <= len(password) <= PASSWORD_MAX:
+            printf(f"  Password is {len(password)} characters; must be {PASSWORD_MIN}-{PASSWORD_MAX}. Try again.", Sty.WARNING)
+            continue
+        if password == _ask("Confirm Password", hidden=True):
             return password
-        print("Passwords do not match. Try again.")
+        printf("  Passwords do not match. Try again.", Sty.WARNING)
 
 
 def _account_command(command):
@@ -95,41 +118,48 @@ def _account_command(command):
     if command in ('r', 'register'):
         if not policy['enabled']:
             raise AccountBackendError('Registration is unavailable at this home')
-        print('Registering new account...')
-        account.enrollment_code = input('Enrollment Code: ') if policy['enrollment_code_required'] else ''
-        account.username = input('Username: ') if policy['username_required'] else ''
-        account.password = _password_confirmation()
-        account.email = input('Email: ') if policy['email_required'] else ''
+        printf(f"Register at {_home_name()}", (Sty.BOLD, Sty.BLUE))
+        account.enrollment_code = _ask('Enrollment Code') if policy['enrollment_code_required'] else ''
+        account.username = _ask('Username') if policy['username_required'] else ''
+        account.password = _password_confirmation(enforce_policy=account.is_https_home)
+        account.email = _ask('Email') if policy['email_required'] else ''
         return bool(account.create_user()) and not policy['email_verification_required']
     if command == 'verify':
         if not policy['email_verification_required']:
             raise AccountBackendError('This deployment does not require email verification')
-        account.backend.verify(getpass.getpass('Verification token: '))
-        print('Email verified. You can now log in.')
+        printf("Verify your email", (Sty.BOLD, Sty.BLUE))
+        printf("  Paste the token from the verification email.", Sty.GRAY)
+        account.backend.verify(_ask('Verification token', hidden=True))
+        printf('Email verified. You can now log in.', (Sty.BOLD, Sty.GREEN))
         return False
     if command in ('forgot-password', 'reset-password'):
         if not account.is_https_home:
             raise AccountBackendError('Contact the local administrator to reset a password')
         if command == 'forgot-password':
-            account.backend.forgot(input('Email: '))
-            print('If eligible, check your email for a password reset token.')
+            printf("Forgot password", (Sty.BOLD, Sty.BLUE))
+            account.backend.forgot(_ask('Email'))
+            printf('If eligible, check your email for a password reset token.', Sty.DEFAULT)
         else:
-            token = getpass.getpass('Password reset token: ')
-            account.backend.reset(token, _password_confirmation())
-            print('Password reset. Log in again.')
+            printf("Reset password", (Sty.BOLD, Sty.BLUE))
+            token = _ask('Password reset token', hidden=True)
+            account.backend.reset(token, _password_confirmation(enforce_policy=True))
+            printf('Password reset. Log in again.', (Sty.BOLD, Sty.GREEN))
         return False
     if command in ('l', 'login'):
-        account.username = input('Username or Email: ' if account.is_https_home else 'Username: ')
-        account.password = getpass.getpass('Password (Hidden): ')
+        printf(f"Login to {_home_name()}", (Sty.BOLD, Sty.BLUE))
+        account.username = _ask('Username or Email' if account.is_https_home else 'Username')
+        account.password = _ask('Password (Hidden)', hidden=True)
         return bool(account.login_user())
-    print('Choose login or register' + (', verify, forgot-password or reset-password.' if account.is_https_home else '.'))
+    printf('Choose login or register' + (', verify, forgot-password or reset-password.' if account.is_https_home else '.'), Sty.WARNING)
     return False
 
 
-def welcome(*, show_banner: bool = True):
+def welcome(*, show_banner: bool = True, initial=()):
+    """Authenticate. ``initial`` commands run first without prompting (``-l`` →
+    login, ``-r`` → register/verify/login); any failure falls back to the prompt."""
     if show_banner:
         print_client_banner(print_my_version(), server=server_addr)
-    if account.is_https_home:
+    if account.is_https_home and 'register' not in initial:
         try:
             if account.backend.resume():
                 account.username = account.backend.credentials['username']
@@ -137,19 +167,24 @@ def welcome(*, show_banner: bool = True):
         except (AccountBackendError, ValidationError):
             account.backend.credentials = None
             account.backend.store.clear()
-            print('Stored session is unavailable. Log in again.')
+            printf('Stored session is unavailable. Log in again.', Sty.WARNING)
+    queue = list(initial)
     while True:
         try:
-            prompt = 'Please login or register to continue. (l/r): '
-            if account.is_https_home:
-                prompt = 'Choose register, verify, login, forgot-password or reset-password: '
-            command = session.prompt(prompt).strip().lower()
+            if queue:
+                command = queue.pop(0)
+            else:
+                prompt = 'Please login or register to continue. (l/r): '
+                if account.is_https_home:
+                    prompt = 'Choose register, verify, login, forgot-password or reset-password: '
+                command = session.prompt(stylize(prompt, Sty.DEFAULT)).strip().lower()
             if command in ('exit', 'quit'):
                 return False
             if _account_command(command):
                 return True
         except (AccountBackendError, ValidationError) as exc:
-            print(f'Account error: {exc}')
+            printf(f'Account error: {exc}', Sty.WARNING)
+            queue.clear()
         except (KeyboardInterrupt, EOFError):
             return False
 
@@ -171,8 +206,10 @@ def commands():
     printf("'getres' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View all reservations", Sty.DEFAULT)
     printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
     printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
-    print('register | verify | login | refresh | logout | forgot-password | reset-password')
     printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
+    printf("'logout' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Log out" + (" and forget the stored session" if account.is_https_home else ""), Sty.DEFAULT)
+    if account.is_https_home:
+        printf("'reset-password' ", Sty.MAGENTA, ": ", Sty.GRAY, "Set a new password with an emailed token", Sty.DEFAULT)
     printf("'exit' or 'quit' ", Sty.MAGENTA, ": ", Sty.GRAY, "Exit", Sty.DEFAULT)
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
@@ -240,9 +277,14 @@ def newest_version_pip(project="remoterf"):
 # mistaken for an empty one.
 
 def _render_destinations(entries):
+    entries = [
+        dest for dest in entries
+        if dest["status"] != "ok"
+        # Not enrolled there yet: normal for every contract partner, not a fault.
+        # `perms` still shows it; transport/other blocks stay visible here.
+        and not (dest["status"] == "blocked" and dest["provenance"] == "destination_signed" and dest["error_code"] == "principal_unknown")
+    ]
     for dest in entries:
-        if dest["status"] == "ok":
-            continue
         reason = "unavailable (transport, unsigned)" if dest["status"] == "unavailable" else f"blocked ({dest['provenance']}: {dest['error_code']})"
         printf("Deployment ", Sty.GRAY, f"{dest['display_name']}", Sty.MAGENTA, f": {reason}", Sty.WARNING)
     if any(dest["status"] != "ok" for dest in entries):
@@ -255,58 +297,145 @@ def _federated_devices():
     if not data["devices"]:
         printf("No devices visible through this home.", Sty.BOLD)
         return data
+    # Grouped by deployment; the opaque <deployment_uuid>:<id> reference is
+    # never shown, `resdev` picks by index like the native shell.
+    data["devices"].sort(key=lambda d: (d["deployment_name"], d["display_name"], d["local_device_id"]))
     printf("Devices:", (Sty.BOLD, Sty.BLUE))
+    deployment = None
     for dev in data["devices"]:
+        if dev["deployment_name"] != deployment:
+            deployment = dev["deployment_name"]
+            printf(f"  @{deployment}", (Sty.BOLD, Sty.MAGENTA))
         state = "online" if dev["online"] else "offline"
-        printf("Device ID: ", Sty.GRAY, f"{dev['device_id']}", Sty.MAGENTA, " Name: ", Sty.GRAY, f"{dev['display_name']}", Sty.DEFAULT,
-               f" ({dev['device_type'] or 'unknown'}, {state}, @{dev['deployment_name']})", Sty.GRAY)
+        printf("    Device Name: ", Sty.GRAY, f"{dev['display_name']}", Sty.DEFAULT, f" ({dev['device_type'] or 'unknown'}, {state})", Sty.GRAY)
     if data.get("incomplete"):
         printf(f"{data['omitted_count']} more deployment(s) were not queried.", Sty.WARNING)
     return data
 
 
-def _federated_reservations(*, mine_only):
+def _federated_reservation_rows(*, mine_only):
+    """HOME reservation rows with a native-style device label, sorted like native."""
     data = account.get_reservations()
     _render_destinations(data["destinations"])
+    names = {d["deployment_id"]: d["display_name"] for d in data["destinations"]}
     rows = [r for r in data["reservations"] if r["mine"] or not mine_only]
-    rows.sort(key=lambda r: (r["device_id"], r["start_time"]))
+    for r in rows:
+        r["device_label"] = f"{r['device_id'].rpartition(':')[2]} @{names.get(r['deployment_id'], r['deployment_id'])}"
+        r["start"], r["end"] = datetime.datetime.fromtimestamp(r["start_time"]), datetime.datetime.fromtimestamp(r["end_time"])
+    rows.sort(key=lambda r: (r["device_label"], r["start"]))
+    return rows
+
+
+def _federated_reservations(*, mine_only):
+    rows = _federated_reservation_rows(mine_only=mine_only)
     if not rows:
         printf("No reservations found.", Sty.BOLD)
         return rows
-    printf("My reservations:" if mine_only else "Reservations:", (Sty.BOLD, Sty.BLUE))
+    if mine_only:
+        printf("Current Reservations Held By ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
+    else:
+        printf("Reservations:", (Sty.BOLD, Sty.BLUE))
     for r in rows:
-        start, end = datetime.datetime.fromtimestamp(r["start_time"]), datetime.datetime.fromtimestamp(r["end_time"])
-        who = "you" if r["mine"] else r["display_name"]
-        printf("Device ID: ", Sty.GRAY, f"{r['device_id']}", Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(start, end), Sty.CYAN, f" ({who})", Sty.GRAY)
+        printf("Device ID: ", Sty.GRAY, f"{r['device_label']}", Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(r["start"], r["end"]), Sty.CYAN)
     return rows
 
 
 def _federated_cancel():
-    rows = _federated_reservations(mine_only=True)
-    if not rows:
-        return
+    rows = _federated_reservation_rows(mine_only=True)
+    printf("Current Reservation(s) under ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
     for i, r in enumerate(rows):
-        printf("Reservation ID: ", Sty.GRAY, f"{i}", Sty.CYAN, " -> ", Sty.GRAY, f"{r['reservation_id']}", Sty.MAGENTA)
-    inpu = session.prompt(stylize("Enter the reservation ID you would like to cancel ", Sty.BOLD, "(abort with non-number input)", Sty.CYAN, ": ", Sty.BOLD))
-    if not inpu.isdigit() or int(inpu) >= len(rows):
-        printf("Aborting.", Sty.WARNING)
+        printf("Reservation ID: ", Sty.GRAY, f'{i}', Sty.CYAN, " Device ID: ", Sty.GRAY, f"{r['device_label']}", Sty.MAGENTA, " Time: ", Sty.GRAY, _format_reservation_range(r["start"], r["end"]), Sty.CYAN)
+    if not rows:
+        printf("No reservations found.", Sty.BOLD)
         return
-    chosen = rows[int(inpu)]
-    if session.prompt(stylize(f"Cancel {chosen['reservation_id']}? (y/n): ", (Sty.BOLD, Sty.GREEN))) != 'y':
+    inpu = session.prompt(stylize(
+        "Enter the reservation ID you would like to cancel ", Sty.BOLD,
+        "(abort with non-number input)", Sty.CYAN,
+        ": ", Sty.BOLD,
+    ))
+    if not inpu.isdigit():
+        print("Aborting. A non integer key was given.")
+        return
+    id = int(inpu)
+    if id >= len(rows):
+        print("Invalid ID.")
+        return
+    r = rows[id]
+    if session.prompt(stylize(
+        "Cancel reservation ID ", Sty.DEFAULT,
+        f'{id}', Sty.CYAN,
+        " Device ID: ", Sty.DEFAULT,
+        f"{r['device_label']}", Sty.MAGENTA,
+        " Time: ", Sty.GRAY,
+        _format_reservation_range(r["start"], r["end"]), Sty.CYAN,
+        "?", Sty.CYAN,
+        " (y/n): ", (Sty.BOLD, Sty.GREEN),
+    )) != 'y':
         printf("Aborting. User canceled action.", Sty.WARNING)
         return
-    account.cancel_reservation(chosen["reservation_id"])
-    printf("Reservation successfully canceled.", (Sty.BOLD, Sty.GREEN))
+    account.cancel_reservation(r["reservation_id"])
+    printf("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
+
+
+def _federated_reservations_for_range(start_day, end_day):
+    """Occupancy keyed like fetch_reservations_for_range, from the HOME's getres."""
+    res_dict = {}
+    for r in account.get_reservations()["reservations"]:
+        start, end = datetime.datetime.fromtimestamp(r["start_time"]), datetime.datetime.fromtimestamp(r["end_time"])
+        if start_day <= start.date() <= end_day:
+            res_dict.setdefault((r["device_id"], start.date()), []).append((start, end))
+    return res_dict
+
+
+def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str):
+    handle = account.reserve_device(device_id, chosen_slot[0], chosen_slot[1])
+    printf("Reservation successful for ", (Sty.BOLD, Sty.GREEN), f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
+    printf("Your device handle -> ", Sty.BOLD, f"{handle}", (Sty.BOLD, Sty.GREEN))
+    printf("Use it where a token goes, e.g. adi.Pluto(\"" + handle + "\"); it works while you are logged in to this home.", Sty.DEFAULT)
 
 
 def _federated_reserve():
-    data = _federated_devices()
-    if not data["devices"]:
+    """Same flow as the native `resdev` picker, sourced from the HOME's device rows."""
+    data = account.get_devices()
+    _render_destinations(data["destinations"])
+    devs = sorted(data["devices"], key=lambda d: (d["deployment_name"], d["display_name"], d["local_device_id"]))
+    if not devs:
+        printf("No devices available for your permission level.", Sty.WARNING)
         return
-    device_id = session.prompt(stylize("Enter the device ID you would like to reserve: ", Sty.DEFAULT)).strip()
-    handle = account.reserve_device(device_id, get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
-    printf("Reservation successful. Your device handle -> ", Sty.BOLD, f"{handle}", Sty.BG_GREEN)
-    printf("Use it where a token goes, e.g. adi.Pluto(\"" + handle + "\"); it works while you are logged in to this home.", Sty.DEFAULT)
+    printf("Devices:", Sty.BOLD)
+    deployment = None
+    for idx, dev in enumerate(devs):
+        if dev["deployment_name"] != deployment:
+            deployment = dev["deployment_name"]
+            printf(f"  @{deployment}", (Sty.BOLD, Sty.MAGENTA))
+        dev["block_min"] = _auto_block_minutes(dev["max_reservation_time_sec"] or 0)
+        printf(
+            f"{idx}.", Sty.CYAN,
+            "  Name: ", Sty.DEFAULT,
+            f"{dev['display_name']}", Sty.GRAY,
+            " Duration: ", Sty.DEFAULT,
+            f"{dev['block_min']} min", Sty.GREEN,
+        )
+    sel = session.prompt(stylize(
+        "Enter which device you want to reserve ", (Sty.BOLD, Sty.GREEN),
+        "(enter the 0-based index): ", Sty.CYAN,
+    )).strip()
+    if not sel.isdigit():
+        print("Invalid input. Please enter a number.")
+        return
+    if int(sel) >= len(devs):
+        print("Invalid selection.")
+        return
+    dev = devs[int(sel)]
+    if dev["block_min"] < 10:
+        printf(
+            "Your max reservation duration for device ", Sty.DEFAULT,
+            f"{dev['display_name']}", Sty.MAGENTA,
+            f" is < 10 minutes (max_sec={dev['max_reservation_time_sec'] or 0}). Cannot create valid reservations.", Sty.DEFAULT,
+        )
+        return
+    _pick_slot_and_reserve(dev["device_id"], dev["display_name"], dev["block_min"], _federated_reservations_for_range, _federated_reserve_slot,
+                           device_label=f"{dev['display_name']} @{dev['deployment_name']}")
 
 
 def reservations():
@@ -913,6 +1042,145 @@ def interactive_reserve_next_days(block_minutes=60):
     except Exception as e:
         print(f"Error: {e}")
         
+def _auto_block_minutes(max_t_sec: int) -> int:
+    try:
+        max_t_sec = int(max_t_sec)
+    except Exception:
+        return 30
+
+    if max_t_sec <= 0:
+        return 30
+
+    max_min = max_t_sec // 60
+    if max_min < 10:
+        # Can't make a valid reservation at all (server min = 10 minutes).
+        return max_min
+
+    # Pick the largest "nice" block <= max_min
+    candidates = [10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720]
+    best = 10
+    for c in candidates:
+        if c <= max_min:
+            best = c
+        else:
+            break
+    return best
+
+def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, reservations_for_range, do_reserve, *, device_label=None):
+    """Shared `resdev` slot picker: days -> free slots -> pick -> confirm -> reserve.
+    Native and federated homes differ only in how reservations are fetched and
+    how the reservation is made (token vs. HOME handle)."""
+    device_label = chosen_device_id if device_label is None else device_label
+    num_days_s = session.prompt(stylize("Enter the number of days to check for available reservations (starting today): ", (Sty.BOLD, Sty.GREEN))).strip()
+    try:
+        num_days = int(num_days_s)
+        if num_days <= 0:
+            print("Invalid number of days.")
+            return
+    except ValueError:
+        print("Invalid input. Please enter a number.")
+        return
+
+    # ---------------------------
+    # 4) Compute availability (same logic you already have)
+    # ---------------------------
+    today = datetime.date.today()
+    end_day = today + datetime.timedelta(days=num_days - 1)
+
+    reservations_range = reservations_for_range(today, end_day)
+    available_slots = []
+    now = datetime.datetime.now()
+
+    def build_time_slots(date: datetime.date, block_size: int):
+        slots = []
+        start_of_day = datetime.datetime.combine(date, datetime.time(0, 0))
+        minutes_in_day = 24 * 60
+        current_offset = 0
+        while current_offset < minutes_in_day:
+            slot_start = start_of_day + datetime.timedelta(minutes=current_offset)
+            slot_end = slot_start + datetime.timedelta(minutes=block_size)
+            if slot_end.date() != date and slot_end.time() != datetime.time.min:
+                break
+            slots.append((slot_start, slot_end))
+            current_offset += block_size
+        return slots
+
+    for i in range(num_days):
+        day = today + datetime.timedelta(days=i)
+        all_slots = build_time_slots(day, block_minutes)
+
+        key = (str(chosen_device_id), day)
+        day_reservations = reservations_range.get(key, [])
+
+        for slot in all_slots:
+            slot_start, slot_end = slot
+            if day == today and slot_end <= now:
+                continue
+            if not is_slot_conflicting(slot, day_reservations):
+                available_slots.append((day, slot))
+
+    if not available_slots:
+        printf("No available ", Sty.DEFAULT, f"{block_minutes}-minute", Sty.CYAN, " slots for device ", Sty.DEFAULT, f"{device_label}", Sty.MAGENTA, f" in the next {num_days} days.", Sty.DEFAULT)
+        return
+
+    available_slots.sort(key=lambda x: (x[0], x[1][0]))
+
+    print()
+    printf("Available time slots for device ", Sty.BOLD, f"{device_label}", Sty.MAGENTA, f" ({block_minutes} min blocks) over the next {num_days} days:", Sty.DEFAULT)
+    last_day = None
+    for idx, (day, slot) in enumerate(available_slots):
+        slot_start_str = slot[0].strftime("%I:%M %p")
+        slot_end_str = slot[1].strftime("%I:%M %p")
+        if day != last_day:
+            print()
+            printf(f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')})", (Sty.BOLD, Sty.BLUE))
+            last_day = day
+        printf("  ", Sty.DEFAULT, f"{idx}.", Sty.CYAN, f" {slot_start_str} - {slot_end_str}", Sty.DEFAULT)
+
+    pick_s = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN))).strip()
+    try:
+        pick = int(pick_s)
+        if pick < 0 or pick >= len(available_slots):
+            print("Invalid selection.")
+            return
+    except ValueError:
+        print("Invalid input. Please enter a number.")
+        return
+
+    chosen_day, chosen_slot = available_slots[pick]
+    slot_start_str = chosen_slot[0].strftime("%I:%M %p")
+    slot_end_str = chosen_slot[1].strftime("%I:%M %p")
+
+    confirmation = session.prompt(stylize(
+        "Reservation successful on ", Sty.DEFAULT,
+        f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
+        " from ", Sty.DEFAULT,
+        f"{slot_start_str}", Sty.CYAN,
+        " to ", Sty.DEFAULT,
+        f"{slot_end_str}", Sty.CYAN,
+        " for ", Sty.DEFAULT,
+        f"{chosen_device_name}", Sty.GRAY,
+        ". \nConfirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
+    )).strip().lower()
+
+    if confirmation != "y":
+        printf("Reservation cancelled.", Sty.WARNING)
+        return
+
+    # ---------------------------
+    # 5) Reserve
+    # ---------------------------
+    do_reserve(chosen_device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str)
+
+
+def _native_reserve_slot(chosen_device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str):
+    token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
+    if token:
+        printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
+        printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
+        printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
+
+
 def interactive_reserve_next_days_auto():
     try:
         import ast, json, datetime
@@ -975,30 +1243,6 @@ def interactive_reserve_next_days_auto():
                 power_user_max_t_sec = int(perm_row[4])
             except Exception:
                 power_user_max_t_sec = None
-
-        def _auto_block_minutes(max_t_sec: int) -> int:
-            try:
-                max_t_sec = int(max_t_sec)
-            except Exception:
-                return 30
-
-            if max_t_sec <= 0:
-                return 30
-
-            max_min = max_t_sec // 60
-            if max_min < 10:
-                # Can't make a valid reservation at all (server min = 10 minutes).
-                return max_min
-
-            # Pick the largest "nice" block <= max_min
-            candidates = [10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720]
-            best = 10
-            for c in candidates:
-                if c <= max_min:
-                    best = c
-                else:
-                    break
-            return best
 
         dev_resp = account.get_devices()
         if "ace" in dev_resp.results:
@@ -1078,116 +1322,13 @@ def interactive_reserve_next_days_auto():
             )
             return
 
-        num_days_s = session.prompt(stylize("Enter the number of days to check for available reservations (starting today): ", (Sty.BOLD, Sty.GREEN))).strip()
-        try:
-            num_days = int(num_days_s)
-            if num_days <= 0:
-                print("Invalid number of days.")
-                return
-        except ValueError:
-            print("Invalid input. Please enter a number.")
-            return
-
-        # ---------------------------
-        # 4) Compute availability (same logic you already have)
-        # ---------------------------
-        today = datetime.date.today()
-        end_day = today + datetime.timedelta(days=num_days - 1)
-
-        reservations_range = fetch_reservations_for_range(today, end_day)
-        available_slots = []
-        now = datetime.datetime.now()
-
-        def build_time_slots(date: datetime.date, block_size: int):
-            slots = []
-            start_of_day = datetime.datetime.combine(date, datetime.time(0, 0))
-            minutes_in_day = 24 * 60
-            current_offset = 0
-            while current_offset < minutes_in_day:
-                slot_start = start_of_day + datetime.timedelta(minutes=current_offset)
-                slot_end = slot_start + datetime.timedelta(minutes=block_size)
-                if slot_end.date() != date and slot_end.time() != datetime.time.min:
-                    break
-                slots.append((slot_start, slot_end))
-                current_offset += block_size
-            return slots
-
-        for i in range(num_days):
-            day = today + datetime.timedelta(days=i)
-            all_slots = build_time_slots(day, block_minutes)
-
-            key = (str(chosen_device_id), day)
-            day_reservations = reservations_range.get(key, [])
-
-            for slot in all_slots:
-                slot_start, slot_end = slot
-                if day == today and slot_end <= now:
-                    continue
-                if not is_slot_conflicting(slot, day_reservations):
-                    available_slots.append((day, slot))
-
-        if not available_slots:
-            printf("No available ", Sty.DEFAULT, f"{block_minutes}-minute", Sty.CYAN, " slots for device ", Sty.DEFAULT, f"{chosen_device_id}", Sty.MAGENTA, f" in the next {num_days} days.", Sty.DEFAULT)
-            return
-
-        available_slots.sort(key=lambda x: (x[0], x[1][0]))
-
-        print()
-        printf("Available time slots for device ", Sty.BOLD, f"{chosen_device_id}", Sty.MAGENTA, f" ({block_minutes} min blocks) over the next {num_days} days:", Sty.DEFAULT)
-        last_day = None
-        for idx, (day, slot) in enumerate(available_slots):
-            slot_start_str = slot[0].strftime("%I:%M %p")
-            slot_end_str = slot[1].strftime("%I:%M %p")
-            if day != last_day:
-                print()
-                printf(f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')})", (Sty.BOLD, Sty.BLUE))
-                last_day = day
-            printf("  ", Sty.DEFAULT, f"{idx}.", Sty.CYAN, f" {slot_start_str} - {slot_end_str}", Sty.DEFAULT)
-
-        pick_s = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN))).strip()
-        try:
-            pick = int(pick_s)
-            if pick < 0 or pick >= len(available_slots):
-                print("Invalid selection.")
-                return
-        except ValueError:
-            print("Invalid input. Please enter a number.")
-            return
-
-        chosen_day, chosen_slot = available_slots[pick]
-        slot_start_str = chosen_slot[0].strftime("%I:%M %p")
-        slot_end_str = chosen_slot[1].strftime("%I:%M %p")
-
-        confirmation = session.prompt(stylize(
-            "Reservation successful on ", Sty.DEFAULT,
-            f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
-            " from ", Sty.DEFAULT,
-            f"{slot_start_str}", Sty.CYAN,
-            " to ", Sty.DEFAULT,
-            f"{slot_end_str}", Sty.CYAN,
-            " for ", Sty.DEFAULT,
-            f"{chosen_device_name}", Sty.GRAY,
-            ". \nConfirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
-        )).strip().lower()
-
-        if confirmation != "y":
-            printf("Reservation cancelled.", Sty.WARNING)
-            return
-
-        # ---------------------------
-        # 5) Reserve
-        # ---------------------------
-        token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
-        if token:
-            printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
-            printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
-            printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
+        _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, fetch_reservations_for_range, _native_reserve_slot)
 
     except Exception as e:
         print(f"Error: {e}")
 
 
-def run(backend=None):
+def run(backend=None, *, register=False):
     global account, session, server_addr
     from ..deployment.backend import selected_backend
     from .grpc_client import active_endpoint
@@ -1198,8 +1339,13 @@ def run(backend=None):
         bind_federated_backend(backend)
     session = PromptSession()
     server_addr = backend.transport.origin if account.is_https_home else active_endpoint()
+    policy = backend.capabilities['registration_policy'] if account.is_https_home else local_capabilities()['registration_policy']
+    if register:
+        initial = ['register'] + (['verify'] if policy['email_verification_required'] else []) + ['login']
+    else:
+        initial = ['login'] if account.is_https_home else []
     try:
-        if not welcome():
+        if not welcome(initial=initial):
             return 0
         clear()
         while True:
@@ -1219,8 +1365,8 @@ def run(backend=None):
                         account.backend.logout()
                     account.password = None
                     account.username = None
-                    if not welcome(show_banner=False):
-                        break
+                    printf('Logged out.', (Sty.BOLD, Sty.GREEN))
+                    break
                 elif inpu == "clear":
                     clear()
                 elif inpu == "getdev":
@@ -1245,8 +1391,6 @@ def run(backend=None):
                 # elif inpu == "resdev s":
                 #     interactive_reserve_all()
                 elif inpu == "resdev":
-                    # ponytail: the slot picker needs native perms tables; a
-                    # federated home uses the plain start/end prompt.
                     if account.is_https_home:
                         reserve()
                     else:

@@ -147,7 +147,8 @@ def print_help() -> None:
     printf("  remoterf -h | --help", Sty.CYAN, "              Show this help", Sty.DEFAULT)
     print()
     printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
-    printf("  remoterf -l | --login", Sty.CYAN, "             Login / register", Sty.DEFAULT)
+    printf("  remoterf -l | --login", Sty.CYAN, "             Login", Sty.DEFAULT)
+    printf("  remoterf -r | --register", Sty.CYAN, "          Register a new account, then login", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
     print()
     printf("Config:", (Sty.BOLD, Sty.MAGENTA))
@@ -155,6 +156,7 @@ def print_help() -> None:
     printf("    -a, --addr, -addr <host:port>", Sty.CYAN, "   Set target server", Sty.DEFAULT)
     printf("    -w, --wipe, -wipe", Sty.CYAN, "               Delete all local config", Sty.DEFAULT)
     printf("    -y, --yes, -yes", Sty.CYAN, "                 Skip wipe confirmation", Sty.DEFAULT)
+    printf("    -r, --register", Sty.CYAN, "                  Register right after configuring", Sty.DEFAULT)
     print()
     printf("    --account-transport https-json", Sty.CYAN, "  Select an HTTPS home on a custom port", Sty.DEFAULT)
     print()
@@ -162,9 +164,25 @@ def print_help() -> None:
     printf("  remoterf --login", Sty.GREEN)
     printf("  remoterf --version", Sty.GREEN)
     printf("  remoterf --config --addr 123.45.654.321:12321", Sty.GREEN)
-    printf("  remoterf --config --addr ucla.global.remoterf.net:12321", Sty.GREEN)
+    printf("  remoterf --config --addr global.remoterf.net --register", Sty.GREEN)
     printf("  remoterf --config --wipe", Sty.GREEN)
     printf("  remoterf --config --wipe --yes", Sty.GREEN)
+
+def _account_shell(*, register: bool) -> int:
+    ok, _ = _ensure_config_present()
+    if not ok:
+        _print_server_unavailable()
+        return 2
+    try:
+        if _connected_server() is None:
+            _print_server_unavailable()
+            return 2
+        from remoteRF.core.acc_login import main as account_main
+        return int(account_main(register=register) or 0)
+    except (RuntimeError, ValueError) as exc:
+        print(f'Account connection failed: {exc}')
+        return 2
+
 
 def main() -> int:
     argv = list(sys.argv[1:])
@@ -178,21 +196,8 @@ def main() -> int:
         print_help()
         return 0
 
-    if argv[0] in ("--login", "-login", "-l"):
-        ok, _ = _ensure_config_present()
-        if not ok:
-            _print_server_unavailable()
-            return 2
-
-        try:
-            if _connected_server() is None:
-                _print_server_unavailable()
-                return 2
-            from remoteRF.core.acc_login import main as account_main
-            return int(account_main() or 0)
-        except (RuntimeError, ValueError) as exc:
-            print(f'Account connection failed: {exc}')
-            return 2
+    if argv[0] in ("--login", "-login", "-l", "--register", "-register", "-r"):
+        return _account_shell(register=argv[0] in ("--register", "-register", "-r"))
 
     if argv[0] in ("--version", "-version", "-v"):
         from remoteRF.version import main as version_main
@@ -207,6 +212,7 @@ def main() -> int:
         addr = None
         wipe = False
         yes = False
+        register = False
         account_transport = None
 
         i = 1
@@ -231,6 +237,11 @@ def main() -> int:
 
             if tok in ("--wipe", "-w", "-wipe"):
                 wipe = True
+                i += 1
+                continue
+
+            if tok in ("--register", "-register", "-r"):
+                register = True
                 i += 1
                 continue
 
@@ -271,7 +282,7 @@ def main() -> int:
                         print('HTTPS origin:', selected_origin)
                     finally:
                         backend.close()
-                    return 0
+                    return _account_shell(register=True) if register else 0
                 except (RuntimeError, ValueError) as exc:
                     print(f'Configuration failed: {exc}')
                     return 2
@@ -297,7 +308,7 @@ def main() -> int:
             if result not in (None, 0):
                 return int(result)
             select_direct()
-            return 0
+            return _account_shell(register=True) if register else 0
 
         # No args -> same behavior as remoterf-config missing addr (exit code 2)
         print(
