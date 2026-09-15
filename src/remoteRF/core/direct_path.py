@@ -39,6 +39,7 @@ from typing import Callable, Optional
 
 from aioice import Candidate, Connection
 from aioquic.asyncio.protocol import QuicConnectionProtocol
+from aioquic.quic import events
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.connection import QuicConnection
 
@@ -148,6 +149,17 @@ class _IceTransport:
             self._pump = None
 
 
+class _Protocol(QuicConnectionProtocol):
+    """aioquic's protocol, remembering why the connection ended."""
+
+    terminated = ""
+
+    def quic_event_received(self, event) -> None:
+        if isinstance(event, events.ConnectionTerminated):
+            self.terminated = event.reason_phrase or f"QUIC error {event.error_code:#x}"
+        super().quic_event_received(event)
+
+
 class DirectPath:
     """One process's path to the Server, kept up from its own thread.
 
@@ -173,9 +185,10 @@ class DirectPath:
         self._transport: Optional[_IceTransport] = None
         self._protocol: Optional[QuicConnectionProtocol] = None
         self._dead: Optional[asyncio.Event] = None
+        self._wanted: Optional[asyncio.Event] = None  # set when a call needs an idle path back
         self._settled = threading.Event()  # the first attempt finished, either way
         self._stopping = False
-        self.state = "connecting"  # connecting | ready | down | unavailable | off
+        self.state = "connecting"  # connecting | ready | idle | down | unavailable | off
         self.reason = ""
         self.remote: Optional[tuple[str, int]] = None
         self.calls = 0
@@ -204,6 +217,8 @@ class DirectPath:
             return f"direct {self.remote[0]}:{self.remote[1]}{calls}"
         if self.state == "connecting":
             return "relay (direct path: connecting)"
+        if self.state == "idle":
+            return "relay (direct path idle; reopens on the next device call)"
         if self.state == "off":
             return "relay (direct path off)"
         if self.state == "unavailable":
@@ -223,6 +238,10 @@ class DirectPath:
         response.ParseFromString(raw)
         self.calls += 1
         return response
+
+    def wake(self) -> None:
+        """A device call wants the idle path back (it takes the relay meanwhile)."""
+        self._loop.call_soon_threadsafe(lambda: self._wanted and self._wanted.set())
 
     def stop(self) -> None:
         """Close the path and the thread; the instance is finished."""
@@ -267,6 +286,13 @@ class DirectPath:
                     self.state = "down"
                 self._settled.set()
                 await self._teardown()
+                if "Idle timeout" in self.reason:
+                    # Both ends let an unused path go after IDLE_SECONDS; the
+                    # next device call brings it back, nothing else does.
+                    self.state = "idle"
+                    self._wanted = asyncio.Event()
+                    await self._wanted.wait()
+                    continue
                 await asyncio.sleep(RETRY_SECONDS)
         finally:
             self._settled.set()
@@ -300,7 +326,7 @@ class DirectPath:
             idle_timeout=IDLE_SECONDS,
         )
         configuration.load_verify_locations(cadata=self._ca_pem)
-        protocol = QuicConnectionProtocol(QuicConnection(configuration=configuration))
+        protocol = _Protocol(QuicConnection(configuration=configuration))
         self._transport = _IceTransport(ice)
         protocol.connection_made(self._transport)
         self._tasks = [
@@ -308,7 +334,10 @@ class DirectPath:
             asyncio.ensure_future(self._watch(protocol)),
         ]
         protocol.connect(peer)
-        await asyncio.wait_for(protocol.wait_connected(), QUIC_SECONDS)
+        try:
+            await asyncio.wait_for(protocol.wait_connected(), QUIC_SECONDS)
+        except ConnectionError:
+            raise ConnectionError(f"QUIC handshake refused: {protocol.terminated}") from None
         self._protocol, self.remote = protocol, peer
 
     async def _pump(self, ice: Connection, protocol: QuicConnectionProtocol, peer) -> None:
@@ -319,9 +348,9 @@ class DirectPath:
         except ConnectionError:
             self._die("UDP path lost")
 
-    async def _watch(self, protocol: QuicConnectionProtocol) -> None:
+    async def _watch(self, protocol: _Protocol) -> None:
         await protocol.wait_closed()
-        self._die("closed by the Server")
+        self._die(f"connection closed: {protocol.terminated}")
 
     def _die(self, reason: str) -> None:
         if self.state == "ready":
@@ -448,6 +477,8 @@ def current() -> Optional[DirectPath]:
                     _path.start()
                     _path.wait()
     path = _path
+    if path is not None and path.state == "idle":
+        path.wake()
     return path if path is not None and path.ready else None
 
 

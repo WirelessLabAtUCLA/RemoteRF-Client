@@ -114,7 +114,8 @@ class FakeServer:
                 return
             if protocol is None:
                 header = pull_quic_header(Buffer(data=data), host_cid_length=8)
-                configuration = QuicConfiguration(is_client=False, alpn_protocols=[direct_path.ALPN])
+                configuration = QuicConfiguration(
+                    is_client=False, alpn_protocols=[direct_path.ALPN], idle_timeout=direct_path.IDLE_SECONDS)
                 configuration.load_cert_chain(self.cert_dir / "server.crt", self.cert_dir / "server.key")
                 protocol = QuicConnectionProtocol(
                     QuicConnection(
@@ -322,10 +323,37 @@ class LoopbackPathTests(unittest.TestCase):
         _, path = self._start(server_name="other.test")
         self.assertFalse(path.wait(15))
         self.assertIn("relay", path.describe())
+        self.assertIn("QUIC handshake refused", path.reason)
+        self.assertIn("other.test", path.reason)
         with tempfile.TemporaryDirectory() as other:
             other_ca = write_certs(Path(other))  # the server keeps its own cert
         _, path = self._start(ca_pem=other_ca)
         self.assertFalse(path.wait(15))
+
+    def test_idle_path_sleeps_until_the_next_device_call(self):
+        with mock.patch.object(direct_path, "IDLE_SECONDS", 2), \
+             mock.patch.object(direct_path, "RETRY_SECONDS", 300):
+            server, path = self._start()
+            self.assertTrue(path.wait(15), path.describe())
+            direct_path._path, direct_path._resolved = path, True
+            self.addCleanup(setattr, direct_path, "_path", None)
+            self.addCleanup(setattr, direct_path, "_resolved", False)
+            deadline = time.monotonic() + 10
+            while path.state != "idle" and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertEqual(path.state, "idle", path.describe())
+            self.assertIn("idle", path.describe())
+            time.sleep(1)
+            self.assertEqual(server.offers, 1, "no re-punch while nothing needs the path")
+            # The next device call takes the relay and wakes the path...
+            self.assertIsNone(direct_path.current())
+            deadline = time.monotonic() + 10
+            while not path.ready and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertTrue(path.ready, path.describe())
+            self.assertEqual(server.offers, 2)
+            # ... and the one after that rides it.
+            self.assertIs(direct_path.current(), path)
 
     def test_gathering_uses_the_default_route_interface_only(self):
         async def run():
