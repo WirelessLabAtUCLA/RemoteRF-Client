@@ -51,6 +51,7 @@ MAX_FRAME = 100 * 1024 * 1024  # the gRPC message ceiling
 ICE_SECONDS = 5.0
 QUIC_SECONDS = 3.0
 SETTLE_SECONDS = 20.0  # gathering, the offer RPC and both budgets: one attempt, worst case
+WAIT_SECONDS = 3.0  # how long a login or a first device call waits for that attempt
 RETRY_SECONDS = 30.0
 IDLE_SECONDS = 600
 STUN = ("stun.l.google.com", 19302)
@@ -202,8 +203,12 @@ class DirectPath:
     def _spawn(self) -> None:
         self._task = self._loop.create_task(self._run())
 
-    def wait(self, timeout: float = SETTLE_SECONDS) -> bool:
-        """Block until the first attempt has settled; True when the path is ready."""
+    def wait(self, timeout: float = WAIT_SECONDS) -> bool:
+        """Block until the first attempt has settled, or ``timeout``; True when ready.
+
+        A punch that works takes well under a second; one that cannot work
+        spends the whole ICE budget, and nobody should wait for that.
+        """
         self._settled.wait(timeout)
         return self.ready
 
@@ -459,8 +464,8 @@ def current() -> Optional[DirectPath]:
     """This process's path when it is ready, else None.
 
     The first call decides: a process that did not log in (a script) uses the
-    stored login of the active home and waits once for the first attempt, so
-    its very first capture already takes the direct path when there is one.
+    stored login of the active home and waits briefly for the first attempt,
+    so its very first capture already takes the direct path when there is one.
     """
     global _path, _resolved
     if not enabled():
