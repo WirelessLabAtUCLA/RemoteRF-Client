@@ -35,6 +35,7 @@ import os
 import secrets
 import socket
 import threading
+import time
 from typing import Callable, Optional
 
 from aioice import Candidate, Connection
@@ -54,6 +55,7 @@ SETTLE_SECONDS = 20.0  # gathering, the offer RPC and both budgets: one attempt,
 WAIT_SECONDS = 3.0  # how long a login or a first device call waits for that attempt
 RETRY_SECONDS = 30.0
 IDLE_SECONDS = 600
+SLEEP_CHECK_SECONDS = 5.0  # how often the path looks for a system sleep it slept through
 STUN = ("stun.l.google.com", 19302)
 STUN_SECONDS = 1.5  # a STUN server answers in milliseconds or not at all
 
@@ -298,6 +300,8 @@ class DirectPath:
                     self._wanted = asyncio.Event()
                     await self._wanted.wait()
                     continue
+                if self.reason == "resumed from sleep":
+                    continue  # the network is back; no reason to wait
                 await asyncio.sleep(RETRY_SECONDS)
         finally:
             self._settled.set()
@@ -337,6 +341,7 @@ class DirectPath:
         self._tasks = [
             asyncio.ensure_future(self._pump(ice, protocol, peer)),
             asyncio.ensure_future(self._watch(protocol)),
+            asyncio.ensure_future(self._watch_sleep()),
         ]
         protocol.connect(peer)
         try:
@@ -356,6 +361,17 @@ class DirectPath:
     async def _watch(self, protocol: _Protocol) -> None:
         await protocol.wait_closed()
         self._die(f"connection closed: {protocol.terminated}")
+
+    async def _watch_sleep(self) -> None:
+        """After a system sleep the peer has long given the pair up: say so at
+        once, so the next call takes the relay instead of waiting for consent
+        checks to fail, and the path is re-punched right away."""
+        while True:
+            wall, mono = time.time(), time.monotonic()
+            await asyncio.sleep(SLEEP_CHECK_SECONDS)
+            if (time.time() - wall) - (time.monotonic() - mono) > 6 * SLEEP_CHECK_SECONDS:
+                self._die("resumed from sleep")
+                return
 
     def _die(self, reason: str) -> None:
         if self.state == "ready":

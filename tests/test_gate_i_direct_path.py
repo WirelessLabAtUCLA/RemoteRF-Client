@@ -367,6 +367,25 @@ class LoopbackPathTests(unittest.TestCase):
             # ... and the one after that rides it.
             self.assertIs(direct_path.current(), path)
 
+    def test_a_system_sleep_is_noticed_and_the_path_re_punched_at_once(self):
+        real_time = time.time
+        offset = [0.0]
+        with mock.patch.object(direct_path, "SLEEP_CHECK_SECONDS", 0.2), \
+             mock.patch.object(direct_path, "RETRY_SECONDS", 300), \
+             mock.patch.object(direct_path.time, "time", lambda: real_time() + offset[0]):
+            server, path = self._start()
+            self.assertTrue(path.wait(15), path.describe())
+            offset[0] = 3600  # the wall clock jumps an hour: we were asleep
+            deadline = time.monotonic() + 10
+            while server.offers < 2 and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertEqual(server.offers, 2, "re-punched without the 30 s wait")
+            self.assertEqual(path.reason, "resumed from sleep")
+            deadline = time.monotonic() + 10
+            while not path.ready and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertTrue(path.ready, path.describe())
+
     def test_gathering_uses_the_default_route_interface_only(self):
         async def run():
             ice = direct_path.Ice(ice_controlling=True, stun_server=None)
