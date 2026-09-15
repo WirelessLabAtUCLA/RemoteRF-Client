@@ -230,6 +230,18 @@ class RoutingTests(unittest.TestCase):
             rpc_client(function_name="adalm_pluto:rx:GET", args={})
         self.stub.Call.assert_not_called()
 
+    def test_rx_wire_flag_is_sent_only_with_rx_calls(self):
+        from remoteRF.core.grpc_client import rpc_client
+
+        seen = []
+        self._path(lambda name, args: seen.append((name, dict(args))) or grpc_pb2.GenericRPCResponse())
+        with mock.patch.dict("os.environ", {"REMOTERF_RX_WIRE": "i16"}):
+            rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("t")})
+            rpc_client(function_name="adalm_pluto:rx_lo:GET", args={"a": map_arg("t")})
+        rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("t")})
+        self.assertEqual([sorted(args) for _, args in seen], [["a", "wire"], ["a"], ["a"]])
+        self.assertEqual(unmap_arg(seen[0][1]["wire"]), "i16")
+
     def test_a_path_that_is_not_ready_is_skipped(self):
         from remoteRF.core.grpc_client import rpc_client
 

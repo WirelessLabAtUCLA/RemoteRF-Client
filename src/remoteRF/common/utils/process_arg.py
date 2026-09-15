@@ -30,6 +30,31 @@ _MAX_NDARRAY_DIMENSIONS = 8
 _SUPPORTED_NDARRAY_KINDS = {"b", "i", "u", "f", "c"}
 
 
+# Gate I slice 3: complex samples as interleaved int16 IQ, a quarter of the
+# complex128 bytes, decoded to complex64. Only exact for integer-valued data
+# within int16 range (a 12-bit ADC's, say); map_iq16 refuses anything else.
+IQ16 = "ci16"
+
+
+def fits_iq16(array: np.ndarray) -> bool:
+    if not (isinstance(array, np.ndarray) and np.iscomplexobj(array)):
+        return False
+    parts = np.stack((array.real, array.imag))
+    return bool(np.all(np.abs(parts) <= 32767) and np.array_equal(parts, np.round(parts)))
+
+
+def map_iq16(array: np.ndarray) -> grpc_pb2.Argument:
+    if not fits_iq16(array):
+        raise ValueError("samples are not integer-valued int16 IQ")
+    iq = np.empty(array.shape + (2,), dtype=np.int16)
+    iq[..., 0], iq[..., 1] = array.real, array.imag
+    arg = grpc_pb2.Argument()
+    arg.ndarray_value.dtype = IQ16
+    arg.ndarray_value.shape.extend(array.shape)
+    arg.ndarray_value.data = np.ascontiguousarray(iq).tobytes(order="C")
+    return arg
+
+
 def _validate_ndarray(dtype: np.dtype, shape) -> int:
     """Return the expected payload length for a safe numeric ndarray."""
     if dtype.hasobject or dtype.kind not in _SUPPORTED_NDARRAY_KINDS:
@@ -49,18 +74,22 @@ def _validate_ndarray(dtype: np.dtype, shape) -> int:
 
 
 def _decode_ndarray(descriptor: grpc_pb2.NDArrayValue) -> np.ndarray:
+    iq16 = descriptor.dtype == IQ16
     try:
-        dtype = np.dtype(descriptor.dtype)
+        dtype = np.dtype(np.int16) if iq16 else np.dtype(descriptor.dtype)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"invalid ndarray dtype: {descriptor.dtype!r}") from exc
 
     shape = tuple(int(item) for item in descriptor.shape)
-    expected = _validate_ndarray(dtype, shape)
+    expected = _validate_ndarray(dtype, shape + (2,) if iq16 else shape)
     actual = len(descriptor.data)
     if actual != expected:
         raise ValueError(
             f"ndarray byte length mismatch: expected {expected}, got {actual}"
         )
+    if iq16:
+        iq = np.frombuffer(descriptor.data, dtype=dtype).reshape(shape + (2,))
+        return (iq[..., 0].astype(np.float32) + 1j * iq[..., 1].astype(np.float32)).astype(np.complex64)
     return np.frombuffer(descriptor.data, dtype=dtype).reshape(shape).copy()
 
 

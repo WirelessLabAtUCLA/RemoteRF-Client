@@ -219,6 +219,11 @@ def rpc_client(*, function_name, args, connection=None):
     ref = _federated_ref(function_name, args) if connection is None else None
     if ref is not None:
         return _finish(_federated_call(ref, function_name, args))
+    wire = os.getenv("REMOTERF_RX_WIRE", "").strip().lower()
+    if wire and function_name.endswith(":rx:CALL0"):
+        # Gate I slice 3, opt-in: c64 halves the samples on the wire, i16 quarters
+        # them when they are integer IQ; the driver still sees a complex array.
+        args = {**args, "wire": map_arg(wire)}
     if connection is None and direct_path.wants(function_name):
         path = direct_path.current()
         if path is not None:
