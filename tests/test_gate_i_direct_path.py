@@ -327,6 +327,34 @@ class LoopbackPathTests(unittest.TestCase):
         _, path = self._start(ca_pem=other_ca)
         self.assertFalse(path.wait(15))
 
+    def test_gathering_uses_the_default_route_interface_only(self):
+        async def run():
+            ice = direct_path.Ice(ice_controlling=True, stun_server=None)
+            await ice.gather_candidates()
+            try:
+                return [(c.type, c.host) for c in ice.local_candidates]
+            finally:
+                await ice.close()
+
+        address = direct_path.default_route_address()
+        if address is None:
+            self.skipTest("no default route")
+        self.assertEqual(asyncio.run(run()), [("host", address)])
+
+    def test_no_stun_answer_fails_fast_without_an_offer(self):
+        offers = []
+        path = direct_path.DirectPath(
+            offer=lambda offer: offers.append(offer), server_name=SERVER_NAME,
+            ca_pem=self.ca_pem, stun=("192.0.2.1", 3478),  # TEST-NET: never answers
+        )
+        self.addCleanup(path.stop)
+        started = time.monotonic()
+        path.start()
+        self.assertFalse(path.wait(15))
+        self.assertLess(time.monotonic() - started, direct_path.STUN_SECONDS + 3)
+        self.assertIn("no STUN answer", path.reason)
+        self.assertEqual(offers, [])
+
     def test_a_refused_offer_stays_on_the_relay(self):
         def refuse(offer):
             raise direct_path.PathError("No matching server function to call: direct_offer")

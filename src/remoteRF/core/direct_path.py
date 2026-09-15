@@ -33,6 +33,7 @@ import contextlib
 import json
 import os
 import secrets
+import socket
 import threading
 from typing import Callable, Optional
 
@@ -52,6 +53,7 @@ SETTLE_SECONDS = 20.0  # gathering, the offer RPC and both budgets: one attempt,
 RETRY_SECONDS = 30.0
 IDLE_SECONDS = 600
 STUN = ("stun.l.google.com", 19302)
+STUN_SECONDS = 1.5  # a STUN server answers in milliseconds or not at all
 
 
 def enabled() -> bool:
@@ -78,6 +80,36 @@ async def read_frame(reader: asyncio.StreamReader) -> bytes:
 def peer_address(ice: Connection) -> tuple[str, int]:
     """The remote end of the nominated pair (aioice keeps it private)."""
     return ice._nominated[1].remote_addr
+
+
+def default_route_address() -> Optional[str]:
+    """The IPv4 address the default route leaves from, or None without one."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            return probe.getsockname()[0]
+    except OSError:
+        return None
+
+
+class Ice(Connection):
+    """aioice's Connection, gathering on the default-route interface only.
+
+    Every other interface (a VPN, an overlay, a bridge) cannot reach the STUN
+    server, and aioice would hold gathering for its whole 5 s timeout on each
+    one, once per attempt. One interface and a short STUN wait instead; a
+    machine without a default route gathers the way aioice does.
+    """
+
+    async def gather_candidates(self) -> None:
+        address = default_route_address()
+        if address is None or self._local_candidates_start:
+            return await super().gather_candidates()
+        self._local_candidates_start = True
+        self._local_candidates += await self.get_component_candidates(
+            component=1, addresses=[address], timeout=STUN_SECONDS
+        )
+        self._local_candidates_end = True
 
 
 class PathError(Exception):
@@ -242,8 +274,12 @@ class DirectPath:
 
     async def _establish(self) -> None:
         loop = asyncio.get_running_loop()
-        ice = self._ice = Connection(ice_controlling=True, stun_server=self._stun)
+        ice = self._ice = Ice(ice_controlling=True, stun_server=self._stun)
         await ice.gather_candidates()
+        if self._stun and not any(c.type == "srflx" for c in ice.local_candidates):
+            # Without a reflexive address there is nothing to punch with, and a
+            # network that drops STUN drops the checks too: skip the 5 s of them.
+            raise PathError("no STUN answer (UDP blocked?)")
         offer = {
             "id": self._id,
             "ufrag": ice.local_username,
