@@ -25,7 +25,7 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
 GLOBAL_DOMAIN = "global.remoterf.net"
 
 # A LAN route is only worth waiting on for as long as a LAN takes to answer.
-LAN_CONNECT_TIMEOUT = 1.0
+LAN_CONNECT_TIMEOUT = 0.5
 ROUTE_CONNECT_TIMEOUT = 5.0
 
 _FIELDS = ("global_account", "homes", "last_target")
@@ -189,17 +189,28 @@ def _probe(route: dict, timeout: float) -> bytes | None:
 
 
 def select_route(home: dict) -> tuple[dict, bytes]:
-    """The first working route for this HOME, and the certificate it served.
+    """The best working route for this HOME, and the certificate it served.
 
-    Routes are tried in the order the deployment advertised them — LAN first,
-    on a short timeout, so a client that is not on the LAN falls through to the
-    relay quickly. Fallback never leaves this HOME.
+    Every route is probed at once. They are still preferred in the order the
+    deployment advertised them — LAN first — but a client that is not on the
+    LAN waits only the LAN's own short window, not one probe after another.
+    Fallback never leaves this HOME.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     pin = home.get("cert_sha256")
+    routes = list(home["routes"])
     failures = []
-    for route in home["routes"]:
-        timeout = LAN_CONNECT_TIMEOUT if route["kind"] == "lan" else ROUTE_CONNECT_TIMEOUT
-        certificate = _probe(route, timeout)
+    with ThreadPoolExecutor(max_workers=max(1, len(routes))) as pool:
+        probes = [
+            pool.submit(
+                _probe, route,
+                LAN_CONNECT_TIMEOUT if route["kind"] == "lan" else ROUTE_CONNECT_TIMEOUT,
+            )
+            for route in routes
+        ]
+        results = [(route, probe.result()) for route, probe in zip(routes, probes)]
+    for route, certificate in results:
         if certificate is None:
             failures.append(route["kind"])
             continue

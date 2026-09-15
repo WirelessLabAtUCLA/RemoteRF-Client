@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import os
 import socket
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -51,6 +52,10 @@ def fetch_ca_bytes(host: str, port: int, *, timeout_sec: float = 3.0) -> bytes:
     """
     try:
         return _fetch_http(host, port, timeout_sec)
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (OSError, socket.timeout)):
+            raise  # nothing answered: a raw retry would only wait the timeout again
+        return _fetch_raw_tcp(host, port, timeout_sec)
     except Exception:
         return _fetch_raw_tcp(host, port, timeout_sec)
 

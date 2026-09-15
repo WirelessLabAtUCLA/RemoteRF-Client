@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
+import threading
+from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version as distribution_version
 from pathlib import Path
 from typing import Optional, Sequence
@@ -237,6 +240,37 @@ def _use_global(*, register: bool, show_banner: bool = True) -> int:
     return _account_shell(register=register, show_banner=show_banner)
 
 
+@contextmanager
+def _working(label: str):
+    """A spinner while a step that talks to the network runs, gone afterwards.
+
+    Only on a terminal: a log or a pipe gets nothing, exactly as before."""
+    if not sys.stdout.isatty():
+        yield
+        return
+    from remoteRF.common.utils.banner import supports_unicode
+
+    frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏" if supports_unicode() else "|/-\\"
+    stop = threading.Event()
+
+    def spin():
+        for i in itertools.count():
+            sys.stdout.write(f"\r{frames[i % len(frames)]} {label}")
+            sys.stdout.flush()
+            if stop.wait(0.08):
+                return
+
+    thread = threading.Thread(target=spin, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+        sys.stdout.write("\r" + " " * (len(label) + 2) + "\r")
+        sys.stdout.flush()
+
+
 def _route_label(route: dict) -> str:
     return 'LAN' if route['kind'] == 'lan' else route['kind']
 
@@ -263,7 +297,8 @@ def _use_home(name: str, *, register: bool, enrollment_code: str | None = None) 
 
     try:
         home = homes.load_home(name)
-        route = homes.connect(name)
+        with _working(f"Connecting to {name}…"):
+            route = homes.connect(name)
     except (RuntimeError, ValueError) as exc:
         printf(f'Could not connect to {name}: {_reason(exc)}', Sty.WARNING)
         return 2
@@ -302,7 +337,8 @@ def _register() -> int:
         # A bare code only makes sense against an already-configured target.
         return _account_shell(register=True, enrollment_code=code, show_banner=False)
     try:
-        name, home, route = homes.register_home(host)
+        with _working(f"Looking up {host}…"):
+            name, home, route = homes.register_home(host)
     except (RuntimeError, ValueError) as exc:
         printf(f'Could not reach {host}: {_reason(exc)}', Sty.WARNING)
         return 2

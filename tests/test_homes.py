@@ -160,10 +160,25 @@ def test_the_lan_gets_a_short_timeout_and_the_relay_a_longer_one(monkeypatch):
     monkeypatch.setattr("remoteRF.config.cert_fetcher.fetch_ca_bytes", fetch)
     with pytest.raises(ValidationError):
         homes.select_route(homes.save_home("ucla", document()))
-    assert seen == [
+    assert sorted(seen) == [
         ("192.168.1.20", homes.LAN_CONNECT_TIMEOUT),
         ("ucla.global.remoterf.net", homes.ROUTE_CONNECT_TIMEOUT),
     ]
+
+
+def test_routes_are_probed_concurrently_and_the_lan_still_wins(monkeypatch):
+    import time
+
+    def fetch(host, port, *, timeout_sec=3.0):
+        time.sleep(0.3)  # both take 0.3s; serial would be 0.6s
+        return CERT
+
+    monkeypatch.setattr("remoteRF.config.cert_fetcher.fetch_ca_bytes", fetch)
+    home = homes.save_home("ucla", document())
+    started = time.time()
+    route, certificate = homes.select_route(home)
+    assert time.time() - started < 0.5
+    assert route["kind"] == "lan" and certificate == CERT
 
 
 # --- activation -------------------------------------------------------------
