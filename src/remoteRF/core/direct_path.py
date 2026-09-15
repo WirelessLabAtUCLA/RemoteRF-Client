@@ -159,7 +159,9 @@ class _Protocol(QuicConnectionProtocol):
 
     def quic_event_received(self, event) -> None:
         if isinstance(event, events.ConnectionTerminated):
-            self.terminated = event.reason_phrase or f"QUIC error {event.error_code:#x}"
+            self.terminated = event.reason_phrase or (
+                f"QUIC error {event.error_code:#x}" if event.error_code else ""
+            )
         super().quic_event_received(event)
 
 
@@ -360,7 +362,7 @@ class DirectPath:
 
     async def _watch(self, protocol: _Protocol) -> None:
         await protocol.wait_closed()
-        self._die(f"connection closed: {protocol.terminated}")
+        self._die(f"connection closed: {protocol.terminated or 'by the Server'}")
 
     async def _watch_sleep(self) -> None:
         """After a system sleep the peer has long given the pair up: say so at
