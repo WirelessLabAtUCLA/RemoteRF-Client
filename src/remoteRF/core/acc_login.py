@@ -13,6 +13,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-def main(*, register=False):
+def main(*, register=False, enrollment_code=None, server_label=None, show_banner=True,
+         home=None, route=None):
     from .app import run
-    return run(register=register)
+    return run(
+        register=register,
+        enrollment_code=enrollment_code,
+        server_label=server_label,
+        show_banner=show_banner,
+        home=home,
+        route=route,
+    )

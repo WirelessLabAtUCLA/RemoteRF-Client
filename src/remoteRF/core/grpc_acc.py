@@ -28,6 +28,12 @@ class RemoteRFAccount:
         self.enrollment_code = ""
         self.is_admin = False
         self.backend = backend
+        # Set by an HTTPS registration: the home says whether a verification
+        # email is actually on its way, or the account is already usable.
+        self.needs_verification = True
+        # A deployment-issued session token (login with remember=True). It
+        # replaces the password for every later call and is what gets stored.
+        self.session_token = None
 
     @property
     def is_https_home(self):
@@ -47,9 +53,10 @@ class RemoteRFAccount:
 
     def create_user(self):
         if self.is_https_home:
-            self.backend.register(self.username, self.email, self.password)
+            result = self.backend.register(self.username, self.email, self.password) or {}
             self.password = None
-            print('Registration received. Check your email and use verify before login.')
+            self.needs_verification = result.get('status') != 'active'
+            print(result.get('message') or 'Registration received.')
             return True
         response = self._call(function_name="ACC:create_user", args={"un":map_arg(self.username), "pw":map_arg(self.password), "em":map_arg(self.email), "ec":map_arg(self.enrollment_code)})
         if 'UC' in response.results:
@@ -59,7 +66,7 @@ class RemoteRFAccount:
             print(f'Error: {unmap_arg(response.results["UE"])}')
             return False
     
-    def login_user(self):
+    def login_user(self, *, remember=False):
         if self.is_https_home:
             try:
                 result = self.backend.login(self.username, self.password)
@@ -69,9 +76,16 @@ class RemoteRFAccount:
             finally:
                 self.password = None
         username, credential_secret = self._rpc_credentials()
-        response = self._call(function_name="ACC:login", args={"un":map_arg(username), "pw":map_arg(credential_secret)})
+        args = {"un": map_arg(username), "pw": map_arg(credential_secret)}
+        if remember:
+            args["remember"] = map_arg(True)
+        response = self._call(function_name="ACC:login", args=args)
         if 'UC' in response.results:
             print(f'User {unmap_arg(response.results["UC"])} successful login.')
+            if 'token' in response.results:
+                # From here on the token is the credential; the password is gone.
+                self.session_token = unmap_arg(response.results['token'])
+                self.password = self.session_token
             return True
         elif 'UE' in response.results:
             print(f'Error: {unmap_arg(response.results["UE"])}')
@@ -125,6 +139,17 @@ class RemoteRFAccount:
         username, credential_secret = self._rpc_credentials()
         return self._call(function_name='ACC:get_perms', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
+    def logout(self):
+        """Revoke the stored session on the deployment (best effort)."""
+        if self.is_https_home:
+            return self.backend.logout()
+        if self.session_token:
+            try:
+                self._call(function_name="ACC:logout", args={"un": map_arg(self.username or ''), "pw": map_arg(self.session_token)})
+            except Exception:  # noqa: BLE001 - revocation is best effort
+                pass
+            self.session_token = None
+
     def set_enroll(self):
         if self.is_https_home:
             return self.backend.enroll(self.enrollment_code)

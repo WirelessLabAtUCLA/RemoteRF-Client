@@ -240,6 +240,15 @@ def configure(host: str, port: int, cert_port: int) -> int:
         "REMOTERF_CA_CERT": str(ca_out),
         "REMOTERF_PROFILE": profile,
     })
+    # This profile is what the "default" home was adopted from. A new address
+    # or a re-fetched CA makes that adoption stale (its pin would now refuse
+    # this very server), so drop it and let the next login adopt this one.
+    try:
+        from ..deployment import homes
+
+        homes.forget_home(profile)
+    except Exception:  # noqa: BLE001 - never fail configuration over bookkeeping
+        pass
 
     _print_config_summary(host, grpc_port, cert_port, ca_out, env_file)
 

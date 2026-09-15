@@ -24,9 +24,11 @@ import numpy as np
 
 from remoteRF.common.utils import map_arg, unmap_arg
 
-fake_grpc_client = types.ModuleType("remoteRF.core.grpc_client")
-fake_grpc_client.rpc_client = lambda *args, **kwargs: None
-sys.modules.setdefault("remoteRF.core.grpc_client", fake_grpc_client)
+# Generated drivers resolve `rpc_client` through this module, so the tests
+# below swap that one attribute. Using the real module -- rather than leaving a
+# stub in sys.modules for the whole session -- keeps every other test that
+# imports remoteRF.core.grpc_client working.
+import remoteRF.core.grpc_client as fake_grpc_client
 import remoteRF.drivers.dynamic_device as dynamic_device
 from remoteRF.drivers.dynamic_device import _codegen
 

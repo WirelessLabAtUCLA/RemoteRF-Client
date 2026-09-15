@@ -113,20 +113,74 @@ def _password_confirmation(*, enforce_policy=False):
         printf("  Passwords do not match. Try again.", Sty.WARNING)
 
 
+# The code typed at `remoterf -r`, used once for this registration.
+pending_enrollment_code = None
+# The saved home this shell is attached to (None on a bare direct profile).
+home_name = None
+
+
+def _print_connected(name, home, route):
+    """One line, same voice as the banner: what we reached and how."""
+    marker = '◆' if supports_unicode() else '*'
+    title = home.get('display_name') or name
+    via = 'LAN' if route['kind'] == 'lan' else route['kind']
+    printf(
+        f'{marker} ', Sty.DEFAULT,
+        title, (Sty.BOLD, Sty.BLUE),
+        f'  {name}' if title != name else '', Sty.GRAY,
+        f'  via {via} {route["host"]}:{route["port"]}', Sty.CYAN,
+    )
+
+
+def _remember_login():
+    """A direct home keeps its session token so `remoterf -l` needs no prompt.
+
+    Only a token is ever stored -- an older deployment that issues none simply
+    asks again next time."""
+    if home_name and not account.is_https_home and account.username and account.session_token:
+        from ..deployment import homes
+
+        homes.remember_login(home_name, account.username, account.session_token)
+
+
+def _consume_enrollment_code(policy):
+    global pending_enrollment_code
+    if not policy['enrollment_code_required']:
+        return ''
+    code, pending_enrollment_code = pending_enrollment_code, None
+    return code if code else _ask('Enrollment Code')
+
+
 def _account_command(command):
     policy = account.backend.capabilities['registration_policy'] if account.backend else local_capabilities()['registration_policy']
     if command in ('r', 'register'):
         if not policy['enabled']:
             raise AccountBackendError('Registration is unavailable at this home')
         printf(f"Register at {_home_name()}", (Sty.BOLD, Sty.BLUE))
-        account.enrollment_code = _ask('Enrollment Code') if policy['enrollment_code_required'] else ''
+        account.enrollment_code = _consume_enrollment_code(policy)
         account.username = _ask('Username') if policy['username_required'] else ''
         account.password = _password_confirmation(enforce_policy=account.is_https_home)
         account.email = _ask('Email') if policy['email_required'] else ''
-        return bool(account.create_user()) and not policy['email_verification_required']
+        if not account.create_user():
+            raise AccountBackendError('Registration failed')
+        # An HTTPS home still needs a login for a session; a direct deployment
+        # is usable as soon as no verification stands in the way.
+        done = not policy['email_verification_required'] and not account.is_https_home
+        if done:
+            # Trade the password for a session token right away, as a login would.
+            try:
+                account.login_user(remember=True)
+            except Exception:  # noqa: BLE001 - registration stands even if this fails
+                pass
+            _remember_login()
+        return done
     if command == 'verify':
         if not policy['email_verification_required']:
             raise AccountBackendError('This deployment does not require email verification')
+        if not account.needs_verification:
+            # The home activated the account without email (provider down or
+            # out of quota); there is no token coming. Straight on to login.
+            return False
         printf("Verify your email", (Sty.BOLD, Sty.BLUE))
         printf("  Paste the token from the verification email.", Sty.GRAY)
         account.backend.verify(_ask('Verification token', hidden=True))
@@ -149,30 +203,58 @@ def _account_command(command):
         printf(f"Login to {_home_name()}", (Sty.BOLD, Sty.BLUE))
         account.username = _ask('Username or Email' if account.is_https_home else 'Username')
         account.password = _ask('Password (Hidden)', hidden=True)
-        return bool(account.login_user())
+        ok = bool(account.login_user(remember=not account.is_https_home))
+        if ok:
+            _remember_login()
+        return ok
     printf('Choose login or register' + (', verify, forgot-password or reset-password.' if account.is_https_home else '.'), Sty.WARNING)
     return False
 
 
-def welcome(*, show_banner: bool = True, initial=()):
+def welcome(*, show_banner: bool = True, initial=(), route=None):
     """Authenticate. ``initial`` commands run first without prompting (``-l`` →
     login, ``-r`` → register/verify/login); any failure falls back to the prompt."""
     if show_banner:
         print_client_banner(print_my_version(), server=server_addr)
+    if route is not None:
+        _print_connected(home_name, route.get('home') or {}, route)
+    if home_name and not account.is_https_home and 'register' not in initial:
+        from ..deployment import homes
+
+        saved = homes.recall_login(home_name)
+        if saved:
+            account.username, account.password = saved['username'], saved['secret']
+            account.session_token = saved['secret']
+            try:
+                if account.login_user():
+                    return True
+            except Exception:  # noqa: BLE001 - a stored login must never block the prompt
+                pass
+            homes.forget_login(home_name)
+            account.username = account.password = None
+            printf('Stored login is no longer valid. Log in again.', Sty.WARNING)
     if account.is_https_home and 'register' not in initial:
         try:
             if account.backend.resume():
                 account.username = account.backend.credentials['username']
                 return True
-        except (AccountBackendError, ValidationError):
+        except Exception:  # noqa: BLE001 - same rule for the HTTPS session
             account.backend.credentials = None
-            account.backend.store.clear()
+            try:
+                account.backend.store.clear()
+            except Exception:  # noqa: BLE001
+                pass
             printf('Stored session is unavailable. Log in again.', Sty.WARNING)
     queue = list(initial)
+    last = None
     while True:
         try:
             if queue:
-                command = queue.pop(0)
+                command = last = queue.pop(0)
+            elif last is not None:
+                # `-l` is a login and `-r` a registration: a failed step is
+                # asked again, never turned into a menu.
+                command = last
             else:
                 prompt = 'Please login or register to continue. (l/r): '
                 if account.is_https_home:
@@ -207,7 +289,7 @@ def commands():
     printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
     printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
     printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
-    printf("'logout' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Log out" + (" and forget the stored session" if account.is_https_home else ""), Sty.DEFAULT)
+    printf("'logout' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Log out and forget the stored login", Sty.DEFAULT)
     if account.is_https_home:
         printf("'reset-password' ", Sty.MAGENTA, ": ", Sty.GRAY, "Set a new password with an emailed token", Sty.DEFAULT)
     printf("'exit' or 'quit' ", Sty.MAGENTA, ": ", Sty.GRAY, "Exit", Sty.DEFAULT)
@@ -1328,8 +1410,10 @@ def interactive_reserve_next_days_auto():
         print(f"Error: {e}")
 
 
-def run(backend=None, *, register=False):
-    global account, session, server_addr
+def run(backend=None, *, register=False, enrollment_code=None, server_label=None,
+        show_banner=True, home=None, route=None):
+    global account, session, server_addr, pending_enrollment_code, home_name
+    home_name = home
     from ..deployment.backend import selected_backend
     from .grpc_client import active_endpoint
     backend = backend or selected_backend()
@@ -1338,14 +1422,19 @@ def run(backend=None, *, register=False):
         from .grpc_client import bind_federated_backend
         bind_federated_backend(backend)
     session = PromptSession()
-    server_addr = backend.transport.origin if account.is_https_home else active_endpoint()
+    pending_enrollment_code = enrollment_code
+    # A HOME reached over a chosen route is still named by the HOME, not by the
+    # address that route happens to use.
+    server_addr = server_label or (
+        backend.transport.origin if account.is_https_home else active_endpoint()
+    )
     policy = backend.capabilities['registration_policy'] if account.is_https_home else local_capabilities()['registration_policy']
     if register:
         initial = ['register'] + (['verify'] if policy['email_verification_required'] else []) + ['login']
     else:
-        initial = ['login'] if account.is_https_home else []
+        initial = ['login']
     try:
-        if not welcome(initial=initial):
+        if not welcome(initial=initial, show_banner=show_banner, route=route):
             return 0
         clear()
         while True:
@@ -1361,8 +1450,10 @@ def run(backend=None, *, register=False):
                     account.backend.refresh()
                     print('Home session refreshed.')
                 elif inpu == 'logout':
-                    if account.is_https_home:
-                        account.backend.logout()
+                    account.logout()
+                    if home_name and not account.is_https_home:
+                        from ..deployment import homes
+                        homes.forget_login(home_name)
                     account.password = None
                     account.username = None
                     printf('Logged out.', (Sty.BOLD, Sty.GREEN))

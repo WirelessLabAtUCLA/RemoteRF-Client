@@ -19,6 +19,20 @@ def root():
     return Path.home() / ".config/remoterf-client/deployment"
 
 
+def keyring_if_enabled():
+    """The `keyring` module when REMOTERF_USE_KEYRING is set and usable, else None."""
+    if os.environ.get("REMOTERF_USE_KEYRING", "").strip().lower() not in {"1", "true", "yes"}:
+        return None
+    try:
+        import keyring
+
+        if keyring.get_keyring().priority > 0:
+            return keyring
+    except Exception:  # noqa: BLE001 - an unusable keyring means "file"
+        pass
+    return None
+
+
 def private_write(path, value):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.parent.chmod(0o700)
@@ -102,17 +116,9 @@ class CredentialStore:
             canonical_json([self.origin, self.deployment_id]).encode()
         ).hexdigest()
         self.directory = root() / "credentials" / self.home_key
-        self.keyring = keyring_backend
-        if self.keyring is None:
-            try:
-                import keyring
-
-                backend = keyring.get_keyring()
-                # Avoid prompting OS credential services for every target read.
-                if backend.priority > 0:
-                    self.keyring = keyring
-            except Exception:
-                pass
+        # Default is the owner-only file: the same on every OS, and it never
+        # pops an OS credential prompt. The OS keyring is opt-in.
+        self.keyring = keyring_backend if keyring_backend is not None else keyring_if_enabled()
 
     def _key(self, subject):
         canonical_uuid(subject)
