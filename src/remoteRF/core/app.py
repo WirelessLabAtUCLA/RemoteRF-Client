@@ -278,6 +278,18 @@ def title():
     )
     printf("Input ", Sty.DEFAULT, "'help' ", Sty.BRIGHT_GREEN, "for a list of available commands.", Sty.DEFAULT)
 
+def session_line():
+    """The session facts the full panel carries, on one line under the banner."""
+    marker = '◆' if supports_unicode() else '*'
+    display_tos = str(_tos_url()).removeprefix("https://").removeprefix("http://")
+    printf(
+        f'{marker} ', Sty.DEFAULT,
+        f'Logged in as {account.username}', (Sty.BOLD, Sty.GREEN),
+        f'   TOS {display_tos}', Sty.GRAY,
+        "   'help'", Sty.BRIGHT_GREEN, ' for commands', Sty.GRAY,
+    )
+
+
 def commands():
     printf("Commands:", (Sty.BOLD, Sty.BLUE))
     printf("'help' or 'h' ", Sty.MAGENTA, "   : ", Sty.GRAY, "Show this help message", Sty.DEFAULT)
@@ -1436,7 +1448,9 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
     try:
         if not welcome(initial=initial, show_banner=show_banner, route=route):
             return 0
-        clear()
+        # Continue below the banner rather than wiping the screen: with a
+        # stored login the wipe came a split second after everything appeared.
+        session_line()
         while True:
             try:
                 inpu = session.prompt(stylize(f'{account.username}@remoterf: ', Sty.BOLD))
