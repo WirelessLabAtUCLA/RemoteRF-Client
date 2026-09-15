@@ -34,6 +34,7 @@ setup(
         "remoterf-federation-core==0.13.0",
         "grpcio>=1.78.1,<2.0.0", "protobuf>=6.31.1,<7.0.0", "numpy", "prompt_toolkit", "python-dotenv", "prompt-toolkit",
         "httpx>=0.27,<1.0", "certifi", "pydantic>=2.6,<3.0", "keyring>=24,<26",
+        "aioice>=0.10,<0.11", "aioquic>=1.2,<2.0",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
