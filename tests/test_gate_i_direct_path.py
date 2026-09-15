@@ -1,5 +1,5 @@
 """Gate I: the direct device path -- ICE + QUIC on this machine with both ends
-in-process, and framing."""
+in-process, framing, routing and fallback in rpc_client."""
 
 from __future__ import annotations
 
@@ -160,6 +160,82 @@ class RulesTests(unittest.TestCase):
             return await direct_path.read_frame(reader), await direct_path.read_frame(reader)
 
         self.assertEqual(asyncio.run(run()), (b"abc", b""))
+
+    def test_disabled_by_environment(self):
+        with mock.patch.dict("os.environ", {"REMOTERF_DIRECT": "0"}):
+            self.assertFalse(direct_path.enabled())
+            self.assertIsNone(direct_path.current())
+            self.assertIn("REMOTERF_DIRECT=0", direct_path.describe())
+        with mock.patch.dict("os.environ", {"REMOTERF_DIRECT": "1"}):
+            self.assertTrue(direct_path.enabled())
+
+
+class RoutingTests(unittest.TestCase):
+    """rpc_client: device calls take a ready path, fall back to gRPC once when
+    it fails, and control calls never touch it."""
+
+    def setUp(self):
+        self.addCleanup(setattr, direct_path, "_path", None)
+        self.addCleanup(setattr, direct_path, "_resolved", False)
+        direct_path._resolved = True
+        self.stub = mock.Mock()
+        self.stub.Call.return_value = grpc_pb2.GenericRPCResponse(results={"via": map_arg("grpc")})
+        connection = mock.Mock(stub=self.stub)
+        patcher = mock.patch("remoteRF.core.grpc_client.get_active_connection", return_value=connection)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _path(self, call):
+        path = mock.Mock()
+        path.ready = True
+        path.call.side_effect = call
+        direct_path._path = path
+        return path
+
+    def test_device_call_takes_the_path(self):
+        from remoteRF.core.grpc_client import rpc_client
+
+        path = self._path(lambda name, args: grpc_pb2.GenericRPCResponse(results={"via": map_arg("direct")}))
+        response = rpc_client(function_name="adalm_pluto:rx:GET", args={"a": map_arg("t")})
+        self.assertEqual(unmap_arg(response.results["via"]), "direct")
+        path.call.assert_called_once()
+        self.stub.Call.assert_not_called()
+
+    def test_control_calls_stay_on_grpc(self):
+        from remoteRF.core.grpc_client import rpc_client
+
+        path = self._path(lambda *a: self.fail("ACC on the direct path"))
+        response = rpc_client(function_name="ACC:get_dev", args={"un": map_arg("u")})
+        self.assertEqual(unmap_arg(response.results["via"]), "grpc")
+        path.call.assert_not_called()
+
+    def test_failed_direct_call_is_retried_once_over_grpc(self):
+        from remoteRF.core.grpc_client import rpc_client
+
+        def failing(name, args):
+            raise direct_path.PathError("gone")
+
+        path = self._path(failing)
+        response = rpc_client(function_name="adalm_pluto:rx:GET", args={"a": map_arg("t")})
+        self.assertEqual(unmap_arg(response.results["via"]), "grpc")
+        path.call.assert_called_once()
+        self.stub.Call.assert_called_once()
+
+    def test_a_device_error_reply_is_not_a_fallback(self):
+        from remoteRF.core.grpc_client import rpc_client
+
+        self._path(lambda name, args: grpc_pb2.GenericRPCResponse(results={"a": map_arg("No token provided")}))
+        with self.assertRaises(RuntimeError):
+            rpc_client(function_name="adalm_pluto:rx:GET", args={})
+        self.stub.Call.assert_not_called()
+
+    def test_a_path_that_is_not_ready_is_skipped(self):
+        from remoteRF.core.grpc_client import rpc_client
+
+        path = self._path(lambda *a: self.fail("not ready"))
+        path.ready = False
+        response = rpc_client(function_name="adalm_pluto:rx:GET", args={"a": map_arg("t")})
+        self.assertEqual(unmap_arg(response.results["via"]), "grpc")
 
 
 class LoopbackPathTests(unittest.TestCase):

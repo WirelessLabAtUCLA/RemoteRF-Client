@@ -12,6 +12,7 @@ class DirectConnectionProfile:
     tls_server_name: str | None
     ca_path: Path
     mode: str = "direct"
+    home: str | None = None  # the saved HOME this profile was activated from
 
 
 ConnectionProfile = DirectConnectionProfile
@@ -32,5 +33,6 @@ def resolve_active_profile():
     if not address or not ca:
         return None
     return DirectConnectionProfile(
-        address, setting("REMOTERF_TLS_SERVER_NAME") or None, Path(ca).expanduser()
+        address, setting("REMOTERF_TLS_SERVER_NAME") or None, Path(ca).expanduser(),
+        home=setting("REMOTERF_PROFILE") or None,
     )

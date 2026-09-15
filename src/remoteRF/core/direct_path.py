@@ -27,8 +27,11 @@ has. See RemoteRF-Server docs/gate-i-direct-path.md.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import collections
 import contextlib
+import json
+import os
 import secrets
 import threading
 from typing import Callable, Optional
@@ -39,6 +42,7 @@ from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.connection import QuicConnection
 
 from ..common.grpc import grpc_pb2
+from ..common.utils import map_arg, unmap_arg
 
 ALPN = "remoterf-direct/1"
 MAX_FRAME = 100 * 1024 * 1024  # the gRPC message ceiling
@@ -48,6 +52,10 @@ SETTLE_SECONDS = 20.0  # gathering, the offer RPC and both budgets: one attempt,
 RETRY_SECONDS = 30.0
 IDLE_SECONDS = 600
 STUN = ("stun.l.google.com", 19302)
+
+
+def enabled() -> bool:
+    return os.getenv("REMOTERF_DIRECT", "1").strip().lower() not in {"0", "off", "no", "false"}
 
 
 def wants(function_name: str) -> bool:
@@ -318,3 +326,108 @@ class DirectPath:
             await self._ice.close()
             self._ice = None
         self.remote = None
+
+
+# ---- this process's path ----
+
+_path: Optional[DirectPath] = None
+_resolved = False  # whether this process has decided about its path
+_lock = threading.Lock()
+
+
+def _offer_rpc(username: str, secret: str) -> Callable[[dict], dict]:
+    def send(offer: dict) -> dict:
+        from .grpc_client import rpc_client
+
+        response = rpc_client(function_name="ACC:direct_offer", args={
+            "un": map_arg(username), "pw": map_arg(secret), "ice": map_arg(json.dumps(offer)),
+        })
+        if "ace" in response.results:
+            raise PathError(unmap_arg(response.results["ace"]))
+        return json.loads(unmap_arg(response.results["ice"]))
+
+    return send
+
+
+def start(*, username: str, secret: str, route: dict) -> Optional[DirectPath]:
+    """After a login: punch in the background when this home is reached over its relay.
+
+    A LAN or manually configured route is already direct, so nothing is done."""
+    global _path, _resolved
+    stop()
+    _resolved = True
+    if not enabled() or route.get("kind") != "relay":
+        return None
+    from .grpc_client import _current_profile
+
+    _path = DirectPath(
+        offer=_offer_rpc(username, secret), server_name=route["host"],
+        ca_pem=_current_profile().ca_path.read_bytes(),
+    )
+    _path.start()
+    return _path
+
+
+def _from_stored_login() -> Optional[DirectPath]:
+    """A path for a process that never logged in (a script using a driver)."""
+    from ..deployment import homes
+    from .grpc_client import _current_profile
+
+    profile = _current_profile()
+    if not profile.home:
+        return None
+    route = next(
+        (r for r in homes.load_home(profile.home)["routes"]
+         if f"{r['host']}:{r['port']}" == profile.grpc_endpoint),
+        None,
+    )
+    login = homes.recall_login(profile.home)
+    if route is None or route["kind"] != "relay" or login is None:
+        return None
+    return DirectPath(
+        offer=_offer_rpc(login["username"], login["secret"]), server_name=route["host"],
+        ca_pem=profile.ca_path.read_bytes(),
+    )
+
+
+def current() -> Optional[DirectPath]:
+    """This process's path when it is ready, else None.
+
+    The first call decides: a process that did not log in (a script) uses the
+    stored login of the active home and waits once for the first attempt, so
+    its very first capture already takes the direct path when there is one.
+    """
+    global _path, _resolved
+    if not enabled():
+        return None
+    if not _resolved:
+        with _lock:
+            if not _resolved:
+                _resolved = True
+                try:
+                    _path = _from_stored_login()
+                except Exception:  # noqa: BLE001 - no path is always an option
+                    _path = None
+                if _path is not None:
+                    _path.start()
+                    _path.wait()
+    path = _path
+    return path if path is not None and path.ready else None
+
+
+def describe() -> str:
+    """What device calls use right now, for the shell."""
+    if not enabled():
+        return "relay (direct path disabled: REMOTERF_DIRECT=0)"
+    path = _path
+    return path.describe() if path is not None else "relay (direct path off)"
+
+
+def stop() -> None:
+    global _path
+    path, _path = _path, None
+    if path is not None:
+        path.stop()
+
+
+atexit.register(stop)

@@ -23,6 +23,7 @@ from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
 from .secure_channel import build_secure_channel
+from . import direct_path
 from ..deployment.direct import ConnectionProfile, DirectConnectionProfile, resolve_active_profile
 
 _CONFIG_HELP = (
@@ -218,6 +219,13 @@ def rpc_client(*, function_name, args, connection=None):
     ref = _federated_ref(function_name, args) if connection is None else None
     if ref is not None:
         return _finish(_federated_call(ref, function_name, args))
+    if connection is None and direct_path.wants(function_name):
+        path = direct_path.current()
+        if path is not None:
+            try:
+                return _finish(path.call(function_name, args))
+            except direct_path.PathError:
+                pass  # the path is down now; this call goes over gRPC, once
     # print(tcp_calls)
     # if not is_connected:
     #     response = rpc_client(function_name="UserLogin", args={"username": grpc_pb2.Argument(string_value=input("Username: ")), "password": grpc_pb2.Argument(string_value=getpass.getpass("Password: ")), "client_ip": grpc_pb2.Argument(string_value=local_ip)})

@@ -117,6 +117,8 @@ def _password_confirmation(*, enforce_policy=False):
 pending_enrollment_code = None
 # The saved home this shell is attached to (None on a bare direct profile).
 home_name = None
+# The route it was reached over (None on a bare direct profile or an HTTPS home).
+current_route = None
 
 
 def _print_connected(name, home, route):
@@ -130,6 +132,45 @@ def _print_connected(name, home, route):
         f'  {name}' if title != name else '', Sty.GRAY,
         f'  via {via} {route["host"]}:{route["port"]}', Sty.CYAN,
     )
+
+
+def _device_path_label():
+    """direct / relay / LAN: which path device calls take right now, or None."""
+    if account.is_https_home or not current_route:
+        return None
+    if current_route['kind'] != 'relay':
+        return 'LAN' if current_route['kind'] == 'lan' else current_route['kind']
+    from . import direct_path
+
+    return direct_path.describe()
+
+
+def _open_direct_path():
+    """Punch the device path after a login over the relay, and wait for the
+    first attempt so the session line can say which path device calls use."""
+    if account.is_https_home or not current_route:
+        return
+    from . import direct_path
+
+    path = direct_path.start(
+        username=account.username, secret=account.password, route=current_route
+    )
+    if path is not None:
+        from ..remoterf_cli import _working
+
+        with _working('Opening a direct device path…'):
+            path.wait()
+
+
+def status():
+    """Where this shell is connected and which path its device calls take."""
+    if current_route:
+        _print_connected(home_name, current_route.get('home') or {}, current_route)
+    else:
+        printf('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, _home_name(), (Sty.BOLD, Sty.BLUE))
+    label = _device_path_label()
+    if label:
+        printf('  devices via ', Sty.GRAY, label, Sty.CYAN)
 
 
 def _remember_login():
@@ -282,9 +323,11 @@ def session_line():
     """The session facts the full panel carries, on one line under the banner."""
     marker = '◆' if supports_unicode() else '*'
     display_tos = str(_tos_url()).removeprefix("https://").removeprefix("http://")
+    label = _device_path_label()
     printf(
         f'{marker} ', Sty.DEFAULT,
         f'Logged in as {account.username}', (Sty.BOLD, Sty.GREEN),
+        f'   devices via {label}' if label else '', Sty.CYAN,
         f'   TOS {display_tos}', Sty.GRAY,
         "   'help'", Sty.BRIGHT_GREEN, ' for commands', Sty.GRAY,
     )
@@ -302,6 +345,8 @@ def commands():
     printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
     printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
     printf("'logout' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Log out and forget the stored login", Sty.DEFAULT)
+    printf("'status' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Connection and the path device calls use", Sty.DEFAULT)
+    printf("'direct on|off' ", Sty.MAGENTA, " : ", Sty.GRAY, "Use, or stop using, a direct device path", Sty.DEFAULT)
     if account.is_https_home:
         printf("'reset-password' ", Sty.MAGENTA, ": ", Sty.GRAY, "Set a new password with an emailed token", Sty.DEFAULT)
     printf("'exit' or 'quit' ", Sty.MAGENTA, ": ", Sty.GRAY, "Exit", Sty.DEFAULT)
@@ -1424,8 +1469,9 @@ def interactive_reserve_next_days_auto():
 
 def run(backend=None, *, register=False, enrollment_code=None, server_label=None,
         show_banner=True, home=None, route=None):
-    global account, session, server_addr, pending_enrollment_code, home_name
+    global account, session, server_addr, pending_enrollment_code, home_name, current_route
     home_name = home
+    current_route = route
     from ..deployment.backend import selected_backend
     from .grpc_client import active_endpoint
     backend = backend or selected_backend()
@@ -1448,6 +1494,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
     try:
         if not welcome(initial=initial, show_banner=show_banner, route=route):
             return 0
+        _open_direct_path()
         # Continue below the banner rather than wiping the screen: with a
         # stored login the wipe came a split second after everything appeared.
         session_line()
@@ -1474,6 +1521,15 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                     break
                 elif inpu == "clear":
                     clear()
+                elif inpu == "status":
+                    status()
+                elif inpu in ("direct off", "direct on"):
+                    from . import direct_path
+
+                    direct_path.stop()
+                    if inpu == "direct on":
+                        _open_direct_path()
+                    status()
                 elif inpu == "getdev":
                     devices()
                 elif inpu == "help" or inpu == "h":
@@ -1522,4 +1578,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                 break
         return 0
     finally:
+        from . import direct_path
+
+        direct_path.stop()
         backend.close()
