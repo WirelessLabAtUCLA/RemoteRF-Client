@@ -47,7 +47,7 @@ COMPACT_BANNER = "RemoteRF"
 ASCII_WORDMARK_WIDTH = max(len(line) for line in ASCII_BANNER.splitlines())
 ASCII_BANNER_WIDTH = max(len(line) for line in BRANDED_ASCII_BANNER.splitlines())
 ASCII_BANNER_MIN_COLUMNS = ASCII_BANNER_WIDTH + 1
-PANEL_CONTENT_WIDTH = 35
+PANEL_CONTENT_WIDTH = 39
 PANEL_INNER_WIDTH = PANEL_CONTENT_WIDTH + 2
 PANEL_WIDTH = PANEL_INNER_WIDTH + 2
 PANEL_GAP = 1
@@ -111,12 +111,15 @@ def _panel_lines(
     marker = "◆" if unicode_supported else "*"
     label = f"{horizontal} REMOTERF CLIENT "
     top = f"{top_left}{label}{horizontal * (PANEL_INNER_WIDTH - len(label))}{top_right}"
-    content = (
+    content = [
         f"{marker} www.remoterf.net",
-        "Created by the Wireless Lab at UCLA",
+        "Created by https://wireless.ee.ucla.edu",
         f"VERSION  {version}",
-        f"SERVER   {server or 'NA'}",
-    )
+    ]
+    # Before a target is chosen there is no server to name; an "NA" row would
+    # only say so twice.
+    if server:
+        content.append(f"SERVER   {server}")
     body = [
         f"{vertical} {_fit_panel_text(line):<{PANEL_CONTENT_WIDTH}} {vertical}"
         for line in content
@@ -169,12 +172,12 @@ def _compact_lines(
         heading = COMPACT_BANNER[:width]
 
     short_version = str(version).split(maxsplit=1)[0]
-    server = str(server or "NA")
+    server = str(server or "")
     detail_options = (
-        f"v{version} {separator} {server}",
-        f"v{short_version} {separator} {server}",
-        f"v{short_version}",
-    )
+        (f"v{version} {separator} {server}", f"v{short_version} {separator} {server}")
+        if server
+        else (f"v{version}",)
+    ) + (f"v{short_version}",)
     details = next((line for line in detail_options if len(line) <= width), "")
     if not details:
         details = detail_options[-1][:width]
