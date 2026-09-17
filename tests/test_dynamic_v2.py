@@ -509,20 +509,68 @@ class DynamicV2Tests(unittest.TestCase):
         self.assertEqual(encoded.WhichOneof("value"), "json_value")
         self.assertEqual(decode_value(encoded), all_indexes)
 
-    def test_client_rejects_a_different_upstream_uhd_version(self):
-        class MismatchedTransport(FakeTransport):
+    def test_client_accepts_an_older_upstream_uhd_version(self):
+        class OlderTransport(FakeTransport):
             def open_session(self, token, schema_hash):
                 result = super().open_session(token, schema_hash)
-                result["uhd_version"] = "4.10.0.1-0ubuntu1"
+                result["uhd_version"] = "3.15.0.0"
                 return result
 
-        transport = MismatchedTransport()
+        transport = OlderTransport()
         _, MultiUSRP = build_uhd_bindings(
             schema(), transport_factory=lambda: transport
         )
-        with self.assertRaisesRegex(Exception, "requires UHD 4.10.0.0"):
-            MultiUSRP("token")
-        self.assertEqual(transport.closed_sessions, ["session"])
+        device = MultiUSRP("token")
+        self.assertEqual(transport.closed_sessions, [])
+        self.assertTrue(device.close())
+
+    def test_binder_is_no_stricter_than_native_uhd(self):
+        dc_offset = descriptor(
+            "uhd.usrp.MultiUSRP",
+            "set_rx_dc_offset",
+            [
+                overload("offset", [param("offset", "complex"), param("chan", "int", required=False, default=0)]),
+                overload("enable", [param("enb", "bool"), param("chan", "int", required=False, default=0)]),
+            ],
+        )
+        overload_id, bound = OverloadBinder(dc_offset).bind((0,), {})
+        self.assertEqual((overload_id, bound), ("offset", {"offset": 0, "chan": 0}))
+        overload_id, _ = OverloadBinder(dc_offset).bind((False,), {})
+        self.assertEqual(overload_id, "enable")
+        with self.assertRaisesRegex(TypeError, "incompatible arguments"):
+            OverloadBinder(dc_offset).bind(("0",), {})
+
+        optional = descriptor(
+            "uhd.usrp.MultiUSRP",
+            "get_rx_freq",
+            [overload("default", [param("chan", "int", required=False, default=0)], "float")],
+        )
+        _, bound = OverloadBinder(optional).bind((), {"chan": None})
+        self.assertEqual(bound, {"chan": None})
+
+        phases = descriptor(
+            "uhd.usrp.MultiUSRP",
+            "phaser_set_phases",
+            [overload("default", [param("phases_deg", "list[float]")], "list[float]")],
+        )
+        OverloadBinder(phases).bind((np.linspace(0, 315, 8),), {})   # numpy arrays are sequences
+        self.assertEqual(decode_value(encode_value(np.complex64(1 + 2j))), 1 + 2j)
+
+    def test_a_stale_v2_driver_refreshes_itself_and_says_so(self):
+        from unittest.mock import patch
+
+        class StaleTransport(FakeTransport):
+            def open_session(self, token, schema_hash):
+                raise RemoteRFProtocolError(
+                    "client schema hash is stale",
+                    details={"requested": schema_hash, "current": "sha256:newer"},
+                )
+
+        _, MultiUSRP = build_uhd_bindings(schema(), transport_factory=StaleTransport)
+        with patch("remoteRF.drivers.dynamic_device.install_driver_if_stale", return_value=True) as refresh:
+            with self.assertRaisesRegex(RemoteRFProtocolError, "reimport remoteRF.drivers.usrp"):
+                MultiUSRP("token")
+        refresh.assert_called_once_with(token="token", current_hash=schema()["schema_hash"])
 
     def test_client_accepts_conda_forge_uhd_main_release_version(self):
         class CondaForgeTransport(FakeTransport):

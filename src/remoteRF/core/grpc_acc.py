@@ -56,7 +56,7 @@ class RemoteRFAccount:
             token = unmap_arg(response.results["Token"])
             try:
                 from ..drivers.dynamic_device import install_driver
-                install_driver(device_id=device_id)
+                install_driver(token=token, device_id=device_id)
             except Exception as e:
                 print(f"Warning: could not install driver for device {device_id}: {e}")
             return token

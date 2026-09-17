@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import keyword
+import sys
 from pathlib import Path
 
 from ..common.utils import map_arg, unmap_arg
@@ -89,29 +90,20 @@ def fetch_idl(
             "schema_hash": "sha256:...",
         }
     """
-    if token is not None and prefer_v2:
-        from .dynamic_v2 import fetch_schema_v2
-        from ..core.v2_errors import RemoteRFProtocolError, RemoteRFTransportError
-
-        try:
-            return fetch_schema_v2(str(token))
-        except RemoteRFProtocolError:
-            # The selected device may only publish v1 (for example Pluto).
-            pass
-        except RemoteRFTransportError as exc:
-            # Old servers report the additive v2 service as UNIMPLEMENTED.
-            if exc.details.get("grpc_code") != "UNIMPLEMENTED":
-                raise
-
     args: dict = {}
-    if token is not None:
-        args['token'] = map_arg(str(token))
-    elif device_id is not None:
+    if device_id is not None:
         args['device_id'] = map_arg(int(device_id))
+    elif token is not None:
+        args['token'] = map_arg(str(token))
     elif device_name is not None:
         args['device_name'] = map_arg(str(device_name))
     else:
         raise ValueError("fetch_idl requires token, device_id, or device_name")
+    if prefer_v2:
+        # One RPC either way: servers that know v2 answer with it when the
+        # device publishes one (also by device_id, which needs no active
+        # reservation); v1-only devices and older servers answer v1.
+        args['schema_versions'] = map_arg(["2.0"])
 
     from ..core.grpc_client import rpc_client
 
@@ -1381,8 +1373,14 @@ _DRIVERS_DIR = Path(__file__).parent
 
 
 def _write_driver_files(schema: dict) -> Path:
-    if str(schema.get("schema_version")) == "2.0":
-        return _write_v2_driver_files(schema)
+    pkg_dir = _write_v2_driver_files(schema) if str(schema.get("schema_version")) == "2.0" else _write_v1_driver_files(schema)
+    stale = f"remoteRF.drivers.{pkg_dir.name}"
+    for name in [m for m in sys.modules if m == stale or m.startswith(stale + ".")]:
+        del sys.modules[name]
+    return pkg_dir
+
+
+def _write_v1_driver_files(schema: dict) -> Path:
 
     (
         device_type,
@@ -1397,8 +1395,13 @@ def _write_driver_files(schema: dict) -> Path:
         _call_map,
     ) = _schema_maps(schema)
     pkg_dir = _DRIVERS_DIR / device_type
+    remote_path = pkg_dir / f"{device_type}_remote.py"
+    if remote_path.exists() and _is_v2_driver(remote_path):
+        # The server answered v1 (older server, or a device that no longer
+        # publishes v2); don't trade an installed Dynamic v2 driver for it.
+        return pkg_dir
     pkg_dir.mkdir(exist_ok=True)
-    (pkg_dir / f"{device_type}_remote.py").write_text(_codegen(schema), encoding="utf-8")
+    remote_path.write_text(_codegen(schema), encoding="utf-8")
     init_lines = [
         *_GPL_NOTICE_LINES,
         "from importlib import import_module as _import_module",
@@ -1550,11 +1553,7 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
         device_name=device_name,
         prefer_v2=True,
     )
-    device_type = (
-        _require_package_name(schema.get("device_type"), field="device_type")
-        if str(schema.get("schema_version")) == "2.0"
-        else _schema_maps(schema)[0]
-    )
+    device_type = _schema_device_type(schema)
     remote_path = _DRIVERS_DIR / device_type / f"{device_type}_remote.py"
 
     if not remote_path.exists():
@@ -1566,12 +1565,27 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
     current_hash = _read_schema_hash(remote_path)
     if current_hash != schema.get("schema_hash"):
         _write_driver_files(schema)
+        if _read_schema_hash(remote_path) == current_hash:
+            return
         print(
             f"Driver for '{device_type}' updated "
             f"(was {(current_hash or '?')[:16]}…, "
             f"now {schema.get('schema_hash','?')[:16]}…).\n"
             f"Reimport before continuing: from remoteRF.drivers.{device_type} import *"
         )
+
+
+def _schema_device_type(schema: dict) -> str:
+    if str(schema.get("schema_version")) == "2.0":
+        return _require_package_name(schema.get("device_type"), field="device_type")
+    return _schema_maps(schema)[0]
+
+
+def _is_v2_driver(path: Path) -> bool:
+    try:
+        return "build_uhd_bindings" in path.read_text(encoding="utf-8")
+    except OSError:
+        return False
 
 
 def _read_schema_hash(path: Path) -> str | None:
@@ -1601,12 +1615,14 @@ def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
 
         from remoteRF.drivers.pluto import *
     """
-    schema = fetch_idl(token=token, prefer_v2=False)
+    schema = fetch_idl(token=token, prefer_v2=True)
     if schema.get("schema_hash") == current_hash:
         return False
 
-    device_type = _schema_maps(schema)[0]
-    _write_driver_files(schema)
+    device_type = _schema_device_type(schema)
+    pkg_dir = _write_driver_files(schema)
+    if _read_schema_hash(pkg_dir / f"{device_type}_remote.py") == current_hash:
+        return False
     print(
         f"Driver for '{device_type}' updated "
         f"(was {current_hash[:16]}…, now {schema.get('schema_hash','?')[:16]}…).\n"

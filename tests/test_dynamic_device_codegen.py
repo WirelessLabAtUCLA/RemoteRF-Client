@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import json
 import os
 import unittest
 import sys
@@ -1055,3 +1056,78 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DriverInstallPathTests(unittest.TestCase):
+    """The default USRP driver must land on Dynamic v2 and stay there."""
+
+    V2 = {
+        "schema_version": "2.0", "device_type": "usrp", "client_class": "MultiUSRP", "driver_version": "t",
+        "native_api": {}, "hardware_profiles": [], "objects": [], "methods": [], "errors": [],
+        "capability_fields": [], "coverage": {}, "deprecations": [],
+    }
+    V1 = {"schema_version": "1.0", "device_type": "usrp", "client_class": "MultiUSRP", "driver_version": "t",
+          "schema_hash": "sha256:v1", "getters": {}, "setters": {}, "calls": {}}
+
+    @classmethod
+    def setUpClass(cls):
+        import hashlib
+        body = json.dumps(cls.V2, sort_keys=True, separators=(",", ":"))
+        cls.V2 = dict(cls.V2, schema_hash="sha256:" + hashlib.sha256(body.encode()).hexdigest())
+
+    def _run(self, respond, call):
+        seen = []
+
+        class Response:
+            def __init__(self, results):
+                self.results = results
+
+        def rpc_client(function_name, args):
+            plain = {k: unmap_arg(v) for k, v in args.items()}
+            seen.append(plain)
+            return Response({"schema": map_arg(json.dumps(respond(plain)))})
+
+        old_rpc_client = fake_grpc_client.rpc_client
+        old_drivers_dir = dynamic_device._DRIVERS_DIR
+        fake_grpc_client.rpc_client = rpc_client
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                dynamic_device._DRIVERS_DIR = Path(temp_dir)
+                result = call()
+                remote = Path(temp_dir) / "usrp" / "usrp_remote.py"
+                text = remote.read_text() if remote.exists() else ""
+        finally:
+            fake_grpc_client.rpc_client = old_rpc_client
+            dynamic_device._DRIVERS_DIR = old_drivers_dir
+        return seen, text, result
+
+    def test_install_asks_the_legacy_endpoint_for_v2_and_writes_a_v2_driver(self):
+        seen, text, _ = self._run(
+            lambda plain: self.V2 if "2.0" in plain.get("schema_versions", []) else self.V1,
+            lambda: dynamic_device.install_driver(token="future-token", device_id=4),
+        )
+        # device_id first: a not-yet-active reservation's token is inert.
+        self.assertEqual(seen, [{"device_id": 4, "schema_versions": ["2.0"]}])
+        self.assertIn("build_uhd_bindings", text)
+
+    def test_a_v1_answer_never_replaces_an_installed_v2_driver(self):
+        def call():
+            dynamic_device._write_driver_files(self.V2)
+            dynamic_device.install_driver(device_id=4)
+            self.assertFalse(dynamic_device.install_driver_if_stale(token="t", current_hash=self.V2["schema_hash"]))
+
+        seen, text, _ = self._run(lambda plain: self.V1, call)
+        self.assertEqual(len(seen), 2)
+        self.assertIn("build_uhd_bindings", text)
+
+    def test_rewriting_a_driver_drops_the_cached_package_so_reimport_works(self):
+        sys.modules["remoteRF.drivers.usrp"] = types.ModuleType("remoteRF.drivers.usrp")
+        sys.modules["remoteRF.drivers.usrp.usrp_remote"] = types.ModuleType("remoteRF.drivers.usrp.usrp_remote")
+        try:
+            self._run(lambda plain: self.V2,
+                      lambda: dynamic_device.install_driver_if_stale(token="t", current_hash="sha256:v1"))
+            self.assertNotIn("remoteRF.drivers.usrp", sys.modules)
+            self.assertNotIn("remoteRF.drivers.usrp.usrp_remote", sys.modules)
+        finally:
+            sys.modules.pop("remoteRF.drivers.usrp", None)
+            sys.modules.pop("remoteRF.drivers.usrp.usrp_remote", None)

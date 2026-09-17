@@ -21,7 +21,6 @@ import hashlib
 import json
 import keyword
 import numbers
-import re
 import types
 import weakref
 
@@ -81,24 +80,6 @@ _PARAMETER_KINDS = {
     "var_keyword",
 }
 _PARAMETER_DIRECTIONS = {"in", "out", "inout"}
-
-
-def _canonical_native_version(value) -> str:
-    """Strip distro/build metadata while retaining the pinned upstream API."""
-    text = str(value or "").strip()
-    if text.lower().startswith("uhd "):
-        text = text[4:].strip()
-    match = re.match(
-        r"^(\d+)\.(\d+)\.(\d+)(?:\.(\d+|main|head))?",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if match is None:
-        return text.partition("-")[0].strip()
-    major, minor, patch, build = match.groups()
-    if build is None or build.lower() in {"main", "head"}:
-        build = "0"
-    return ".".join((major, minor, patch, build))
 
 
 def validate_schema_v2(schema: dict) -> dict:
@@ -223,9 +204,13 @@ def _matches_type(value, wire_type: str) -> bool:
             return True
         if choice == "bytes" and isinstance(value, (bytes, bytearray, memoryview)):
             return True
-        if choice == "complex" and isinstance(value, (complex, np.complexfloating)):
+        if (
+            choice == "complex"
+            and isinstance(value, (numbers.Complex, np.number))
+            and not isinstance(value, bool)
+        ):
             return True
-        if choice.startswith("list") and isinstance(value, (list, tuple)):
+        if choice.startswith("list") and isinstance(value, (list, tuple, np.ndarray)):
             if "[" not in choice:
                 return True
             item_type = choice.partition("[")[2].rpartition("]")[0]
@@ -295,7 +280,11 @@ class OverloadBinder:
             else:
                 raise TypeError(f"missing required argument {name!r}")
 
-            if supplied and not _matches_type(value, spec.get("type", "any")):
+            if (
+                supplied
+                and not (value is None and not spec.get("required", True))
+                and not _matches_type(value, spec.get("type", "any"))
+            ):
                 raise TypeError(
                     f"argument {name!r} must match {spec.get('type')}, "
                     f"not {type(value).__name__}"
@@ -678,23 +667,21 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
             self.token = str(token)
             self._transport = transport_factory()
             self._transport.negotiate()
-            opened = self._transport.open_session(self.token, schema["schema_hash"])
-            required_uhd = str(
-                schema.get("native_api", {}).get("version") or ""
-            )
-            actual_uhd = str(opened.get("uhd_version") or "")
-            if (
-                required_uhd
-                and _canonical_native_version(actual_uhd)
-                != _canonical_native_version(required_uhd)
-            ):
-                try:
-                    self._transport.close_session(opened["session_id"])
-                finally:
+            try:
+                opened = self._transport.open_session(self.token, schema["schema_hash"])
+            except RemoteRFProtocolError as exc:
+                if not exc.details.get("current"):
+                    raise
+                from .dynamic_device import install_driver_if_stale
+
+                device_type = schema.get("device_type", "usrp")
+                if install_driver_if_stale(token=self.token, current_hash=schema["schema_hash"]):
                     raise RemoteRFProtocolError(
-                        f"client requires UHD {required_uhd}; "
-                        f"server reports {actual_uhd or 'unknown'}"
-                    )
+                        f"the server's {device_type} driver changed and the local copy "
+                        f"was updated; reimport remoteRF.drivers.{device_type} and retry",
+                        details=dict(exc.details),
+                    ) from exc
+                raise
             self._session_id = opened["session_id"]
             self._handle = opened["device_handle"]
             self._generation = 0
