@@ -357,15 +357,12 @@ class LoopbackPathTests(unittest.TestCase):
             self.assertIn("idle", path.describe())
             time.sleep(1)
             self.assertEqual(server.offers, 1, "no re-punch while nothing needs the path")
-            # The next device call takes the relay and wakes the path...
-            self.assertIsNone(direct_path.current())
-            deadline = time.monotonic() + 10
-            while not path.ready and time.monotonic() < deadline:
-                time.sleep(0.1)
+            # The next device call wakes the path and gets it back within the
+            # wait: a punch takes well under a second, and a large buffer
+            # would not fit the relay.
+            self.assertIs(direct_path.current(), path)
             self.assertTrue(path.ready, path.describe())
             self.assertEqual(server.offers, 2)
-            # ... and the one after that rides it.
-            self.assertIs(direct_path.current(), path)
 
     def test_a_system_sleep_is_noticed_and_the_path_re_punched_at_once(self):
         real_time = time.time

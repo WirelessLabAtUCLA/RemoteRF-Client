@@ -29,8 +29,12 @@ class FakePath:
     def wait(self, timeout=None):
         return True
 
-    def wake(self):
-        pass
+    repunch = True  # whether a woken path comes back within the wait
+
+    def wake(self, wait=0.0):
+        self.woken = getattr(self, "woken", 0) + 1
+        if wait and self.repunch:
+            self.state = "ready"
 
     def stop(self):
         self.state = "off"
@@ -124,5 +128,19 @@ def test_a_partner_path_that_is_down_sends_the_call_to_the_home(monkeypatch):
     path.state = "down"
     assert direct_path.current(token="tok") is None
     path.state = "idle"
-    assert direct_path.current(token="tok") is None  # woken, not ready yet
+    path.repunch = False
+    assert direct_path.current(token="tok") is None  # woken, but not back in time: the relay it is
+    path.repunch = True
+    assert direct_path.current(token="tok") is path
+    direct_path._login = None
+
+
+def test_a_call_after_idle_waits_for_the_repunch(monkeypatch):
+    monkeypatch.setattr(direct_path, "DirectPath", FakePath)
+    direct_path._login = ("alice", "secret")
+    monkeypatch.setenv("REMOTERF_DIRECT", "1")
+    direct_path.mark_partner("tok", "owner-uuid")
+    path = direct_path.current(token="tok")
+    path.state = "idle"
+    assert direct_path.current(token="tok") is path and path.woken == 1  # woken and back within the wait
     direct_path._login = None

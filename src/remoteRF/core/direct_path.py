@@ -307,9 +307,13 @@ class DirectPath:
         self.calls += 1
         return response
 
-    def wake(self) -> None:
-        """A device call wants the idle path back (it takes the relay meanwhile)."""
+    def wake(self, wait: float = 0.0) -> None:
+        """A device call wants the idle path back; with ``wait`` it gives the
+        re-punch that long before settling for the relay."""
         self._loop.call_soon_threadsafe(lambda: self._wanted and self._wanted.set())
+        deadline = time.monotonic() + wait
+        while wait and not self.ready and self.state in ("idle", "connecting") and time.monotonic() < deadline:
+            time.sleep(0.05)
 
     def stop(self) -> None:
         """Close the path and the thread; the instance is finished."""
@@ -588,7 +592,7 @@ def _partner(token: str) -> Optional[DirectPath]:
             )
             path.start()
     if path.state == "idle":
-        path.wake()
+        path.wake(WAIT_SECONDS)  # a punch takes well under a second; a 2 MB buffer will not fit the relay
     elif path.state == "connecting":
         path.wait()  # the first call waits briefly, as a script's first capture does
     return path if path.ready else None
@@ -620,7 +624,7 @@ def current(token: Optional[str] = None) -> Optional[DirectPath]:
                     _path.wait()
     path = _path
     if path is not None and path.state == "idle":
-        path.wake()
+        path.wake(WAIT_SECONDS)
     return path if path is not None and path.ready else None
 
 
