@@ -98,3 +98,31 @@ def test_rpc_client_routes_by_the_token_the_call_carries(monkeypatch):
     assert routed[-1] == "tok2"
     grpc_client.rpc_client(function_name="pluto:rx:GET", args={"a": map_arg(7)})
     assert routed[-1] is None  # only a string token can name a partner path
+
+
+def test_no_login_means_no_partner_path_and_disabled_means_none(monkeypatch):
+    monkeypatch.setattr(direct_path, "DirectPath", FakePath)
+    monkeypatch.setattr(direct_path, "_from_stored_login", lambda: None)
+    monkeypatch.setattr(direct_path, "_stored_login", lambda: None)
+    direct_path._login = None
+    monkeypatch.setenv("REMOTERF_DIRECT", "1")
+    direct_path.mark_partner("tok", "owner-uuid")
+    assert direct_path.current(token="tok") is None and FakePath.instances == []  # nothing to log in with
+    direct_path._login = ("alice", "secret")
+    assert direct_path.current(token="tok") is FakePath.instances[0]
+    monkeypatch.setenv("REMOTERF_DIRECT", "0")
+    assert direct_path.current(token="tok") is None  # disabled: nothing, however marked
+    direct_path._login = None
+
+
+def test_a_partner_path_that_is_down_sends_the_call_to_the_home(monkeypatch):
+    monkeypatch.setattr(direct_path, "DirectPath", FakePath)
+    direct_path._login = ("alice", "secret")
+    monkeypatch.setenv("REMOTERF_DIRECT", "1")
+    direct_path.mark_partner("tok", "owner-uuid")
+    path = direct_path.current(token="tok")
+    path.state = "down"
+    assert direct_path.current(token="tok") is None
+    path.state = "idle"
+    assert direct_path.current(token="tok") is None  # woken, not ready yet
+    direct_path._login = None
