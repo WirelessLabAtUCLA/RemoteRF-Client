@@ -124,6 +124,11 @@ def fetch_idl(
 
     if 'error' in resp.results:
         raise RuntimeError(f"IDL fetch failed: {unmap_arg(resp.results['error'])}")
+    if token is not None and 'federated' in resp.results:
+        # A partner lab answered: device calls with this token can punch to it.
+        from ..core import direct_path
+
+        direct_path.mark_partner(str(token), str(unmap_arg(resp.results['federated'])))
 
     return json.loads(unmap_arg(resp.results['schema']))
 

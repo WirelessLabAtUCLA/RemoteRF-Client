@@ -213,6 +213,15 @@ def _federated_call(ref, function_name, args):
     return response
 
 
+def _device_token(function_name, args):
+    """The token a device call carries: `a` on a device RPC, `token` on a schema fetch."""
+    key = "token" if function_name == "IDL:get_drivers" else "a"
+    if key not in args:
+        return None
+    value = unmap_arg(args[key])
+    return value if isinstance(value, str) else None
+
+
 def rpc_client(*, function_name, args, connection=None):
     global tcp_calls
     tcp_calls += 1
@@ -225,7 +234,7 @@ def rpc_client(*, function_name, args, connection=None):
         # them when they are integer IQ; the driver still sees a complex array.
         args = {**args, "wire": map_arg(wire)}
     if connection is None and direct_path.wants(function_name):
-        path = direct_path.current()
+        path = direct_path.current(token=_device_token(function_name, args))
         if path is not None:
             try:
                 return _finish(path.call(function_name, args))

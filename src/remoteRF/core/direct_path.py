@@ -22,6 +22,12 @@ instead of through the relay. Control RPCs (ACC:*) stay on gRPC. When the
 punch fails or the path dies, calls fall back to gRPC and the path is retried
 every 30 s. Signaling is ACC:direct_offer over the channel the client already
 has. See RemoteRF-Server docs/gate-i-direct-path.md.
+
+A partner lab's device (one the home lists on a federation agreement) gets a
+path of its own, punched to that lab: the offer goes to the home with the
+device token, the home has the owner answer it, and the answer names the
+owner's certificate for the QUIC handshake. Calls with that token take that
+path; everything else still takes the home's.
 """
 
 from __future__ import annotations
@@ -383,11 +389,14 @@ class DirectPath:
         await asyncio.wait_for(ice.connect(), ICE_SECONDS)
         peer = peer_address(ice)
 
+        # A partner lab's answer names the lab whose certificate to pin.
+        server_name = str(answer.get("server_name") or self._server_name)
+        ca_pem = str(answer["ca_pem"]).encode() if answer.get("ca_pem") else self._ca_pem
         configuration = QuicConfiguration(
-            is_client=True, alpn_protocols=[ALPN], server_name=self._server_name,
+            is_client=True, alpn_protocols=[ALPN], server_name=server_name,
             idle_timeout=IDLE_SECONDS,
         )
-        configuration.load_verify_locations(cadata=self._ca_pem)
+        configuration.load_verify_locations(cadata=ca_pem)
         protocol = _Protocol(QuicConnection(configuration=configuration))
         self._transport = _IceTransport(ice)
         protocol.connection_made(self._transport)
@@ -471,18 +480,27 @@ class DirectPath:
 _path: Optional[DirectPath] = None
 _resolved = False  # whether this process has decided about its path
 _lock = threading.Lock()
+_login: Optional[tuple[str, str]] = None  # (username, secret) of this process's login
+_partners: dict[str, DirectPath] = {}  # device token -> the path to the lab that owns it
+_partner_owners: dict[str, str] = {}  # device token -> owner deployment id
 
 
-def _offer_rpc(username: str, secret: str) -> Callable[[dict], dict]:
+def _offer_rpc(username: str, secret: str, token: Optional[str] = None) -> Callable[[dict], dict]:
+    """The offer RPC; with ``token`` the home has the partner lab answer instead."""
     def send(offer: dict) -> dict:
         from .grpc_client import rpc_client
 
-        response = rpc_client(function_name="ACC:direct_offer", args={
-            "un": map_arg(username), "pw": map_arg(secret), "ice": map_arg(json.dumps(offer)),
-        })
+        args = {"un": map_arg(username), "pw": map_arg(secret), "ice": map_arg(json.dumps(offer))}
+        if token is not None:
+            args["a"] = map_arg(token)
+        response = rpc_client(function_name="ACC:direct_offer", args=args)
         if "ace" in response.results:
             raise PathError(unmap_arg(response.results["ace"]))
-        return json.loads(unmap_arg(response.results["ice"]))
+        answer = json.loads(unmap_arg(response.results["ice"]))
+        for key in ("server_name", "ca_pem"):
+            if key in response.results:
+                answer[key] = unmap_arg(response.results[key])
+        return answer
 
     return send
 
@@ -491,9 +509,10 @@ def start(*, username: str, secret: str, route: dict) -> Optional[DirectPath]:
     """After a login: punch in the background when this home is reached over its relay.
 
     A LAN or manually configured route is already direct, so nothing is done."""
-    global _path, _resolved
+    global _path, _resolved, _login
     stop()
     _resolved = True
+    _login = (username, secret)
     if not enabled() or route.get("kind") != "relay":
         return None
     from .grpc_client import _current_profile
@@ -504,6 +523,15 @@ def start(*, username: str, secret: str, route: dict) -> Optional[DirectPath]:
     )
     _path.start()
     return _path
+
+
+def _stored_login() -> Optional[dict]:
+    """The active home's remembered login, for a process that never logged in."""
+    from ..deployment import homes
+    from .grpc_client import _current_profile
+
+    profile = _current_profile()
+    return homes.recall_login(profile.home) if profile.home else None
 
 
 def _from_stored_login() -> Optional[DirectPath]:
@@ -528,16 +556,57 @@ def _from_stored_login() -> Optional[DirectPath]:
     )
 
 
-def current() -> Optional[DirectPath]:
-    """This process's path when it is ready, else None.
+def _credentials() -> Optional[tuple[str, str]]:
+    if _login is not None:
+        return _login
+    try:
+        login = _stored_login()
+    except Exception:  # noqa: BLE001 - no login, no path
+        return None
+    return (login["username"], login["secret"]) if login else None
 
-    The first call decides: a process that did not log in (a script) uses the
-    stored login of the active home and waits briefly for the first attempt,
-    so its very first capture already takes the direct path when there is one.
+
+def mark_partner(token: str, owner: str) -> None:
+    """A schema fetch just showed this token drives a partner lab's device."""
+    _partner_owners[token] = owner
+
+
+def partner_of(token: Optional[str]) -> Optional[str]:
+    return _partner_owners.get(token) if token else None
+
+
+def _partner(token: str) -> Optional[DirectPath]:
+    """The path to the lab owning the device behind ``token``, punched on first use."""
+    with _lock:
+        path = _partners.get(token)
+        if path is None:
+            credentials = _credentials()
+            if credentials is None:
+                return None
+            path = _partners[token] = DirectPath(
+                offer=_offer_rpc(*credentials, token=token), server_name="", ca_pem=b"",
+            )
+            path.start()
+    if path.state == "idle":
+        path.wake()
+    elif path.state == "connecting":
+        path.wait()  # the first call waits briefly, as a script's first capture does
+    return path if path.ready else None
+
+
+def current(token: Optional[str] = None) -> Optional[DirectPath]:
+    """The path a call with ``token`` should take when it is ready, else None.
+
+    A partner lab's token gets that lab's path. Otherwise the first call
+    decides: a process that did not log in (a script) uses the stored login
+    of the active home and waits briefly for the first attempt, so its very
+    first capture already takes the direct path when there is one.
     """
     global _path, _resolved
     if not enabled():
         return None
+    if partner_of(token) is not None:
+        return _partner(token)
     if not _resolved:
         with _lock:
             if not _resolved:
@@ -567,6 +636,10 @@ def stop() -> None:
     global _path
     path, _path = _path, None
     if path is not None:
+        path.stop()
+    partners = list(_partners.values())
+    _partners.clear()
+    for path in partners:
         path.stop()
 
 
