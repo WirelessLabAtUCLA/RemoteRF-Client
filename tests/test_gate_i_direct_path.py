@@ -425,3 +425,40 @@ class LoopbackPathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuietHandlerTests(unittest.TestCase):
+    """A STUN retry that dies on a closed transport stays off the console,
+    whichever way asyncio reports it; anything else still reaches the default."""
+
+    def _run(self, name, exc):
+        seen = []
+        loop = asyncio.new_event_loop()
+        try:
+            direct_path.quiet_aioice_errors(loop)
+            default = loop.default_exception_handler
+            loop.default_exception_handler = lambda context: seen.append(context)
+            # quiet_aioice_errors captured the real default; swap it the same way
+            direct_path.quiet_aioice_errors(loop)
+
+            class Transaction:
+                def __retry(self):
+                    raise exc
+
+                def other(self):
+                    raise exc
+
+            loop.call_later(0, getattr(Transaction(), name))
+            loop.call_later(0.01, loop.stop)
+            loop.run_forever()
+        finally:
+            loop.close()
+        return seen
+
+    def test_a_retry_on_a_closed_transport_is_silent(self):
+        self.assertEqual(self._run("_Transaction__retry", AttributeError("'NoneType' object has no attribute 'call_exception_handler'")), [])
+        self.assertEqual(self._run("_Transaction__retry", OSError("bad file descriptor")), [])
+
+    def test_anything_else_still_reaches_the_default_handler(self):
+        self.assertEqual(len(self._run("_Transaction__retry", ValueError("not ours"))), 1)
+        self.assertEqual(len(self._run("other", AttributeError("elsewhere"))), 1)

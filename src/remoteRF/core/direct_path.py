@@ -102,12 +102,17 @@ async def cancel_tasks(tasks) -> None:
 
 def quiet_aioice_errors(loop) -> None:
     """A STUN retry on an already-closed socket is not an error worth a
-    traceback in someone's shell; everything else keeps the default handler."""
+    traceback in someone's shell; everything else keeps the default handler.
+
+    The retry fires from a TimerHandle named for aioice's Transaction and
+    dies inside asyncio's own transport code once the socket is gone (an
+    AttributeError on the closed transport or its dropped loop)."""
     default = loop.default_exception_handler
 
     def handler(loop, context):
         exc = context.get("exception")
-        if isinstance(exc, (AttributeError, OSError)) and "Transaction" in repr(context.get("handle", "")):
+        where = repr(context.get("handle", "")) + str(context.get("message", ""))
+        if isinstance(exc, (AttributeError, OSError)) and "Transaction.__retry" in where:
             return
         default(context)
 
