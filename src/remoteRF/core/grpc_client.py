@@ -14,6 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -264,7 +265,8 @@ def _finish(response):
         
     if 'UE' in response.results:
         print(f"UserError: {unmap_arg(response.results['UE'])}")
-        input("Hit enter to continue...")
+        if sys.stdin.isatty():  # a script has nobody to hit enter
+            input("Hit enter to continue...")
         
     if 'Message' in response.results:
         print(f"{unmap_arg(response.results['Message'])}")
