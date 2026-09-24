@@ -56,6 +56,58 @@ WAIT_SECONDS = 3.0  # how long a login or a first device call waits for that att
 RETRY_SECONDS = 30.0
 IDLE_SECONDS = 600
 SLEEP_CHECK_SECONDS = 5.0  # how often the path looks for a system sleep it slept through
+async def close_ice(ice) -> None:
+    """Close an aioice Connection without the library's after-close noise.
+
+    A cancelled ``connect()`` (a punch that timed out) never reaches aioice's
+    own "cancel remaining checks" loop, so its check tasks keep running and
+    its STUN timers stay armed against sockets close() is about to take. Stop
+    both before closing."""
+    # Cancel the connectivity checks first. Failing their STUN transactions
+    # instead only makes aioice start replacement checks, which then hang on
+    # a closed socket and die "pending" when they are collected.
+    checks = [pair.task for pair in list(getattr(ice, "_check_list", [])) if pair.task is not None]
+    for task in checks:
+        task.cancel()
+    if checks:
+        await asyncio.gather(*checks, return_exceptions=True)
+    for protocol in list(getattr(ice, "_protocols", [])):
+        for transaction in list(getattr(protocol, "transactions", {}).values()):
+            handle = getattr(transaction, "_Transaction__timeout_handle", None)
+            if handle is not None:
+                handle.cancel()  # a retry would fire on the socket close() is about to take
+    await ice.close()
+
+
+async def cancel_tasks(tasks) -> None:
+    """Cancel these tasks and wait for them to finish.
+
+    A task that is cancelled but never awaited can be collected while still
+    pending, and Python prints a traceback for it that nobody can act on.
+    The caller's own task is never cancelled, so this is safe to call from
+    inside one of the tasks being torn down."""
+    current = asyncio.current_task()
+    tasks = [task for task in tasks if task is not None and task is not current and not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def quiet_aioice_errors(loop) -> None:
+    """A STUN retry on an already-closed socket is not an error worth a
+    traceback in someone's shell; everything else keeps the default handler."""
+    default = loop.default_exception_handler
+
+    def handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, (AttributeError, OSError)) and "Transaction" in repr(context.get("handle", "")):
+            return
+        default(context)
+
+    loop.set_exception_handler(handler)
+
+
 STUN = ("stun.l.google.com", 19302)
 STUN_SECONDS = 1.5  # a STUN server answers in milliseconds or not at all
 
@@ -181,6 +233,7 @@ class DirectPath:
         self._stun = stun
         self._id = secrets.token_hex(8)  # tells this process's path from the session's others
         self._loop = asyncio.new_event_loop()
+        quiet_aioice_errors(self._loop)
         self._thread = threading.Thread(
             target=self._loop.run_forever, name="remoterf-direct", daemon=True
         )
@@ -262,9 +315,7 @@ class DirectPath:
                 self._task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._task
-            for task in asyncio.all_tasks():
-                if task is not asyncio.current_task():
-                    task.cancel()
+            await cancel_tasks(asyncio.all_tasks())
 
         with contextlib.suppress(Exception):
             asyncio.run_coroutine_threadsafe(cancel(), self._loop).result(5)
@@ -391,17 +442,16 @@ class DirectPath:
         reply = asyncio.ensure_future(read_frame(reader))
         dead = asyncio.ensure_future(self._dead.wait())
         done, _ = await asyncio.wait({reply, dead}, return_when=asyncio.FIRST_COMPLETED)
-        dead.cancel()
+        await cancel_tasks((dead,))
         if reply not in done:
-            reply.cancel()
+            await cancel_tasks((reply,))
             raise ConnectionError("direct path died mid-call")
         return reply.result()
 
     async def _teardown(self) -> None:
         if self._dead is not None:
             self._dead.set()  # an in-flight call fails now rather than hanging
-        for task in self._tasks:
-            task.cancel()
+        await cancel_tasks(self._tasks)
         self._tasks = []
         if self._protocol is not None:
             self._protocol.close()
@@ -411,7 +461,7 @@ class DirectPath:
             self._transport.close()
             self._transport = None
         if self._ice is not None:
-            await self._ice.close()
+            await close_ice(self._ice)
             self._ice = None
         self.remote = None
 

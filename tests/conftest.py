@@ -21,4 +21,9 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.delenv("REMOTERF_ADDR", raising=False)
     monkeypatch.delenv("REMOTERF_CA_CERT", raising=False)
     os.environ.pop("REMOTERF_TLS_SERVER_NAME", None)
+    # Logins ask for the Terms once per HOME; tests start already agreed and
+    # opt back in where the prompt itself is under test.
+    from remoteRF.config.config import remember_tos_agreement
+
+    remember_tos_agreement()
     yield home

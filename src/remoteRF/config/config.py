@@ -173,20 +173,56 @@ def _print_config_summary(host: str, grpc_port: int, cert_port: int, ca_out: Pat
     _print_separator()
 
 
-def _confirm_tos() -> bool:
+def _confirm_tos(question: str = "Continue with configuration? [y/N]: ",
+                 cancelled: str = "Configuration cancelled.") -> bool:
     _print_separator()
     _print_tos_notice()
     _print_separator()
     try:
-        reply = input("Continue with configuration? [y/N]: ").strip().lower()
-    except KeyboardInterrupt:
-        print("\nConfiguration cancelled.")
-        return False
-    except EOFError:
-        print("\nConfiguration cancelled.")
+        reply = input(question).strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{cancelled}")
         return False
     print()
     return reply in {"y", "yes"}
+
+
+# The one remembered agreement, for logins. A registration always asks anew
+# and forgets this first, so a declined or abandoned `-r` means the next
+# login asks again.
+def _tos_agreement_path():
+    from ..deployment.state import root
+
+    return root() / "tos-agreed.json"
+
+
+def tos_agreed() -> bool:
+    return _tos_agreement_path().exists()
+
+
+def remember_tos_agreement() -> None:
+    from datetime import datetime, timezone
+
+    from ..deployment.state import private_write
+
+    private_write(_tos_agreement_path(), {"agreed_at": datetime.now(timezone.utc).isoformat()})
+
+
+def forget_tos_agreement() -> None:
+    try:
+        _tos_agreement_path().unlink()
+    except FileNotFoundError:
+        pass
+
+
+def require_tos_for_login() -> bool:
+    """Ask once, then remember -- until a registration clears it."""
+    if tos_agreed():
+        return True
+    if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ", "Login cancelled."):
+        return False
+    remember_tos_agreement()
+    return True
 
 def configure(host: str, port: int, cert_port: int) -> int:
     # Basic validation

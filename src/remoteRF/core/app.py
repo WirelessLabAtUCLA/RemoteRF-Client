@@ -19,6 +19,7 @@ from ..common.utils import *
 
 import getpass
 import os
+import re
 import datetime
 import time
 import ast
@@ -193,17 +194,23 @@ def _consume_enrollment_code(policy):
 
 
 def _account_command(command):
+    global pending_enrollment_code
     policy = account.backend.capabilities['registration_policy'] if account.backend else local_capabilities()['registration_policy']
     if command in ('r', 'register'):
         if not policy['enabled']:
             raise AccountBackendError('Registration is unavailable at this home')
         printf(f"Register at {_home_name()}", (Sty.BOLD, Sty.BLUE))
         account.enrollment_code = _consume_enrollment_code(policy)
-        account.username = _ask('Username') if policy['username_required'] else ''
-        account.password = _password_confirmation(enforce_policy=account.is_https_home)
-        account.email = _ask('Email') if policy['email_required'] else ''
-        if not account.create_user():
-            raise AccountBackendError('Registration failed')
+        try:
+            account.username = _ask('Username') if policy['username_required'] else ''
+            account.password = _password_confirmation(enforce_policy=account.is_https_home)
+            account.email = _ask('Email') if policy['email_required'] else ''
+            if not account.create_user():
+                raise AccountBackendError('Registration failed')
+        except BaseException:
+            # The code was fine; only the details failed. Keep it for the retry.
+            pending_enrollment_code = account.enrollment_code or None
+            raise
         # An HTTPS home still needs a login for a session; a direct deployment
         # is usable as soon as no verification stands in the way.
         done = not policy['email_verification_required'] and not account.is_https_home
@@ -724,19 +731,90 @@ def cancel_my_reservation():
     else:
         print("Aborting. A non integer key was given.")
 
+_PARTNER_LABEL = re.compile(r"^(?P<name>.*) @(?P<lab>.+?) \((?P<state>[^)]*)\)$")
+_LOCAL_LABEL = re.compile(r"^(?P<name>.*) \((?P<state>[^)]*)\)$")
+
+
+def _native_device_rows():
+    """The home's devices plus any a partner lab shares with us, grouped by
+    lab (home first). The server's ids stay internal; the shell numbers them."""
+    data = account.get_devices()
+    if 'ace' in data.results:
+        raise RuntimeError(unmap_arg(data.results['ace']))
+    home = (current_route.get('home') or {}).get('display_name') if current_route else None
+    home = home or home_name or _home_name()
+    rows = []
+    for key in sorted(data.results, key=int):
+        label = str(unmap_arg(data.results[key]))
+        partner = _PARTNER_LABEL.match(label)
+        local = _LOCAL_LABEL.match(label)
+        if partner:
+            rows.append({"id": int(key), "name": partner["name"], "lab": partner["lab"], "state": partner["state"], "away": True})
+        elif local:
+            rows.append({"id": int(key), "name": local["name"], "lab": home, "state": local["state"], "away": False})
+        else:
+            rows.append({"id": int(key), "name": label, "lab": home, "state": "", "away": False})
+    rows.sort(key=lambda r: (r["away"], r["lab"], r["name"], r["id"]))
+    return rows
+
+
+LAB_PICKER_MIN_DEVICES = 10
+
+
+def _pick_lab(rows):
+    """With many devices across several labs, narrow to one lab first: a
+    numbered list of labs with their device counts. Returns the kept rows,
+    or None if the user backed out."""
+    labs = []
+    for row in rows:
+        if row["lab"] not in labs:
+            labs.append(row["lab"])
+    if len(rows) <= LAB_PICKER_MIN_DEVICES or len(labs) < 2:
+        return rows
+    printf("Labs:", (Sty.BOLD, Sty.BLUE))
+    for index, lab in enumerate(labs, 1):
+        count = sum(1 for row in rows if row["lab"] == lab)
+        printf(f"{index}.", Sty.CYAN, f"  @{lab}", (Sty.BOLD, Sty.MAGENTA),
+               f"  ({count} device{'s' if count != 1 else ''})", Sty.GRAY)
+    pick = session.prompt(stylize("Which lab? (number, Enter for all): ", Sty.DEFAULT)).strip()
+    if not pick:
+        return rows
+    if not pick.isdigit() or not 1 <= int(pick) <= len(labs):
+        printf("Pick a number from the list.", Sty.WARNING)
+        return None
+    chosen = labs[int(pick) - 1]
+    return [row for row in rows if row["lab"] == chosen]
+
+
+def _print_native_devices(rows, *, numbered=False):
+    printf("Devices:", (Sty.BOLD, Sty.BLUE))
+    lab = None
+    for index, row in enumerate(rows, 1):
+        if row["lab"] != lab:
+            lab = row["lab"]
+            printf(f"  @{lab}", (Sty.BOLD, Sty.MAGENTA))
+        prefix = (f"{index}.", Sty.CYAN, " ") if numbered else ()
+        printf(*prefix, "    Device Name: " if not numbered else "  Device Name: ", Sty.GRAY,
+               row["name"], Sty.DEFAULT, f" ({row['state']})" if row["state"] else "", Sty.GRAY)
+
+
 def devices():
     if account.is_https_home:
         _federated_devices()
         return
-    data = account.get_devices()
-    if 'ace' in data.results:
-        print(f"Error: {unmap_arg(data.results['ace'])}")
+    try:
+        rows = _native_device_rows()
+    except RuntimeError as exc:
+        print(f"Error: {exc}")
         return
-    printf("Devices:", (Sty.BOLD, Sty.BLUE))
-    
-    for key in sorted(data.results, key=int):
-        printf("Device ID: ", Sty.GRAY, f'{key}', Sty.MAGENTA, " Device Name: ", Sty.GRAY, f"{unmap_arg(data.results[key])}", Sty.DEFAULT)
-        
+    if not rows:
+        printf("No devices available for your permission level.", Sty.WARNING)
+        return
+    rows = _pick_lab(rows)
+    if rows is None:
+        return
+    _print_native_devices(rows)
+
 
 def get_datetime(question:str):
     timestamp = session.prompt(stylize(f'{question}', Sty.DEFAULT, ' (YYYY-MM-DD HH:MM): ', Sty.GRAY))
@@ -747,8 +825,19 @@ def reserve():
         if account.is_https_home:
             _federated_reserve()
             return
-        id = session.prompt(stylize("Enter the device ID you would like to reserve: ", Sty.DEFAULT))
-        token = account.reserve_device(int(id), get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
+        rows = _native_device_rows()
+        if not rows:
+            printf("No devices available for your permission level.", Sty.WARNING)
+            return
+        rows = _pick_lab(rows)
+        if rows is None:
+            return
+        _print_native_devices(rows, numbered=True)
+        pick = session.prompt(stylize("Enter the number of the device to reserve: ", Sty.DEFAULT)).strip()
+        if not pick.isdigit() or not 1 <= int(pick) <= len(rows):
+            printf("Pick a number from the list.", Sty.WARNING)
+            return
+        token = account.reserve_device(rows[int(pick) - 1]["id"], get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
         if token != '':
             printf(f"Reservation successful. Your Token -> ", Sty.BOLD, f"{token}", Sty.BG_GREEN)
             printf(f"Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one. ", Sty.DEFAULT)
@@ -962,6 +1051,18 @@ def perms():
         
 def enroll(code=None):
     code = code or session.prompt(stylize("Enter your enrollment code: ", Sty.DEFAULT))
+    # Codes are handed out as <lab>/<code>; the lab part only says where to
+    # register. Here we are already logged in somewhere, so strip it -- and
+    # say so if it names a different lab than this one.
+    try:
+        from remoteRF.deployment import homes
+
+        host, code = homes.parse_code(code)
+    except Exception:  # noqa: BLE001 - not in that form; send as typed
+        host = None
+    if host and home_name and homes.home_name_for(host) != home_name:
+        printf(f"That code is for {host}, not {home_name}. Register there with: remoterf -r", Sty.WARNING)
+        return False
     account.enrollment_code = code
     data = account.set_enroll()
 

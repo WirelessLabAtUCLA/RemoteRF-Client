@@ -299,7 +299,9 @@ def run_cli(argv, monkeypatch, **patches):
 def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
     reachable["ucla.global.remoterf.net"] = CERT
     monkeypatch.setattr(homes, "discover", lambda host, **kw: document())
-    monkeypatch.setattr("builtins.input", lambda *_: "ucla/QEHN7")
+    # Every `-r` starts with the Terms; answer them, then hand over the code.
+    answers = iter(["y", "ucla/QEHN7"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     shell = mock.Mock(return_value=0)
 
     assert run_cli(["-r"], monkeypatch, _account_shell=shell) == 0
@@ -313,12 +315,32 @@ def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
 
 
 def test_a_blank_code_is_refused_and_global_has_its_own_spelling(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda *_: "")
+    answers = iter(["y", ""])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers, ""))
     used_global = mock.Mock(return_value=0)
     assert run_cli(["-r"], monkeypatch, _use_global=used_global) == 2
     used_global.assert_not_called()
     assert run_cli(["-r", "global"], monkeypatch, _use_global=used_global) == 0
     used_global.assert_called_once_with(register=True)
+
+
+def test_declining_the_terms_stops_registration_before_any_code(monkeypatch):
+    from remoteRF.config import config as cfg
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(AssertionError(prompt))
+                        if "code" in prompt.lower() else "n")
+    assert cfg.tos_agreed()
+    assert run_cli(["-r"], monkeypatch, _account_shell=mock.Mock()) == 1
+    # Starting a registration forgets the old agreement: the next login asks
+    # again, and a `y` there is remembered.
+    assert not cfg.tos_agreed()
+    answers = iter(["y"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    shell = mock.Mock(return_value=0)
+    assert run_cli(["-l"], monkeypatch, _account_shell=shell) == 0
+    assert cfg.tos_agreed()
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(AssertionError(prompt)))
+    assert run_cli(["-l"], monkeypatch, _account_shell=shell) == 0  # remembered: no prompt
 
 
 def test_login_resumes_the_last_target(monkeypatch, reachable):

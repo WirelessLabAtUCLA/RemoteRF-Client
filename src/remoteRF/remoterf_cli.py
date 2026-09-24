@@ -317,9 +317,19 @@ def _register() -> int:
 
     from remoteRF.deployment import homes
 
+    from remoteRF.config.config import _confirm_tos, forget_tos_agreement, remember_tos_agreement
+
     # The banner opens the session; the target is not known yet, so the shell
     # below must not print it a second time.
     print_client_banner(_installed_version(), server="")
+    # Every registration is a fresh agreement, whoever is at the keyboard --
+    # and starting one forgets the old agreement, so backing out here means
+    # the next login asks too.
+    forget_tos_agreement()
+    if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ",
+                        "Registration cancelled."):
+        return 1
+    remember_tos_agreement()
     try:
         entered = input('Enrollment code: ').strip()
     except (EOFError, KeyboardInterrupt):
@@ -349,8 +359,11 @@ def _register() -> int:
 
 
 def _login(target: str | None) -> int:
+    from remoteRF.config.config import require_tos_for_login
     from remoteRF.deployment import homes
 
+    if not require_tos_for_login():
+        return 1
     homes.migrate_legacy_target()
     if target is None:
         last = homes.last_target()
