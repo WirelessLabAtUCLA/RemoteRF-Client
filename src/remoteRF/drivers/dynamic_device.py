@@ -96,12 +96,14 @@ def fetch_idl(
     federated = is_global_ref(token) or is_global_ref(device_id)
     if token is not None and prefer_v2 and not federated:
         from .dynamic_v2 import fetch_schema_v2
-        from ..core.v2_errors import RemoteRFProtocolError, RemoteRFTransportError
+        from ..core.v2_errors import RemoteRFProtocolError, RemoteRFReservationError, RemoteRFTransportError
 
         try:
             return fetch_schema_v2(str(token))
-        except RemoteRFProtocolError:
-            # The selected device may only publish v1 (for example Pluto).
+        except (RemoteRFProtocolError, RemoteRFReservationError):
+            # The selected device may only publish v1 (for example Pluto), or
+            # the token drives a partner lab's device, which an older home
+            # reports as a dead reservation: v1 decides either way.
             pass
         except RemoteRFTransportError as exc:
             # Old servers report the additive v2 service as UNIMPLEMENTED.
