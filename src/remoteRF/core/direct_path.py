@@ -28,6 +28,11 @@ path of its own, punched to that lab: the offer goes to the home with the
 device token, the home has the owner answer it, and the answer names the
 owner's certificate for the QUIC handshake. Calls with that token take that
 path; everything else still takes the home's.
+
+When the answer names a *fixed port* (a Server with a reachable address
+listening for QUIC on one admitted UDP port), the path dials it like any QUIC
+server -- no punch, so it works behind any NAT -- and claims the session with
+the secret the answer carried. ICE is the fallback.
 """
 
 from __future__ import annotations
@@ -57,6 +62,7 @@ ALPN = "remoterf-direct/1"
 MAX_FRAME = 100 * 1024 * 1024  # the gRPC message ceiling
 ICE_SECONDS = 5.0
 QUIC_SECONDS = 3.0
+FIXED_SECONDS = 2.0  # a reachable fixed port answers in one round trip; a filtered one never
 SETTLE_SECONDS = 20.0  # gathering, the offer RPC and both budgets: one attempt, worst case
 WAIT_SECONDS = 3.0  # how long a login or a first device call waits for that attempt
 RETRY_SECONDS = 30.0
@@ -252,6 +258,8 @@ class DirectPath:
         self._tasks: list[asyncio.Task] = []
         self._ice: Optional[Connection] = None
         self._transport: Optional[_IceTransport] = None
+        self._fixed_transport = None
+        self.fixed = False  # dialed the Server's fixed port rather than punched
         self._protocol: Optional[QuicConnectionProtocol] = None
         self._dead: Optional[asyncio.Event] = None
         self._wanted: Optional[asyncio.Event] = None  # set when a call needs an idle path back
@@ -287,7 +295,8 @@ class DirectPath:
     def describe(self) -> str:
         if self.state == "ready":
             calls = f" ({self.calls} calls)" if self.calls else ""
-            return f"direct {self.remote[0]}:{self.remote[1]}{calls}"
+            how = ", fixed port" if self.fixed else ""
+            return f"direct {self.remote[0]}:{self.remote[1]}{calls}{how}"
         if self.state == "connecting":
             return "relay (direct path: connecting)"
         if self.state == "idle":
@@ -390,13 +399,6 @@ class DirectPath:
             "candidates": [candidate.to_sdp() for candidate in ice.local_candidates],
         }
         answer = await loop.run_in_executor(None, self._offer, offer)
-        ice.remote_username = str(answer["ufrag"])
-        ice.remote_password = str(answer["pwd"])
-        for sdp in answer["candidates"]:
-            await ice.add_remote_candidate(Candidate.from_sdp(str(sdp)))
-        await ice.add_remote_candidate(None)
-        await asyncio.wait_for(ice.connect(), ICE_SECONDS)
-        peer = peer_address(ice)
 
         # A partner lab's answer names the lab whose certificate to pin.
         server_name = str(answer.get("server_name") or self._server_name)
@@ -406,6 +408,23 @@ class DirectPath:
             idle_timeout=IDLE_SECONDS,
         )
         configuration.load_verify_locations(cadata=ca_pem)
+
+        if answer.get("udp") and answer.get("session"):
+            try:
+                await self._dial_fixed(answer, configuration)
+            except Exception as exc:  # noqa: BLE001 - filtered or wrong: the punch is next
+                self.reason = f"fixed port: {type(exc).__name__}: {exc}"
+            else:
+                await close_ice(ice)
+                self._ice = None
+                return
+        ice.remote_username = str(answer["ufrag"])
+        ice.remote_password = str(answer["pwd"])
+        for sdp in answer["candidates"]:
+            await ice.add_remote_candidate(Candidate.from_sdp(str(sdp)))
+        await ice.add_remote_candidate(None)
+        await asyncio.wait_for(ice.connect(), ICE_SECONDS)
+        peer = peer_address(ice)
         protocol = _Protocol(QuicConnection(configuration=configuration))
         self._transport = _IceTransport(ice)
         protocol.connection_made(self._transport)
@@ -420,6 +439,35 @@ class DirectPath:
         except ConnectionError:
             raise ConnectionError(f"QUIC handshake refused: {protocol.terminated}") from None
         self._protocol, self.remote = protocol, peer
+
+    async def _dial_fixed(self, answer: dict, configuration: QuicConfiguration) -> None:
+        """QUIC straight to the Server's fixed port, then the session hello."""
+        loop = asyncio.get_running_loop()
+        host, port = str(answer["udp"]).rsplit(":", 1)
+        infos = await loop.getaddrinfo(host, int(port), type=socket.SOCK_DGRAM)
+        peer = infos[0][4][:2]
+        protocol = _Protocol(QuicConnection(configuration=configuration))
+        transport, _ = await loop.create_datagram_endpoint(lambda: protocol, local_addr=("0.0.0.0", 0))
+        try:
+            protocol.connect(peer)
+            await asyncio.wait_for(protocol.wait_connected(), FIXED_SECONDS)
+            reader, writer = await protocol.create_stream()
+            writer.write(frame(json.dumps({"session": answer["session"]}).encode()))
+            writer.write_eof()
+            reply = json.loads(await asyncio.wait_for(read_frame(reader), FIXED_SECONDS))
+            if not reply.get("ok"):
+                raise PathError(str(reply.get("a", "session refused")))
+        except BaseException:
+            protocol.close()
+            transport.close()
+            raise
+        self._fixed_transport = transport
+        self._tasks = [
+            asyncio.ensure_future(self._watch(protocol)),
+            asyncio.ensure_future(self._watch_sleep()),
+        ]
+        self._protocol, self.remote = protocol, peer
+        self.fixed = True
 
     async def _pump(self, ice: Connection, protocol: QuicConnectionProtocol, peer) -> None:
         try:
@@ -478,10 +526,14 @@ class DirectPath:
         if self._transport is not None:
             self._transport.close()
             self._transport = None
+        if self._fixed_transport is not None:
+            self._fixed_transport.close()
+            self._fixed_transport = None
         if self._ice is not None:
             await close_ice(self._ice)
             self._ice = None
         self.remote = None
+        self.fixed = False
 
 
 # ---- this process's path ----
