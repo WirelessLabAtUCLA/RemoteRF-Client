@@ -1144,6 +1144,18 @@ class DriverInstallPathTests(unittest.TestCase):
         self.assertNotIn("build_uhd_bindings", text)
         self.assertEqual(direct_path.partner_of("partner-token"), "otheruni")
 
+    def test_a_partner_v2_answer_installs_the_v2_driver(self):
+        from remoteRF.core import direct_path
+
+        self.addCleanup(direct_path._partner_owners.clear)
+        _, text, _ = self._run(
+            lambda plain: self.V2,
+            lambda: dynamic_device.install_driver(token="partner-token", device_id=1000015),
+            extra={"federated": map_arg("otheruni")},
+        )
+        self.assertIn("build_uhd_bindings", text)
+        self.assertEqual(direct_path.partner_of("partner-token"), "otheruni")
+
     def test_rewriting_a_driver_drops_the_cached_package_so_reimport_works(self):
         sys.modules["remoteRF.drivers.usrp"] = types.ModuleType("remoteRF.drivers.usrp")
         sys.modules["remoteRF.drivers.usrp.usrp_remote"] = types.ModuleType("remoteRF.drivers.usrp.usrp_remote")

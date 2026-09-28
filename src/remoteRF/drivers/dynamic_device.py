@@ -139,8 +139,10 @@ def fetch_idl(
             from ..core import direct_path
 
             direct_path.mark_partner(str(token), str(unmap_arg(resp.results['federated'])))
-        # A partner's device is only driven over the v1 plane.
-        schema["federated"] = True
+        if str(schema.get("schema_version")) != "2.0":
+            # A partner's v1 answer may replace an installed v2 driver (see
+            # _write_v1_driver_files); a v2 schema is hashed, so left as is.
+            schema["federated"] = True
     return schema
 
 
