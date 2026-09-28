@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "remoterf"
-version = "2.1.0.dev7"
+version = "2.1.0"
 description = "A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts."
 readme = "README.md"
 license = "GPL-3.0-or-later"
