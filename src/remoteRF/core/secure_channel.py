@@ -36,6 +36,15 @@ import grpc
 DEFAULT_OPTIONS: Tuple[Tuple[str, int], ...] = (
     ("grpc.max_send_message_length", 100 * 1024 * 1024),
     ("grpc.max_receive_message_length", 100 * 1024 * 1024),
+    # A call in flight when the network changes under it (a laptop roaming to
+    # another access point) fails within ~30 s instead of waiting out TCP's
+    # own retransmission timeout, ~9 minutes on macOS. Pings go out only while
+    # a call is open, at most two per quiet stretch (gRPC's default), which
+    # even a Server that never raised its ping allowance accepts.
+    ("grpc.keepalive_time_ms", 20_000),
+    ("grpc.keepalive_timeout_ms", 10_000),
+    # The ack deadline a keepalive ping actually waits on (default 60 s).
+    ("grpc.http2.ping_timeout_ms", 10_000),
 )
 
 

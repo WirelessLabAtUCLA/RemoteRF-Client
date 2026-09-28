@@ -65,6 +65,16 @@ class GrpcClientTargetTests(unittest.TestCase):
         target = secure_channel.call_args[0][0]
         self.assertEqual(target, "192.168.1.20:12321")
 
+    def test_a_call_on_a_dead_network_fails_within_half_a_minute(self):
+        _, secure_channel = self._import_with_env("192.168.1.20:12321")
+
+        options = dict(secure_channel.call_args.kwargs["options"])
+        self.assertLessEqual(
+            options["grpc.keepalive_time_ms"] + options["grpc.http2.ping_timeout_ms"], 30_000
+        )
+        # Idle channels stay quiet: pings only while a call is open.
+        self.assertNotIn("grpc.keepalive_permit_without_calls", options)
+
 
 if __name__ == "__main__":
     unittest.main()
