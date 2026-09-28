@@ -132,13 +132,16 @@ def fetch_idl(
 
     if 'error' in resp.results:
         raise RuntimeError(f"IDL fetch failed: {unmap_arg(resp.results['error'])}")
-    if token is not None and 'federated' in resp.results:
-        # A partner lab answered: device calls with this token can punch to it.
-        from ..core import direct_path
+    schema = json.loads(unmap_arg(resp.results['schema']))
+    if 'federated' in resp.results:
+        if token is not None:
+            # A partner lab answered: device calls with this token can punch to it.
+            from ..core import direct_path
 
-        direct_path.mark_partner(str(token), str(unmap_arg(resp.results['federated'])))
-
-    return json.loads(unmap_arg(resp.results['schema']))
+            direct_path.mark_partner(str(token), str(unmap_arg(resp.results['federated'])))
+        # A partner's device is only driven over the v1 plane.
+        schema["federated"] = True
+    return schema
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1422,9 +1425,10 @@ def _write_v1_driver_files(schema: dict) -> Path:
     ) = _schema_maps(schema)
     pkg_dir = _DRIVERS_DIR / device_type
     remote_path = pkg_dir / f"{device_type}_remote.py"
-    if remote_path.exists() and _is_v2_driver(remote_path):
+    if remote_path.exists() and _is_v2_driver(remote_path) and not schema.get("federated"):
         # The server answered v1 (older server, or a device that no longer
         # publishes v2); don't trade an installed Dynamic v2 driver for it.
+        # A partner's device has only the v1 plane, so its answer does.
         return pkg_dir
     pkg_dir.mkdir(exist_ok=True)
     remote_path.write_text(_codegen(schema), encoding="utf-8")

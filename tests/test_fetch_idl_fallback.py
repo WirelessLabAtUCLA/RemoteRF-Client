@@ -29,7 +29,7 @@ def test_a_reservation_error_from_v2_falls_back_to_v1_and_marks_the_partner(monk
     monkeypatch.setattr(dynamic_v2, "fetch_schema_v2", refuse)
     direct_path._partner_owners.clear()
     calls = _v1(monkeypatch, {"federated": map_arg("owner-uuid")})
-    assert dynamic_device.fetch_idl(token="tok", prefer_v2=True) == {"device_type": "sim_sdr"}
+    assert dynamic_device.fetch_idl(token="tok", prefer_v2=True) == {"device_type": "sim_sdr", "federated": True}
     assert calls == ["IDL:get_drivers"] and direct_path.partner_of("tok") == "owner-uuid"
 
 

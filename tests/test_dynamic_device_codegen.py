@@ -1079,7 +1079,7 @@ class DriverInstallPathTests(unittest.TestCase):
         body = json.dumps(cls.V2, sort_keys=True, separators=(",", ":"))
         cls.V2 = dict(cls.V2, schema_hash="sha256:" + hashlib.sha256(body.encode()).hexdigest())
 
-    def _run(self, respond, call):
+    def _run(self, respond, call, extra=None):
         seen = []
 
         class Response:
@@ -1089,7 +1089,7 @@ class DriverInstallPathTests(unittest.TestCase):
         def rpc_client(function_name, args):
             plain = {k: unmap_arg(v) for k, v in args.items()}
             seen.append(plain)
-            return Response({"schema": map_arg(json.dumps(respond(plain)))})
+            return Response({"schema": map_arg(json.dumps(respond(plain))), **(extra or {})})
 
         def no_v2_channel(token):
             # A token-only fetch tries the v2 channel first; v1 decides here.
@@ -1130,6 +1130,19 @@ class DriverInstallPathTests(unittest.TestCase):
         seen, text, _ = self._run(lambda plain: self.V1, call)
         self.assertEqual(len(seen), 2)
         self.assertIn("build_uhd_bindings", text)
+
+    def test_a_partner_v1_answer_replaces_an_installed_v2_driver(self):
+        from remoteRF.core import direct_path
+
+        self.addCleanup(direct_path._partner_owners.clear)
+
+        def call():
+            dynamic_device._write_driver_files(self.V2)
+            dynamic_device.install_driver(token="partner-token", device_id=1000015)
+
+        _, text, _ = self._run(lambda plain: self.V1, call, extra={"federated": map_arg("otheruni")})
+        self.assertNotIn("build_uhd_bindings", text)
+        self.assertEqual(direct_path.partner_of("partner-token"), "otheruni")
 
     def test_rewriting_a_driver_drops_the_cached_package_so_reimport_works(self):
         sys.modules["remoteRF.drivers.usrp"] = types.ModuleType("remoteRF.drivers.usrp")
