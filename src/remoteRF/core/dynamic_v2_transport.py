@@ -82,15 +82,21 @@ class DynamicV2Transport:
         control_stub=None,
         sample_stub=None,
         control_timeout_sec: float = 30.0,
+        open_timeout_sec: float = 120.0,
         stream_timeout_margin_sec: float = 5.0,
     ):
         self.control_timeout_sec = float(control_timeout_sec)
+        # A cold USRP open loads firmware/FPGA (B2xx re-enumerates on USB),
+        # which can outlast the normal control deadline.
+        self.open_timeout_sec = float(open_timeout_sec)
         self.stream_timeout_margin_sec = float(stream_timeout_margin_sec)
         if (
             not math.isfinite(self.control_timeout_sec)
             or self.control_timeout_sec <= 0
         ):
             raise ValueError("control_timeout_sec must be finite and positive")
+        if not math.isfinite(self.open_timeout_sec) or self.open_timeout_sec <= 0:
+            raise ValueError("open_timeout_sec must be finite and positive")
         if (
             not math.isfinite(self.stream_timeout_margin_sec)
             or self.stream_timeout_margin_sec <= 0
@@ -107,9 +113,9 @@ class DynamicV2Transport:
         self.control = control_stub
         self.samples = sample_stub
 
-    def _call(self, fn, request):
+    def _call(self, fn, request, *, timeout: float | None = None):
         try:
-            return fn(request, timeout=self.control_timeout_sec)
+            return fn(request, timeout=timeout or self.control_timeout_sec)
         except grpc.RpcError as exc:
             raise RemoteRFTransportError(
                 f"Dynamic v2 RPC failed: {exc.code().name}: {exc.details()}",
@@ -173,6 +179,7 @@ class DynamicV2Transport:
                 control_protocol_version=CONTROL_PROTOCOL_VERSION,
                 streaming_protocol_version=STREAMING_PROTOCOL_VERSION,
             ),
+            timeout=self.open_timeout_sec,
         )
         raise_for_envelope(response.error)
         try:

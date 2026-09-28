@@ -711,6 +711,29 @@ class DynamicV2Tests(unittest.TestCase):
                 control_timeout_sec=0,
             )
         with self.assertRaises(ValueError):
+            DynamicV2Transport(
+                control_stub=object(),
+                sample_stub=CapturingSampleStub(),
+                open_timeout_sec=float("inf"),
+            )
+
+    def test_open_session_uses_the_longer_open_deadline(self):
+        seen = []
+
+        class ControlStub:
+            def OpenSession(self, request, timeout=None):
+                seen.append(timeout)
+                raise RemoteRFTransportError("stop after deadline capture")
+
+        transport = DynamicV2Transport(
+            control_stub=ControlStub(),
+            sample_stub=CapturingSampleStub(),
+            control_timeout_sec=2.5,
+        )
+        with self.assertRaises(RemoteRFTransportError):
+            transport.open_session("token", "hash")
+        self.assertEqual(seen, [120.0])
+        with self.assertRaises(ValueError):
             transport._sample_call(
                 [],
                 operation_timeout_sec=float("nan"),
