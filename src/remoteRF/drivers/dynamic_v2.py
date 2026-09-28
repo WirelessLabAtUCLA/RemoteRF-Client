@@ -820,6 +820,7 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
         Range=uhd_v2.Range,
         MetaRange=uhd_v2.MetaRange,
         TuneRequest=uhd_v2.TuneRequest,
+        TuneRequestPolicy=uhd_v2.TuneRequestPolicy,
         TuneResult=uhd_v2.TuneResult,
         StreamCMD=uhd_v2.StreamCMD,
         StreamMode=uhd_v2.StreamMode,
@@ -851,6 +852,7 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
             time_spec=uhd_v2.TimeSpec,
             device_addr=uhd_v2.DeviceAddr,
             tune_request=uhd_v2.TuneRequest,
+            tune_request_policy=uhd_v2.TuneRequestPolicy,
             tune_result=uhd_v2.TuneResult,
         )
     )

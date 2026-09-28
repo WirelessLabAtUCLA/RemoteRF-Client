@@ -230,6 +230,10 @@ class TuneRequestPolicy(str, Enum):
     NONE = "NONE"
     AUTO = "AUTO"
     MANUAL = "MANUAL"
+    # UHD's own spellings: uhd.types.TuneRequestPolicy.manual
+    none = "NONE"
+    auto = "AUTO"
+    manual = "MANUAL"
 
 
 class TuneRequest(_ValueObject):
@@ -246,6 +250,11 @@ class TuneRequest(_ValueObject):
         self.dsp_freq = 0.0
         self.rf_freq_policy = TuneRequestPolicy.AUTO
         self.dsp_freq_policy = TuneRequestPolicy.AUTO
+        if self.lo_offset is not None:
+            # As UHD's tune_request_t(target, lo_off): the RF LO sits manually
+            # at target + offset and the DSP takes up the difference.
+            self.rf_freq_policy = TuneRequestPolicy.MANUAL
+            self.rf_freq = self.target_freq + self.lo_offset
         self.args = DeviceAddr()
 
     def as_payload(self):

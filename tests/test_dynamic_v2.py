@@ -473,6 +473,12 @@ class DynamicV2Tests(unittest.TestCase):
         self.assertEqual(now.get_real_secs(), 2.5)
         self.assertEqual((uhd.types.TimeSpec(1, 0.25) + 1).get_real_secs(), 2.25)
         self.assertEqual(uhd.types.DeviceAddr("type=b200,serial=abc")["serial"], "abc")
+        # TuneRequest(f, lo) is UHD's: the RF LO sits manually at f + lo.
+        offset = uhd.types.TuneRequest(915e6, 5e6).as_payload()
+        self.assertEqual((offset["rf_freq_policy"], offset["rf_freq"]), ("MANUAL", 920e6))
+        plain = uhd.types.TuneRequest(915e6).as_payload()
+        self.assertEqual((plain["rf_freq_policy"], plain["rf_freq"]), ("AUTO", 0.0))
+        self.assertIs(uhd.types.TuneRequestPolicy.manual, uhd.types.TuneRequestPolicy.MANUAL)
         tree = device.get_tree()
         self.assertIsInstance(tree, uhd.property_tree)
         self.assertTrue(tree.exists("/mboards/0"))
