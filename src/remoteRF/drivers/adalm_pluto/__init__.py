@@ -13,4 +13,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from . import pluto_remote as adi
+from importlib import import_module as _import_module
+
+from . import adalm_pluto_remote as adi
+from .adalm_pluto_remote import Pluto
+
+__all__ = ["adi", "Pluto"]

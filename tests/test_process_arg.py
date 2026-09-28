@@ -73,6 +73,27 @@ class ProcessArgTests(unittest.TestCase):
                 self.assertTrue(decoded.flags.owndata)
                 np.testing.assert_array_equal(decoded, original)
 
+    def test_iq16_wire_encoding_round_trips_integer_iq(self):
+        from remoteRF.common.utils.process_arg import IQ16, fits_iq16, map_iq16
+
+        samples = np.array([2047 - 2048j, -1 + 1j, 0j, 32767 + 0j], dtype=np.complex128)
+        arg = map_iq16(samples)
+        self.assertEqual(arg.ndarray_value.dtype, IQ16)
+        self.assertEqual(list(arg.ndarray_value.shape), [4])
+        self.assertEqual(len(arg.ndarray_value.data), 4 * 4)  # a quarter of complex128
+        decoded = unmap_arg(arg)
+        self.assertEqual(decoded.dtype, np.complex64)
+        np.testing.assert_array_equal(decoded, samples.astype(np.complex64))
+        # Not integer IQ, or out of int16 range: refused, so nothing is quantised silently.
+        for bad in (np.array([0.5 + 0j]), np.array([40000 + 0j]), np.array([1.0, 2.0]), "x"):
+            self.assertFalse(fits_iq16(np.asarray(bad) if not isinstance(bad, str) else bad))
+        with self.assertRaises(ValueError):
+            map_iq16(np.array([0.5 + 0j]))
+        # A short payload is rejected exactly like any other ndarray.
+        arg.ndarray_value.data = arg.ndarray_value.data[:-1]
+        with self.assertRaises(ValueError):
+            unmap_arg(arg)
+
     def test_noncontiguous_array_is_encoded_in_c_order(self):
         original = np.arange(24, dtype=np.float32).reshape(4, 6)[:, ::2]
         self.assertFalse(original.flags.c_contiguous)

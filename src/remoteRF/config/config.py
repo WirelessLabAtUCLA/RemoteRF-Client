@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import shutil
 from pathlib import Path
@@ -67,6 +68,27 @@ def _parse_hostport(s: str) -> Tuple[str, int]:
     if port <= 0 or port > 65535:
         raise ValueError("Port out of range")
     return host, port
+
+
+def _bare_host(host: str) -> str:
+    """Strip IPv6 literal brackets (e.g. '[::1]' -> '::1') for name/address
+    resolution and raw-socket use. IPv4 addresses and DNS hostnames
+    (including plain multi-label names such as ucla.global.remoterf.net)
+    are returned unchanged.
+    """
+    host = host.strip()
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
+def _host_resolves(host: str) -> bool:
+    """Return True if `host` (an IPv4/IPv6 literal or DNS hostname) resolves."""
+    try:
+        socket.getaddrinfo(_bare_host(host), None)
+        return True
+    except socket.gaierror:
+        return False
 
 def _write_env_kv(path: Path, kv: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,20 +173,56 @@ def _print_config_summary(host: str, grpc_port: int, cert_port: int, ca_out: Pat
     _print_separator()
 
 
-def _confirm_tos() -> bool:
+def _confirm_tos(question: str = "Continue with configuration? [y/N]: ",
+                 cancelled: str = "Configuration cancelled.") -> bool:
     _print_separator()
     _print_tos_notice()
     _print_separator()
     try:
-        reply = input("Continue with configuration? [y/N]: ").strip().lower()
-    except KeyboardInterrupt:
-        print("\nConfiguration cancelled.")
-        return False
-    except EOFError:
-        print("\nConfiguration cancelled.")
+        reply = input(question).strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{cancelled}")
         return False
     print()
     return reply in {"y", "yes"}
+
+
+# The one remembered agreement, for logins. A registration always asks anew
+# and forgets this first, so a declined or abandoned `-r` means the next
+# login asks again.
+def _tos_agreement_path():
+    from ..deployment.state import root
+
+    return root() / "tos-agreed.json"
+
+
+def tos_agreed() -> bool:
+    return _tos_agreement_path().exists()
+
+
+def remember_tos_agreement() -> None:
+    from datetime import datetime, timezone
+
+    from ..deployment.state import private_write
+
+    private_write(_tos_agreement_path(), {"agreed_at": datetime.now(timezone.utc).isoformat()})
+
+
+def forget_tos_agreement() -> None:
+    try:
+        _tos_agreement_path().unlink()
+    except FileNotFoundError:
+        pass
+
+
+def require_tos_for_login() -> bool:
+    """Ask once, then remember -- until a registration clears it."""
+    if tos_agreed():
+        return True
+    if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ", "Login cancelled."):
+        return False
+    remember_tos_agreement()
+    return True
 
 def configure(host: str, port: int, cert_port: int) -> int:
     # Basic validation
@@ -175,6 +233,16 @@ def configure(host: str, port: int, cert_port: int) -> int:
     if port <= 0 or port > 65535:
         print("Error: port out of range", file=sys.stderr)
         return 2
+
+    if not _host_resolves(host):
+        print(
+            "Error: Could not resolve RemoteRF server hostname:\n"
+            f"  {host}\n"
+            "Check the address and your network/DNS connection, then re-run:\n"
+            "  remoterf --config --addr <host:port>",
+            file=sys.stderr,
+        )
+        return 1
 
     grpc_port = int(port)
     cert_port = int(cert_port)
@@ -208,6 +276,15 @@ def configure(host: str, port: int, cert_port: int) -> int:
         "REMOTERF_CA_CERT": str(ca_out),
         "REMOTERF_PROFILE": profile,
     })
+    # This profile is what the "default" home was adopted from. A new address
+    # or a re-fetched CA makes that adoption stale (its pin would now refuse
+    # this very server), so drop it and let the next login adopt this one.
+    try:
+        from ..deployment import homes
+
+        homes.forget_home(profile)
+    except Exception:  # noqa: BLE001 - never fail configuration over bookkeeping
+        pass
 
     _print_config_summary(host, grpc_port, cert_port, ca_out, env_file)
 

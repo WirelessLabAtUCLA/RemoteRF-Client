@@ -163,6 +163,68 @@ health. Remote firmware flashing is deliberately unsupported.
 
 If `pip install` doesn't work, you can clone the [source](https://github.com/WirelessLabAtUCLA/RemoteRF-Client) directly from github.
 
+## RemoteRF Global v0 / Remote Internet Access
+
+By default, RemoteRF assumes you're on the same network as the RemoteRF
+Server, and you configure the client with that server's address:
+
+```bash
+remoterf --config --addr 192.168.1.20:12321
+```
+
+For deployments exposed through the initial RemoteRF Global gateway, the
+same workflow works with a DNS hostname instead of a LAN IP:
+
+```bash
+remoterf --config --addr ucla.global.remoterf.net:12321
+```
+
+The client does not know or care whether `ucla.global.remoterf.net` is a
+directly reachable RemoteRF Server, a LAN server, or a RemoteRF Global v0
+transparent TCP gateway forwarding to a RemoteRF Server elsewhere. From the
+client's perspective, it's simply a RemoteRF Server endpoint identified by
+`host:port` — an IPv4 address, an IPv6 address (bracketed, e.g.
+`[2001:db8::1]:12321`), or a normal DNS hostname all work the same way.
+Certificate bootstrap (`host:cert_port`) and the gRPC connection
+(`host:port`) are both made against whatever hostname you configure — the
+client stores and uses that hostname as-is and never resolves it to an IP
+before saving your configuration, so DNS/IP changes on the server side don't
+require reconfiguration.
+
+**TLS note:** RemoteRF Global v0 does not weaken certificate verification.
+The RemoteRF Server's certificate must include the hostname you connect
+with (e.g. `ucla.global.remoterf.net`) in its Subject Alternative Name
+(SAN) for standard TLS hostname validation to succeed — this is a
+server-side certificate requirement, not a client setting. If you're
+instead connecting through something like Tailscale, where the address you
+dial differs from the identity in the certificate, use the existing
+`REMOTERF_TLS_SERVER_NAME` override described above; it still requires that
+name to be present in the certificate.
+
+v0 is intentionally minimal — it does **not** include RemoteRF Global
+accounts, deployment discovery/selection, federation, NAT traversal, direct
+P2P, automatic routing, or global resource IDs. Those are future versions.
+The client-side software behaves identically whether you point it at a LAN
+server or at a RemoteRF Global v0 endpoint.
+
+### RemoteRF Global v2 Phase-1 development boundary
+
+The disposable Global v1 account-selection and deployment-session client was
+removed at Gate C. The normal CLI supports direct/native gRPC accounts and
+clean HTTPS deployment-home accounts; neither path treats a broker identity,
+username, email, or home token as destination credentials.
+
+Gate G adds permission visibility to the ordinary `perms` command. It renders
+HOME-local groups plus current destination-signed federated groups with their
+contract/version/state and retrieval time. An unreachable destination is
+explicitly labeled as unsigned transport status, never as an authoritative
+empty group result. This works when the HOME has zero devices.
+
+Phase 1 still grants no federated device discovery, reservation, lease,
+session, streaming, RX, TX, or radio access. Production remains unchanged.
+See [deployment accounts](docs/deployment-accounts-v2.md) and
+[identity boundary](docs/gate-c-identity-boundary.md).
+
 <!-- 1. **Clone the repository:**
 ```bash
 git clone https://github.com/WirelessLabAtUCLA/RemoteRF-Client

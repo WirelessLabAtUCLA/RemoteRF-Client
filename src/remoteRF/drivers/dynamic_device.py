@@ -90,19 +90,40 @@ def fetch_idl(
             "schema_hash": "sha256:...",
         }
     """
+    from remoterf_federation_core import is_global_ref
+
+    # A HOME-minted device reference has no direct v2 control channel; the
+    # schema is fetched through the same relayed IDL RPC every driver uses.
+    federated = is_global_ref(token) or is_global_ref(device_id)
+    if token is not None and device_id is None and prefer_v2 and not federated:
+        from .dynamic_v2 import fetch_schema_v2
+        from ..core.v2_errors import RemoteRFProtocolError, RemoteRFReservationError, RemoteRFTransportError
+
+        try:
+            return fetch_schema_v2(str(token))
+        except (RemoteRFProtocolError, RemoteRFReservationError):
+            # The selected device may only publish v1 (for example Pluto), or
+            # the token drives a partner lab's device, which an older home
+            # reports as a dead reservation: v1 decides either way.
+            pass
+        except RemoteRFTransportError as exc:
+            # Old servers report the additive v2 service as UNIMPLEMENTED.
+            if exc.details.get("grpc_code") != "UNIMPLEMENTED":
+                raise
+
     args: dict = {}
     if device_id is not None:
-        args['device_id'] = map_arg(int(device_id))
+        args['device_id'] = map_arg(device_id if is_global_ref(device_id) else int(device_id))
     elif token is not None:
         args['token'] = map_arg(str(token))
     elif device_name is not None:
         args['device_name'] = map_arg(str(device_name))
     else:
         raise ValueError("fetch_idl requires token, device_id, or device_name")
-    if prefer_v2:
-        # One RPC either way: servers that know v2 answer with it when the
-        # device publishes one (also by device_id, which needs no active
-        # reservation); v1-only devices and older servers answer v1.
+    if prefer_v2 and 'token' not in args and not federated:
+        # Servers that know v2 answer with it when the device publishes one
+        # (by device_id, which needs no active reservation); v1-only devices
+        # and older servers answer v1.
         args['schema_versions'] = map_arg(["2.0"])
 
     from ..core.grpc_client import rpc_client
@@ -111,6 +132,11 @@ def fetch_idl(
 
     if 'error' in resp.results:
         raise RuntimeError(f"IDL fetch failed: {unmap_arg(resp.results['error'])}")
+    if token is not None and 'federated' in resp.results:
+        # A partner lab answered: device calls with this token can punch to it.
+        from ..core import direct_path
+
+        direct_path.mark_partner(str(token), str(unmap_arg(resp.results['federated'])))
 
     return json.loads(unmap_arg(resp.results['schema']))
 
@@ -1555,8 +1581,16 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
     )
     device_type = _schema_device_type(schema)
     remote_path = _DRIVERS_DIR / device_type / f"{device_type}_remote.py"
+    init_path = remote_path.with_name("__init__.py")
 
-    if not remote_path.exists():
+    # A shipped legacy package can share the generated package's name; a
+    # reinstall then restores its __init__ while the generated remote module
+    # survives.  Regenerate unless __init__ actually binds the generated module.
+    init_binds_generated = (
+        init_path.exists()
+        and f"from .{device_type}_remote import" in init_path.read_text(encoding="utf-8")
+    )
+    if not remote_path.exists() or not init_binds_generated:
         pkg_dir = _write_driver_files(schema)
         _print_driver_cached(pkg_dir)
         return

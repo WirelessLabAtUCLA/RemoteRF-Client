@@ -1,0 +1,15 @@
+syntax = "proto3";
+package remote_rf;
+import "grpc.proto";
+
+// Optional discovery. Existing GenericRPC/IDL/device protocols are unchanged.
+service DeploymentCapabilitiesV1 {
+  rpc GetCapabilities (DeploymentCapabilitiesRequest) returns (DeploymentCapabilitiesResponse);
+}
+message DeploymentCapabilitiesRequest {
+  string protocol_version = 1;
+}
+message DeploymentCapabilitiesResponse {
+  string capabilities_json = 1;
+  ErrorEnvelope error = 2;
+}

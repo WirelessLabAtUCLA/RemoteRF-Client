@@ -13,18 +13,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import socket
-import getpass
-from pathlib import Path
 import os
-from dotenv import load_dotenv
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import grpc
 from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
+from .secure_channel import build_secure_channel
+from . import direct_path
+from ..deployment.direct import ConnectionProfile, DirectConnectionProfile, resolve_active_profile
 
-_CONFIG_PATH = Path.home() / ".config" / "remoterf-client" / ".env"
 _CONFIG_HELP = (
     "Run:\n"
     "  remoterf --config --addr <host:port>\n"
@@ -33,66 +35,212 @@ _CONFIG_HELP = (
 )
 
 
-def _load_client_config() -> tuple[str, str]:
-    load_dotenv(_CONFIG_PATH)
-    addr = (os.getenv("REMOTERF_ADDR") or "").strip().strip('"').strip("'")
-    ca_path = (os.getenv("REMOTERF_CA_CERT") or "").strip().strip('"').strip("'")
-
-    if not addr or not ca_path:
-        raise RuntimeError(
-            "RemoteRF client is not configured.\n"
-            f"Expected REMOTERF_ADDR and REMOTERF_CA_CERT in:\n  {_CONFIG_PATH}\n"
-            f"{_CONFIG_HELP}"
-        )
-
-    certs_path = Path(ca_path).expanduser()
-    if not certs_path.exists():
-        raise RuntimeError(
-            "RemoteRF client config points to a missing CA certificate.\n"
-            f"REMOTERF_CA_CERT={ca_path}\n"
-            "Re-run RemoteRF client config to fetch the certificate again.\n"
-            f"{_CONFIG_HELP}"
-        )
-
-    return addr, ca_path
+@dataclass
+class _ActiveConnection:
+    profile_key: tuple[str, ...]
+    endpoint: str
+    channel: grpc.Channel
+    stub: grpc_pb2_grpc.GenericRPCStub
 
 
-addr, ca_path = _load_client_config()
+_active_connection: Optional[_ActiveConnection] = None
 
-options = [
-      ('grpc.max_send_message_length', 100 * 1024 * 1024),
-      ('grpc.max_receive_message_length', 100 * 1024 * 1024),
-]
+# Compatibility names. They are populated only when a caller asks for the
+# active connection, rather than forcing direct-mode configuration at import.
+addr = ""
+channel: Optional[grpc.Channel] = None
+stub: Optional[grpc_pb2_grpc.GenericRPCStub] = None
 
-# A server reached over Tailscale may present the same certificate it uses on
-# its public or LAN address. Keep certificate verification enabled while
-# allowing the configured certificate identity to differ from REMOTERF_ADDR.
-tls_server_name = (os.getenv("REMOTERF_TLS_SERVER_NAME") or "").strip()
-if tls_server_name:
-    options.extend(
-        [
-            ("grpc.ssl_target_name_override", tls_server_name),
-            ("grpc.default_authority", tls_server_name),
-        ]
+
+def _legacy_environment_profile() -> Optional[DirectConnectionProfile]:
+    """Support callers that supplied the historic env variables explicitly.
+
+    Normal installs use ``profile.load_direct_profile`` and its `.env` file;
+    this fallback keeps scripted/direct callers working without making a
+    module import read or mutate process configuration.
+    """
+    endpoint = (os.getenv("REMOTERF_ADDR") or "").strip().strip('"').strip("'")
+    ca_value = (os.getenv("REMOTERF_CA_CERT") or "").strip().strip('"').strip("'")
+    if not endpoint or not ca_value:
+        return None
+    return DirectConnectionProfile(
+        grpc_endpoint=endpoint,
+        tls_server_name=(os.getenv("REMOTERF_TLS_SERVER_NAME") or "").strip() or None,
+        ca_path=Path(ca_value).expanduser(),
     )
 
-# Server.crt
-certs_path = Path(ca_path).expanduser().resolve()
-with certs_path.open('rb') as f:
-    trusted_certs = f.read()
-    
-credentials = grpc.ssl_channel_credentials(root_certificates=trusted_certs)
-channel = grpc.secure_channel(addr, credentials, options=options)
-stub = grpc_pb2_grpc.GenericRPCStub(channel)
+
+def _current_profile() -> ConnectionProfile:
+    # Native process configuration remains an explicit device transport override.
+    from ..deployment.state import load_target
+    target = load_target()
+    if target and target['transport'] == 'https-json' and _legacy_environment_profile() is None:
+        raise RuntimeError('Selected HTTPS account home has no local device transport')
+    profile = resolve_active_profile()
+    env_profile = _legacy_environment_profile()
+    if profile is None or (profile.mode == "direct" and env_profile is not None):
+        profile = env_profile or profile
+    if profile is None:
+        raise RuntimeError(
+            "RemoteRF client is not configured.\n"
+            "Expected REMOTERF_ADDR and REMOTERF_CA_CERT in:\n"
+            f"  {Path.home() / '.config' / 'remoterf-client' / '.env'}\n{_CONFIG_HELP}"
+        )
+    if not profile.ca_path.exists():
+        raise RuntimeError(
+            "RemoteRF client config points to a missing CA certificate.\n"
+            f"Re-run RemoteRF client config or select the deployment again.\n{_CONFIG_HELP}"
+        )
+    return profile
+
+
+def _profile_key(profile: ConnectionProfile) -> tuple[str, ...]:
+    ca_stat = profile.ca_path.stat()
+    deployment_id = getattr(profile, "deployment_id", "")
+    return (
+        profile.mode,
+        deployment_id,
+        profile.grpc_endpoint,
+        profile.tls_server_name or "",
+        str(profile.ca_path.resolve()),
+        str(ca_stat.st_mtime_ns),
+        str(ca_stat.st_size),
+    )
+
+
+def close_active_connection() -> None:
+    """Close the cached channel, including when the selected profile changes."""
+    global _active_connection, addr, channel, stub
+    if _active_connection is not None:
+        _active_connection.channel.close()
+    _active_connection = None
+    addr = ""
+    channel = None
+    stub = None
+
+
+def get_active_connection() -> _ActiveConnection:
+    """Resolve the active profile lazily and replace stale channels safely."""
+    global _active_connection, addr, channel, stub
+    profile = _current_profile()
+    key = _profile_key(profile)
+    if _active_connection is not None and _active_connection.profile_key == key:
+        return _active_connection
+
+    close_active_connection()
+    trusted_certs = profile.ca_path.read_bytes()
+    selected_channel = build_secure_channel(
+        profile.grpc_endpoint,
+        trusted_certs,
+        tls_server_name=profile.tls_server_name,
+    )
+    selected_stub = grpc_pb2_grpc.GenericRPCStub(selected_channel)
+    _active_connection = _ActiveConnection(
+        profile_key=key,
+        endpoint=profile.grpc_endpoint,
+        channel=selected_channel,
+        stub=selected_stub,
+    )
+    addr = _active_connection.endpoint
+    channel = _active_connection.channel
+    stub = _active_connection.stub
+    return _active_connection
+
+
+def get_active_channel() -> grpc.Channel:
+    return get_active_connection().channel
+
+
+def active_endpoint() -> str:
+    return get_active_connection().endpoint
 
 tcp_calls = 0
 
 def get_tcp_calls():
     return tcp_calls
-        
-def rpc_client(*, function_name, args):
+
+
+# ── federated device relay ───────────────────────────────────────────
+#
+# At an HTTPS account home there is no direct device transport.  A driver
+# constructed with a HOME-minted ``<deployment_id>:<local_id>`` reference
+# instead of a Server bearer token has its GenericRPCRequest serialized and
+# relayed through the HOME; the response is the destination's ordinary
+# GenericRPCResponse, so generated drivers do not know the difference.
+
+_federated_backend = None
+
+
+def bind_federated_backend(backend) -> None:
+    """Reuse the interactive session's authenticated HTTPS backend."""
+    global _federated_backend
+    _federated_backend = backend
+
+
+def federated_backend():
+    global _federated_backend
+    if _federated_backend is None:
+        from ..deployment.backend import selected_backend
+        backend = selected_backend()
+        if backend.capabilities["account_transport"] != "https-json":
+            raise RuntimeError("Federated device references require an HTTPS account home")
+        if not backend.resume():
+            raise RuntimeError("Log in to the account home first (run `remoterf`, then `login`)")
+        _federated_backend = backend
+    return _federated_backend
+
+
+def _federated_ref(function_name, args):
+    """The global device reference this call targets, or None for native calls."""
+    from remoterf_federation_core import is_global_ref
+    keys = ("token", "device_id") if function_name == "IDL:get_drivers" else ("a",)
+    for key in keys:
+        if key in args:
+            value = unmap_arg(args[key])
+            return value if is_global_ref(value) else None
+    return None
+
+
+def _federated_call(ref, function_name, args):
+    from ..deployment.http import AccountBackendError
+    request = grpc_pb2.GenericRPCRequest(function_name=function_name, args=args)
+    try:
+        raw = federated_backend().device_rpc(ref, request.SerializeToString())
+    except AccountBackendError as exc:
+        label = f" [{exc.provenance}]" if exc.provenance else ""
+        raise RuntimeError(f"{exc}{label}") from None
+    response = grpc_pb2.GenericRPCResponse()
+    response.ParseFromString(raw)
+    return response
+
+
+def _device_token(function_name, args):
+    """The token a device call carries: `a` on a device RPC, `token` on a schema fetch."""
+    key = "token" if function_name == "IDL:get_drivers" else "a"
+    if key not in args:
+        return None
+    value = unmap_arg(args[key])
+    return value if isinstance(value, str) else None
+
+
+def rpc_client(*, function_name, args, connection=None):
     global tcp_calls
     tcp_calls += 1
+    ref = _federated_ref(function_name, args) if connection is None else None
+    if ref is not None:
+        return _finish(_federated_call(ref, function_name, args))
+    wire = os.getenv("REMOTERF_RX_WIRE", "").strip().lower()
+    if wire and function_name.endswith(":rx:CALL0"):
+        # Gate I slice 3, opt-in: c64 halves the samples on the wire, i16 quarters
+        # them when they are integer IQ; the driver still sees a complex array.
+        args = {**args, "wire": map_arg(wire)}
+    if connection is None and direct_path.wants(function_name):
+        path = direct_path.current(token=_device_token(function_name, args))
+        if path is not None:
+            try:
+                return _finish(path.call(function_name, args))
+            except direct_path.PathError:
+                pass  # the path is down now; this call goes over gRPC, once
     # print(tcp_calls)
     # if not is_connected:
     #     response = rpc_client(function_name="UserLogin", args={"username": grpc_pb2.Argument(string_value=input("Username: ")), "password": grpc_pb2.Argument(string_value=getpass.getpass("Password: ")), "client_ip": grpc_pb2.Argument(string_value=local_ip)})
@@ -107,14 +255,18 @@ def rpc_client(*, function_name, args):
     # TODO: Handle Errors
     
     # print(f"Calling function: {function_name}")
-    response = stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
-    
+    response = (connection or get_active_connection()).stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
+    return _finish(response)
+
+
+def _finish(response):
     if 'a' in response.results:
         raise RuntimeError(unmap_arg(response.results['a']))
         
     if 'UE' in response.results:
         print(f"UserError: {unmap_arg(response.results['UE'])}")
-        input("Hit enter to continue...")
+        if sys.stdin.isatty():  # a script has nobody to hit enter
+            input("Hit enter to continue...")
         
     if 'Message' in response.results:
         print(f"{unmap_arg(response.results['Message'])}")
@@ -157,8 +309,6 @@ def rpc_client(*, function_name, args):
 
 #endregion
     
-from typing import Any, Dict, Optional
-
 def handle_admin_command(inpu: str):
     """
     Parses commands like:

@@ -52,7 +52,9 @@ class RemoteRFCliTests(unittest.TestCase):
     @mock.patch.object(
         remoterf_cli.sys, "argv", ["remoterf", "--config", "--addr", "10.0.0.1:12321"]
     )
-    def test_config_without_cert_port_defaults_to_grpc_port_plus_one(self, configure):
+    @mock.patch("remoteRF.deployment.state.select_direct")
+    def test_config_without_cert_port_defaults_to_grpc_port_plus_one(self, _select_direct, configure):
+        configure.return_value = 0
         self.assertEqual(remoterf_cli.main(), 0)
         configure.assert_called_once_with("10.0.0.1", 12321, 12322)
 
@@ -62,7 +64,9 @@ class RemoteRFCliTests(unittest.TestCase):
         "argv",
         ["remoterf", "--config", "--addr", "10.0.0.1:12321", "--cert-port", "9999"],
     )
-    def test_config_with_explicit_cert_port_overrides_default(self, configure):
+    @mock.patch("remoteRF.deployment.state.select_direct")
+    def test_config_with_explicit_cert_port_overrides_default(self, _select_direct, configure):
+        configure.return_value = 0
         self.assertEqual(remoterf_cli.main(), 0)
         configure.assert_called_once_with("10.0.0.1", 12321, 9999)
 
@@ -70,7 +74,9 @@ class RemoteRFCliTests(unittest.TestCase):
     @mock.patch.object(
         remoterf_cli.sys, "argv", ["remoterf", "-c", "-a", "10.0.0.1:12321"]
     )
-    def test_existing_short_flag_usage_remains_compatible(self, configure):
+    @mock.patch("remoteRF.deployment.state.select_direct")
+    def test_existing_short_flag_usage_remains_compatible(self, _select_direct, configure):
+        configure.return_value = 0
         self.assertEqual(remoterf_cli.main(), 0)
         configure.assert_called_once_with("10.0.0.1", 12321, 12322)
 

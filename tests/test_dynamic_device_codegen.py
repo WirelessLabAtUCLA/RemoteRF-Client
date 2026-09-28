@@ -25,10 +25,14 @@ import numpy as np
 
 from remoteRF.common.utils import map_arg, unmap_arg
 
-fake_grpc_client = types.ModuleType("remoteRF.core.grpc_client")
-fake_grpc_client.rpc_client = lambda *args, **kwargs: None
-sys.modules.setdefault("remoteRF.core.grpc_client", fake_grpc_client)
+# Generated drivers resolve `rpc_client` through this module, so the tests
+# below swap that one attribute. Using the real module -- rather than leaving a
+# stub in sys.modules for the whole session -- keeps every other test that
+# imports remoteRF.core.grpc_client working.
+import remoteRF.core.grpc_client as fake_grpc_client
 import remoteRF.drivers.dynamic_device as dynamic_device
+import remoteRF.drivers.dynamic_v2 as dynamic_v2
+from remoteRF.core.v2_errors import RemoteRFProtocolError
 from remoteRF.drivers.dynamic_device import _codegen
 
 
@@ -1087,9 +1091,15 @@ class DriverInstallPathTests(unittest.TestCase):
             seen.append(plain)
             return Response({"schema": map_arg(json.dumps(respond(plain)))})
 
+        def no_v2_channel(token):
+            # A token-only fetch tries the v2 channel first; v1 decides here.
+            raise RemoteRFProtocolError("no v2 channel in this test")
+
         old_rpc_client = fake_grpc_client.rpc_client
         old_drivers_dir = dynamic_device._DRIVERS_DIR
+        old_fetch_v2 = dynamic_v2.fetch_schema_v2
         fake_grpc_client.rpc_client = rpc_client
+        dynamic_v2.fetch_schema_v2 = no_v2_channel
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 dynamic_device._DRIVERS_DIR = Path(temp_dir)
@@ -1099,6 +1109,7 @@ class DriverInstallPathTests(unittest.TestCase):
         finally:
             fake_grpc_client.rpc_client = old_rpc_client
             dynamic_device._DRIVERS_DIR = old_drivers_dir
+            dynamic_v2.fetch_schema_v2 = old_fetch_v2
         return seen, text, result
 
     def test_install_asks_the_legacy_endpoint_for_v2_and_writes_a_v2_driver(self):

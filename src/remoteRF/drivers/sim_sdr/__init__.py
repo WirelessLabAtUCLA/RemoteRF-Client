@@ -13,14 +13,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-def main(*, register=False, enrollment_code=None, server_label=None, show_banner=True,
-         home=None, route=None):
-    from .app import run
-    return run(
-        register=register,
-        enrollment_code=enrollment_code,
-        server_label=server_label,
-        show_banner=show_banner,
-        home=home,
-        route=route,
-    )
+from importlib import import_module as _import_module
+
+from . import sim_sdr_remote as adi
+from .sim_sdr_remote import SimSDR
+
+__all__ = ["adi", "SimSDR"]
