@@ -28,6 +28,7 @@ from ..common.grpc.v2_codec import decode_value, encode_value
 from .v2_errors import (
     RemoteRFError,
     RemoteRFProtocolError,
+    RemoteRFReservationError,
     RemoteRFTransportError,
     raise_for_envelope,
 )
@@ -75,6 +76,55 @@ def _payload(value):
     return value
 
 
+class _DevicePlaneStub:
+    """DynamicControlV2 and SampleDataV1 for a partner lab's device: each
+    request is one ``DynamicV2:<Operation>:WIRE`` device RPC, routed like any
+    call on that token (the direct path to the owner when it is up, else the
+    HOME, which relays it). The owner runs it through its own servicers."""
+
+    def __init__(self, token: str):
+        self._token = str(token)
+
+    def _rpc(self, operation, request, response_type):
+        from ..common.utils import map_arg, unmap_arg
+        from .grpc_client import rpc_client
+
+        try:
+            response = rpc_client(
+                function_name=f"DynamicV2:{operation}:WIRE",
+                args={"a": map_arg(self._token), "wire": map_arg(request.SerializeToString())},
+            )
+        except RuntimeError as exc:
+            # A refusal the HOME or the owner carried in "a": no live
+            # reservation, a revoked agreement, a device no longer visible.
+            raise RemoteRFReservationError(f"partner device: {exc}") from exc
+        wire = unmap_arg(response.results["wire"]) if "wire" in response.results else None
+        if not isinstance(wire, bytes):
+            raise RemoteRFProtocolError("partner device plane returned no Dynamic v2 reply")
+        return response_type.FromString(wire)
+
+    def Negotiate(self, request, timeout=None):
+        return self._rpc("Negotiate", request, grpc_pb2.NegotiateResponse)
+
+    def GetSchema(self, request, timeout=None):
+        return self._rpc("GetSchema", request, grpc_pb2.GetSchemaResponse)
+
+    def OpenSession(self, request, timeout=None):
+        return self._rpc("OpenSession", request, grpc_pb2.OpenSessionResponse)
+
+    def Invoke(self, request, timeout=None):
+        return self._rpc("Invoke", request, grpc_pb2.InvokeResponse)
+
+    def CloseHandle(self, request, timeout=None):
+        return self._rpc("CloseHandle", request, grpc_pb2.CloseResponse)
+
+    def CloseSession(self, request, timeout=None):
+        return self._rpc("CloseSession", request, grpc_pb2.CloseResponse)
+
+    def SampleStream(self, frames, timeout=None):
+        return [self._rpc("SampleFrame", frame, grpc_pb2.SampleFrame) for frame in frames]
+
+
 class DynamicV2Transport:
     def __init__(
         self,
@@ -113,6 +163,32 @@ class DynamicV2Transport:
         self.control = control_stub
         self.samples = sample_stub
 
+    def _to_owner(self, token: str, owner: str | None = None) -> bool:
+        """Carry this transport over the device plane when ``token`` drives a
+        partner lab's device (named by the HOME's refusal, or already known)."""
+        from . import direct_path
+
+        if isinstance(self.control, _DevicePlaneStub):
+            return False
+        owner = owner or direct_path.partner_of(str(token))
+        if not owner:
+            return False
+        # Marked, the token's device calls take the direct path to the owner.
+        direct_path.mark_partner(str(token), str(owner))
+        self.control = self.samples = _DevicePlaneStub(token)
+        return True
+
+    def _checked(self, response, token: str) -> bool:
+        """raise_for_envelope, except for the refusal of a partner's token:
+        True when the call should be repeated over the device plane."""
+        try:
+            raise_for_envelope(response.error)
+        except RemoteRFProtocolError as exc:
+            if self._to_owner(token, exc.details.get("federated")):
+                return True
+            raise
+        return False
+
     def _call(self, fn, request, *, timeout: float | None = None):
         try:
             return fn(request, timeout=timeout or self.control_timeout_sec)
@@ -147,6 +223,7 @@ class DynamicV2Transport:
         return response
 
     def get_schema(self, token: str) -> dict:
+        self._to_owner(token)
         self.negotiate()
         response = self._call(
             self.control.GetSchema,
@@ -155,7 +232,8 @@ class DynamicV2Transport:
                 schema_versions=[SCHEMA_VERSION],
             ),
         )
-        raise_for_envelope(response.error)
+        if self._checked(response, token):
+            return self.get_schema(token)
         try:
             schema = json.loads(response.schema_json)
         except (TypeError, json.JSONDecodeError) as exc:
@@ -171,6 +249,7 @@ class DynamicV2Transport:
         return schema
 
     def open_session(self, token: str, schema_hash: str):
+        self._to_owner(token)
         response = self._call(
             self.control.OpenSession,
             grpc_pb2.OpenSessionRequest(
@@ -181,7 +260,8 @@ class DynamicV2Transport:
             ),
             timeout=self.open_timeout_sec,
         )
-        raise_for_envelope(response.error)
+        if self._checked(response, token):
+            return self.open_session(token, schema_hash)
         try:
             schema = json.loads(response.schema_json)
             capabilities = json.loads(response.capabilities_json or "{}")
