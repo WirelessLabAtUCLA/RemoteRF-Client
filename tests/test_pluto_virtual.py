@@ -43,6 +43,12 @@ class VirtualPlutoTests(unittest.TestCase):
         self.assertIsNone(result)
         sdr.tx_destroy_buffer()
 
+    def test_power_commands_are_no_ops(self):
+        sdr = adi.Pluto(virtual=True)
+        self.assertIsNone(sdr.power_up())
+        self.assertIsNone(sdr.power_down())
+        self.assertIsNone(sdr.power_cycle())
+
     def test_virtual_instances_have_isolated_state(self):
         first = adi.Pluto(token="same-label", virtual=True)
         second = adi.Pluto(token="same-label", virtual=True)

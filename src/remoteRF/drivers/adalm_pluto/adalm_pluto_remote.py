@@ -14,10 +14,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Auto-generated from IDL schema — do not edit by hand.
-# device_type: adalm_pluto  driver_version: 0.0.2  schema_hash: sha256:fa4603755fdfde9ff8286c95b2f30996df0d6253fdec608976b1aaae9f48354e
+# device_type: adalm_pluto  driver_version: 0.0.3  schema_hash: sha256:35b66a1e4383a344046be27ff80d40aff3ebd147e7aa5dd0513303fd3c0cfab4
 
 _PREFIX = "Adalm_pluto"
-_SCHEMA_HASH = "sha256:fa4603755fdfde9ff8286c95b2f30996df0d6253fdec608976b1aaae9f48354e"
+_SCHEMA_HASH = "sha256:35b66a1e4383a344046be27ff80d40aff3ebd147e7aa5dd0513303fd3c0cfab4"
 _CLIENT_MODULES = {}
 _CLIENT_OBJECTS = {}
 
@@ -374,6 +374,18 @@ class Pluto:
     def ip(self):
         'Return a connection identifier for this device (ping / verify).'
         return _try_call("ip", self.token)
+
+    def power_cycle(self):
+        'PoE Plutos: power off, then on, and wait for boot. No-op on other Plutos.'
+        return _try_call("power_cycle", self.token)
+
+    def power_down(self):
+        'PoE Plutos: cut power; the next command powers it back up. No-op on other Plutos.'
+        return _try_call("power_down", self.token)
+
+    def power_up(self):
+        'PoE Plutos: power on and wait for boot (any command does this when needed). No-op on other Plutos.'
+        return _try_call("power_up", self.token)
 
     def rx(self):
         return _try_call("rx", self.token)
