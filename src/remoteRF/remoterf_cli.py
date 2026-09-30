@@ -114,7 +114,7 @@ def _ensure_config_present() -> tuple[bool, str]:
             "Run:\n"
             "  remoterf --config --addr <host:port>\n"
             "Example:\n"
-            "  remoterf --config --addr 123.45.654.321:12321\n",
+            "  remoterf --config --addr 203.0.113.10:12321\n",
         )
 
     kv = _read_dotenv_kv(env_file)
@@ -173,7 +173,7 @@ def print_help() -> None:
     printf("  remoterf --login global", Sty.GREEN)
     printf("  remoterf homes", Sty.GREEN)
     printf("  remoterf --version", Sty.GREEN)
-    printf("  remoterf --config --addr 123.45.654.321:12321", Sty.GREEN)
+    printf("  remoterf --config --addr 203.0.113.10:12321", Sty.GREEN)
     printf("  remoterf --config --addr global.remoterf.net --register", Sty.GREEN)
     printf("  remoterf --config --wipe", Sty.GREEN)
     printf("  remoterf --config --wipe --yes", Sty.GREEN)

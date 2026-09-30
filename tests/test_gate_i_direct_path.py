@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import os
 import threading
 import time
 import unittest
@@ -235,12 +236,17 @@ class RoutingTests(unittest.TestCase):
 
         seen = []
         self._path(lambda name, args: seen.append((name, dict(args))) or grpc_pb2.GenericRPCResponse())
-        with mock.patch.dict("os.environ", {"REMOTERF_RX_WIRE": "i16"}):
+        with mock.patch.dict("os.environ", {"REMOTERF_RX_WIRE": "c64"}):
             rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("t")})
             rpc_client(function_name="adalm_pluto:rx_lo:GET", args={"a": map_arg("t")})
-        rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("t")})
-        self.assertEqual([sorted(args) for _, args in seen], [["a", "wire"], ["a"], ["a"]])
-        self.assertEqual(unmap_arg(seen[0][1]["wire"]), "i16")
+        with mock.patch.dict("os.environ", {"REMOTERF_RX_WIRE": ""}):  # opt out
+            rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("t")})
+        with mock.patch.dict("os.environ"):
+            os.environ.pop("REMOTERF_RX_WIRE", None)  # unset: i16 by default
+            rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("t")})
+        self.assertEqual([sorted(args) for _, args in seen], [["a", "wire"], ["a"], ["a"], ["a", "wire"]])
+        self.assertEqual(unmap_arg(seen[0][1]["wire"]), "c64")
+        self.assertEqual(unmap_arg(seen[3][1]["wire"]), "i16")
 
     def test_a_path_that_is_not_ready_is_skipped(self):
         from remoteRF.core.grpc_client import rpc_client

@@ -32,7 +32,8 @@ path; everything else still takes the home's.
 When the answer names a *fixed port* (a Server with a reachable address
 listening for QUIC on one admitted UDP port), the path dials it like any QUIC
 server -- no punch, so it works behind any NAT -- and claims the session with
-the secret the answer carried. ICE is the fallback.
+the secret the answer carried. The dial and the punch run at once; the first
+to connect wins.
 """
 
 from __future__ import annotations
@@ -112,13 +113,18 @@ def quiet_aioice_errors(loop) -> None:
 
     The retry fires from a TimerHandle named for aioice's Transaction and
     dies inside asyncio's own transport code once the socket is gone (an
-    AttributeError on the closed transport or its dropped loop)."""
+    AttributeError on the closed transport or its dropped loop).
+
+    Likewise aioquic's shielded connect waiter: a handshake that ran out of
+    time leaves it to fail with a ConnectionError nobody reads."""
     default = loop.default_exception_handler
 
     def handler(loop, context):
         exc = context.get("exception")
         where = repr(context.get("handle", "")) + str(context.get("message", ""))
         if isinstance(exc, (AttributeError, OSError)) and "Transaction.__retry" in where:
+            return
+        if isinstance(exc, ConnectionError) and "exception was never retrieved" in where:
             return
         default(context)
 
@@ -187,6 +193,10 @@ class Ice(Connection):
 
 class PathError(Exception):
     """The direct path could not carry this call and is down now."""
+
+
+def _why(exc: BaseException) -> str:
+    return "timed out" if isinstance(exc, asyncio.TimeoutError) else f"{type(exc).__name__}: {exc}"
 
 
 class _IceTransport:
@@ -354,10 +364,7 @@ class DirectPath:
                 try:
                     await asyncio.wait_for(self._establish(), SETTLE_SECONDS)
                 except Exception as exc:  # noqa: BLE001 - a failed punch is expected on some networks
-                    self.reason = (
-                        "timed out" if isinstance(exc, asyncio.TimeoutError)
-                        else f"{type(exc).__name__}: {exc}"
-                    )
+                    self.reason = str(exc) if isinstance(exc, PathError) else _why(exc)
                     self.state = "down"
                     if "No matching server function" in self.reason:
                         self.state = "unavailable"
@@ -409,35 +416,68 @@ class DirectPath:
         )
         configuration.load_verify_locations(cadata=ca_pem)
 
+        # Both at once. The Server starts its checks the moment it answers,
+        # and a NAT admits them only once this side has sent its own: a punch
+        # held back for the fixed dial (filtered from off campus) misses that
+        # window. On campus the fixed port still wins in milliseconds.
+        racers: dict[str, asyncio.Task] = {}
         if answer.get("udp") and answer.get("session"):
-            try:
-                await self._dial_fixed(answer, configuration)
-            except Exception as exc:  # noqa: BLE001 - filtered or wrong: the punch is next
-                self.reason = f"fixed port: {type(exc).__name__}: {exc}"
-            else:
-                await close_ice(ice)
-                self._ice = None
-                return
-        ice.remote_username = str(answer["ufrag"])
-        ice.remote_password = str(answer["pwd"])
-        for sdp in answer["candidates"]:
-            await ice.add_remote_candidate(Candidate.from_sdp(str(sdp)))
-        await ice.add_remote_candidate(None)
-        await asyncio.wait_for(ice.connect(), ICE_SECONDS)
-        peer = peer_address(ice)
-        protocol = _Protocol(QuicConnection(configuration=configuration))
-        self._transport = _IceTransport(ice)
-        protocol.connection_made(self._transport)
-        self._tasks = [
-            asyncio.ensure_future(self._pump(ice, protocol, peer)),
-            asyncio.ensure_future(self._watch(protocol)),
-            asyncio.ensure_future(self._watch_sleep()),
-        ]
-        protocol.connect(peer)
+            racers["fixed port"] = asyncio.ensure_future(self._dial_fixed(answer, configuration))
+        racers["punch"] = asyncio.ensure_future(self._punch(ice, answer, configuration))
+        failures: dict[asyncio.Task, Exception] = {}
+        pending = set(racers.values())
         try:
-            await asyncio.wait_for(protocol.wait_connected(), QUIC_SECONDS)
-        except ConnectionError:
-            raise ConnectionError(f"QUIC handshake refused: {protocol.terminated}") from None
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    try:
+                        task.result()
+                    except Exception as exc:  # noqa: BLE001 - filtered or refused: the other may still win
+                        failures[task] = exc
+                    else:
+                        return
+        finally:
+            await cancel_tasks(pending)
+        if len(failures) == 1:
+            raise next(iter(failures.values()))
+        raise PathError("; ".join(f"{name}: {_why(failures[task])}" for name, task in racers.items()))
+
+    async def _punch(self, ice: Connection, answer: dict, configuration: QuicConfiguration) -> None:
+        """QUIC over the pair ICE nominates; the ICE goes with it when this loses."""
+        tasks: list[asyncio.Task] = []
+        transport = None
+        try:
+            ice.remote_username = str(answer["ufrag"])
+            ice.remote_password = str(answer["pwd"])
+            for sdp in answer["candidates"]:
+                await ice.add_remote_candidate(Candidate.from_sdp(str(sdp)))
+            await ice.add_remote_candidate(None)
+            await asyncio.wait_for(ice.connect(), ICE_SECONDS)
+            peer = peer_address(ice)
+            protocol = _Protocol(QuicConnection(configuration=configuration))
+            transport = _IceTransport(ice)
+            protocol.connection_made(transport)
+            tasks = [
+                asyncio.ensure_future(self._pump(ice, protocol, peer)),
+                asyncio.ensure_future(self._watch(protocol)),
+                asyncio.ensure_future(self._watch_sleep()),
+            ]
+            protocol.connect(peer)
+            try:
+                await asyncio.wait_for(protocol.wait_connected(), QUIC_SECONDS)
+            except ConnectionError:
+                raise ConnectionError(f"QUIC handshake refused: {protocol.terminated}") from None
+            if self._protocol is not None:
+                raise PathError("the fixed port connected first")
+        except BaseException:
+            await cancel_tasks(tasks)  # before the close, or _watch reports it as a death
+            if transport is not None:
+                protocol.close()
+                transport.close()
+            await close_ice(ice)
+            self._ice = None
+            raise
+        self._transport, self._tasks = transport, tasks
         self._protocol, self.remote = protocol, peer
 
     async def _dial_fixed(self, answer: dict, configuration: QuicConfiguration) -> None:
@@ -457,6 +497,8 @@ class DirectPath:
             reply = json.loads(await asyncio.wait_for(read_frame(reader), FIXED_SECONDS))
             if not reply.get("ok"):
                 raise PathError(str(reply.get("a", "session refused")))
+            if self._protocol is not None:
+                raise PathError("the punch connected first")
         except BaseException:
             protocol.close()
             transport.close()
@@ -595,21 +637,30 @@ def _stored_login() -> Optional[dict]:
     return homes.recall_login(profile.home) if profile.home else None
 
 
+def _active_route(profile) -> Optional[dict]:
+    """The active home's route this process is connected over, if it has one."""
+    from ..deployment import homes
+
+    if not profile.home:
+        return None
+    return next(
+        (r for r in homes.load_home(profile.home)["routes"]
+         if f"{r['host']}:{r['port']}" == profile.grpc_endpoint),
+        None,
+    )
+
+
 def _from_stored_login() -> Optional[DirectPath]:
     """A path for a process that never logged in (a script using a driver)."""
     from ..deployment import homes
     from .grpc_client import _current_profile
 
     profile = _current_profile()
-    if not profile.home:
+    route = _active_route(profile)
+    if route is None or route["kind"] != "relay":
         return None
-    route = next(
-        (r for r in homes.load_home(profile.home)["routes"]
-         if f"{r['host']}:{r['port']}" == profile.grpc_endpoint),
-        None,
-    )
     login = homes.recall_login(profile.home)
-    if route is None or route["kind"] != "relay" or login is None:
+    if login is None:
         return None
     return DirectPath(
         offer=_offer_rpc(login["username"], login["secret"]), server_name=route["host"],
@@ -690,7 +741,17 @@ def describe() -> str:
     if not enabled():
         return "relay (direct path disabled: REMOTERF_DIRECT=0)"
     path = _path
-    return path.describe() if path is not None else "relay (direct path off)"
+    if path is not None:
+        return path.describe()
+    try:
+        from .grpc_client import _current_profile
+
+        route = _active_route(_current_profile())
+    except Exception:  # noqa: BLE001 - not configured, no home: nothing to add
+        route = None
+    if route is None or route["kind"] == "relay":
+        return "relay (direct path off)"
+    return "LAN (direct)" if route["kind"] == "lan" else str(route["kind"])
 
 
 def stop() -> None:

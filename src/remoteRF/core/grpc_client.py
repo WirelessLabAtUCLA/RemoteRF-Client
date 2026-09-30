@@ -14,7 +14,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -31,7 +30,7 @@ _CONFIG_HELP = (
     "Run:\n"
     "  remoterf --config --addr <host:port>\n"
     "Example:\n"
-    "  remoterf --config --addr 123.45.654.321:12321"
+    "  remoterf --config --addr 203.0.113.10:12321"
 )
 
 
@@ -229,10 +228,11 @@ def rpc_client(*, function_name, args, connection=None):
     ref = _federated_ref(function_name, args) if connection is None else None
     if ref is not None:
         return _finish(_federated_call(ref, function_name, args))
-    wire = os.getenv("REMOTERF_RX_WIRE", "").strip().lower()
+    wire = os.getenv("REMOTERF_RX_WIRE", "i16").strip().lower()
     if wire and function_name.endswith(":rx:CALL0"):
-        # Gate I slice 3, opt-in: c64 halves the samples on the wire, i16 quarters
-        # them when they are integer IQ; the driver still sees a complex array.
+        # Gate I slice 3: c64 halves the samples on the wire, i16 (the default)
+        # quarters them when they are integer IQ; the driver still sees a complex
+        # array. REMOTERF_RX_WIRE="" or "c128" opts out (servers ignore unknown).
         args = {**args, "wire": map_arg(wire)}
     if connection is None and direct_path.wants(function_name):
         path = direct_path.current(token=_device_token(function_name, args))
@@ -265,9 +265,7 @@ def _finish(response):
         
     if 'UE' in response.results:
         print(f"UserError: {unmap_arg(response.results['UE'])}")
-        if sys.stdin.isatty():  # a script has nobody to hit enter
-            input("Hit enter to continue...")
-        
+
     if 'Message' in response.results:
         print(f"{unmap_arg(response.results['Message'])}")
             
