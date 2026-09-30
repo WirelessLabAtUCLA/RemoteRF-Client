@@ -69,6 +69,21 @@ class RaceTests(unittest.TestCase):
             self.assertFalse(path.wait(15))
         self.assertEqual(path.reason, "timed out")
 
+    def test_the_offer_says_this_client_punches_at_once(self):
+        seen = []
+
+        def offer(request):
+            seen.append(request)
+            return {"ufrag": "a", "pwd": "b", "candidates": []}
+
+        path = self._path(offer)
+        path.wait(15)
+        self.assertEqual(len(seen), 1)
+        self.assertIs(seen[0]["race"], True)
+
+
+
+
 
 class DescribeTests(unittest.TestCase):
     def setUp(self):

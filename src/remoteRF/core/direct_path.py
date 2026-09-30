@@ -404,6 +404,10 @@ class DirectPath:
             "ufrag": ice.local_username,
             "pwd": ice.local_password,
             "candidates": [candidate.to_sdp() for candidate in ice.local_candidates],
+            # This client punches at once (no fixed-port head start), so the
+            # Server may send its first check sooner; a Server that predates
+            # the flag ignores it.
+            "race": True,
         }
         answer = await loop.run_in_executor(None, self._offer, offer)
 
