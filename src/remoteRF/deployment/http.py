@@ -73,7 +73,7 @@ class JsonTransport:
                 timeout=timeout,
             ) as response:
                 raw = bytearray()
-                for chunk in response.iter_bytes(chunk_size=1):
+                for chunk in response.iter_bytes(chunk_size=65536):
                     if time.monotonic() >= deadline:
                         raise AccountBackendError("Account operation deadline exceeded")
                     raw.extend(chunk)

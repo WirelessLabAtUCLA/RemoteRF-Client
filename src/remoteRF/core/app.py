@@ -349,7 +349,8 @@ def commands():
     printf("'cancelres' ", Sty.MAGENTA, "     : ", Sty.GRAY, "Cancel a reservation", Sty.DEFAULT)
     printf("'getres' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View all reservations", Sty.DEFAULT)
     printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
-    printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
+    if not account.is_https_home:
+        printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
     printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
     printf("'logout' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Log out and forget the stored login", Sty.DEFAULT)
     printf("'status' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Connection and the path device calls use", Sty.DEFAULT)
@@ -538,6 +539,7 @@ def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, 
     printf("Reservation successful for ", (Sty.BOLD, Sty.GREEN), f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
     printf("Your device handle -> ", Sty.BOLD, f"{handle}", (Sty.BOLD, Sty.GREEN))
     printf("Use it where a token goes, e.g. adi.Pluto(\"" + handle + "\"); it works while you are logged in to this home.", Sty.DEFAULT)
+    printf("The first call can take ~20 s while the radio powers on.", Sty.GRAY)
 
 
 def _federated_reserve():
@@ -1646,7 +1648,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                     devices()
                 elif inpu == "help" or inpu == "h":
                     commands()
-                elif inpu == "perms":
+                elif inpu == "perms" and not account.is_https_home:
                     perms()
                 elif inpu == "enroll":
                     enroll()
@@ -1677,7 +1679,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                     reserve()
                 elif account.is_admin and inpu.strip().startswith("admin"):
                     handle_admin_command(inpu)
-                else:
+                elif inpu.strip():
                     print(f"Unknown command: {inpu}")
             except AccountBackendError as exc:
                 label = f" [{exc.provenance}]" if exc.provenance else ""
