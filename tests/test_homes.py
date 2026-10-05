@@ -314,12 +314,13 @@ def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
     assert homes.last_target() == {"kind": "home", "name": "ucla"}
 
 
-def test_a_blank_code_is_refused_and_global_has_its_own_spelling(monkeypatch):
+def test_a_blank_code_registers_on_global_and_global_has_its_own_spelling(monkeypatch):
     answers = iter(["y", ""])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers, ""))
     used_global = mock.Mock(return_value=0)
-    assert run_cli(["-r"], monkeypatch, _use_global=used_global) == 2
-    used_global.assert_not_called()
+    assert run_cli(["-r"], monkeypatch, _use_global=used_global) == 0
+    used_global.assert_called_once_with(register=True, show_banner=False)  # no lab: the account lives on Global
+    used_global.reset_mock()
     assert run_cli(["-r", "global"], monkeypatch, _use_global=used_global) == 0
     used_global.assert_called_once_with(register=True)
 
@@ -337,7 +338,8 @@ def test_declining_the_terms_stops_registration_before_any_code(monkeypatch):
     answers = iter(["y"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     shell = mock.Mock(return_value=0)
-    assert run_cli(["-l"], monkeypatch, _account_shell=shell) == 0
+    # A configured client (a legacy address) logs in; unconfigured, `-l` would register.
+    assert run_cli(["-l"], monkeypatch, _account_shell=shell, _ensure_config_present=lambda: (True, "")) == 0
     assert cfg.tos_agreed()
     monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(AssertionError(prompt)))
     assert run_cli(["-l"], monkeypatch, _account_shell=shell) == 0  # remembered: no prompt

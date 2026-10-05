@@ -20,6 +20,12 @@ from ..common.utils import *
 
 import datetime
 
+def _busy(label):
+    """A spinner while the home asks its labs: a slow lab is a wait, not a hang."""
+    from ..remoterf_cli import _working
+    return _working(label)
+
+
 class RemoteRFAccount:
     def __init__(self, username:str=None, password:str=None, email:str=None, *, backend=None):
         self.username = username
@@ -93,7 +99,8 @@ class RemoteRFAccount:
     
     def reserve_device(self, device_id, start_time:datetime, end_time:datetime):
         if self.is_https_home:
-            reservation = self.backend.reserve(device_id, int(start_time.timestamp()), int(end_time.timestamp()))
+            with _busy("Reserving…"):
+                reservation = self.backend.reserve(device_id, int(start_time.timestamp()), int(end_time.timestamp()))
             try:
                 from ..drivers.dynamic_device import install_driver
                 install_driver(device_id=reservation['device_id'])
@@ -102,7 +109,8 @@ class RemoteRFAccount:
             # The HOME reference is the driver handle: adi.Pluto("<deployment>:<id>")
             return reservation['device_id']
         username, credential_secret = self._rpc_credentials()
-        response = self._call(function_name="ACC:reserve_device", args={"un":map_arg(username), "pw":map_arg(credential_secret), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
+        with _busy("Reserving…"):
+            response = self._call(function_name="ACC:reserve_device", args={"un":map_arg(username), "pw":map_arg(credential_secret), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
 
         if 'ace' in response.results:
             raise Exception(f'{unmap_arg(response.results["ace"])}')
@@ -116,28 +124,32 @@ class RemoteRFAccount:
             return token
             
     def get_reservations(self):
-        if self.is_https_home:
-            return self.backend.reservations()
-        username, credential_secret = self._rpc_credentials()
-        return self._call(function_name='ACC:get_res', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
+        with _busy("Asking the labs for reservations…"):
+            if self.is_https_home:
+                return self.backend.reservations()
+            username, credential_secret = self._rpc_credentials()
+            return self._call(function_name='ACC:get_res', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def get_devices(self):
-        if self.is_https_home:
-            return self.backend.devices()
-        username, credential_secret = self._rpc_credentials()
-        return self._call(function_name='ACC:get_dev', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
+        with _busy("Asking the labs for devices…"):
+            if self.is_https_home:
+                return self.backend.devices()
+            username, credential_secret = self._rpc_credentials()
+            return self._call(function_name='ACC:get_dev', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def cancel_reservation(self, res_id):
-        if self.is_https_home:
-            return self.backend.cancel(res_id)
-        username, credential_secret = self._rpc_credentials()
-        return self._call(function_name='ACC:cancel_res', args={"un":map_arg(username), "pw":map_arg(credential_secret), "res_id":map_arg(res_id)})
+        with _busy("Cancelling…"):
+            if self.is_https_home:
+                return self.backend.cancel(res_id)
+            username, credential_secret = self._rpc_credentials()
+            return self._call(function_name='ACC:cancel_res', args={"un":map_arg(username), "pw":map_arg(credential_secret), "res_id":map_arg(res_id)})
     
     def get_perms(self):
-        if self.is_https_home:
-            return self.backend.permissions()
-        username, credential_secret = self._rpc_credentials()
-        return self._call(function_name='ACC:get_perms', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
+        with _busy("Asking the labs for permissions…"):
+            if self.is_https_home:
+                return self.backend.permissions()
+            username, credential_secret = self._rpc_credentials()
+            return self._call(function_name='ACC:get_perms', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def logout(self):
         """Revoke the stored session on the deployment (best effort)."""

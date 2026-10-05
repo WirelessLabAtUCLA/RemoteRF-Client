@@ -332,13 +332,15 @@ def _register() -> int:
         return 1
     remember_tos_agreement()
     try:
-        entered = input('Enrollment code: ').strip()
+        entered = input('Enrollment code (Enter for a RemoteRF Global account): ').strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return 1
     if not entered:
-        printf('An enrollment code is required. Ask your lab for one.', Sty.WARNING)
-        return 2
+        # No lab yet: the account lives on Global. A lab's invite can still
+        # be redeemed later, from the shell, with `enroll <invite>`.
+        printf('Registering a RemoteRF Global account. Join a lab any time with: enroll <lab invite>', Sty.GRAY)
+        return _use_global(register=True, show_banner=False)
     try:
         host, code = homes.parse_code(entered)
     except ValidationError as exc:
@@ -378,8 +380,10 @@ def _login(target: str | None) -> int:
         elif saved:
             return _print_pick_a_target()
         else:
-            # Nothing has been saved: fall through to whatever the client was
-            # configured with directly, exactly as before homes existed.
+            # Nothing saved. A legacy address in .env still logs in there;
+            # a fresh install has nothing to log in to, so `-l` is `-r`.
+            if not _ensure_config_present()[0]:
+                return _register()
             return _account_shell(register=False)
     if target == 'global':
         if not homes.has_global_account():

@@ -5,30 +5,7 @@ from remoteRF import remoterf_cli
 
 
 class RemoteRFCliTests(unittest.TestCase):
-    @mock.patch.object(remoterf_cli, "printf")
-    @mock.patch.object(remoterf_cli, "print_client_banner")
-    @mock.patch.object(
-        remoterf_cli,
-        "_ensure_config_present",
-        return_value=(False, "not configured"),
-    )
-    @mock.patch.object(remoterf_cli, "_installed_version", return_value="2.0.9")
-    @mock.patch.object(remoterf_cli.sys, "argv", ["remoterf", "-l"])
-    def test_unconfigured_login_shows_na_banner_and_configure_message(
-        self,
-        _version,
-        _ensure_config,
-        print_banner,
-        printf,
-    ):
-        self.assertEqual(remoterf_cli.main(), 2)
-        print_banner.assert_called_once_with("2.0.9", server="")
-        self.assertTrue(
-            any(
-                call.args and call.args[0] == "Please configure remoterf properly first."
-                for call in printf.call_args_list
-            )
-        )
+    # `-l` on an unconfigured client registers instead: tests/test_cli_login_fresh.py
 
     @mock.patch.object(remoterf_cli, "_print_server_unavailable")
     @mock.patch.object(remoterf_cli, "_connected_server", return_value=None)

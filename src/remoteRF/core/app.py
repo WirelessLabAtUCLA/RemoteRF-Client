@@ -230,8 +230,8 @@ def _account_command(command):
             # out of quota); there is no token coming. Straight on to login.
             return False
         printf("Verify your email", (Sty.BOLD, Sty.BLUE))
-        printf("  Paste the token from the verification email.", Sty.GRAY)
-        account.backend.verify(_ask('Verification token', hidden=True))
+        printf("  Enter the 6-digit code from the verification email.", Sty.GRAY)
+        account.backend.verify(account.username or account.email, _ask('Verification code').strip())
         printf('Email verified. You can now log in.', (Sty.BOLD, Sty.GREEN))
         return False
     if command in ('forgot-password', 'reset-password'):
@@ -581,7 +581,8 @@ def _federated_reserve():
         )
         return
     _pick_slot_and_reserve(dev["device_id"], dev["display_name"], dev["block_min"], _federated_reservations_for_range, _federated_reserve_slot,
-                           device_label=f"{dev['display_name']} @{dev['deployment_name']}")
+                           device_label=f"{dev['display_name']} @{dev['deployment_name']}",
+                           max_days=-(-int(dev.get("max_horizon_sec") or 0) // 86400) or None)
 
 
 def reservations():
@@ -985,7 +986,7 @@ def perms():
         printf("Accessible Devices: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)
 
         # Build per-device caps and group identical limits together
-        buckets: dict[tuple[int, int], list[int]] = {}  # (max_r, max_t_sec) -> [dev_ids]
+        buckets: dict[tuple[int, int, int], list[int]] = {}  # (max_r, max_t_sec, horizon_sec) -> [dev_ids]
         for d in devices:
             try:
                 did = int(d)
@@ -994,7 +995,8 @@ def perms():
             c = _cap_for(did)
             max_t = int(c.get("max_reservation_time_sec", 0) or 0)
             max_r = int(c.get("max_reservations", 0) or 0)
-            buckets.setdefault((max_r, max_t), []).append(did)
+            max_h = int(c.get("max_horizon_sec", 0) or 0)
+            buckets.setdefault((max_r, max_t, max_h), []).append(did)
 
         if not buckets:
             print("Limits per device: (none)")
@@ -1003,16 +1005,17 @@ def perms():
 
         # If everything shares the same limits, print once
         if len(buckets) == 1:
-            (max_r, max_t), _devs = next(iter(buckets.items()))
+            (max_r, max_t, max_h), _devs = next(iter(buckets.items()))
             printf("Permissions:", (Sty.BOLD, Sty.BLUE))
             printf("  Max Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN)
             printf("  Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN)
+            printf("  Days Ahead: ", Sty.GRAY, f"{max_h / 86400:g}" if max_h else "no limit", Sty.CYAN)
             render_remote_permissions()
             return
 
         # Otherwise print grouped limits
         printf("Permissions per device (grouped):", (Sty.BOLD, Sty.BLUE))
-        for (max_r, max_t), devs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[1])):
+        for (max_r, max_t, max_h), devs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2], kv[1])):
             devs = sorted(devs)
 
             # compress ranges like 0-3,5,7-9
@@ -1031,7 +1034,7 @@ def perms():
                 ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
 
             dev_str = ",".join(ranges)
-            printf("  devices[", Sty.GRAY, f"{dev_str}", Sty.MAGENTA, "]: ", Sty.GRAY, f"max_reservations={max_r}, max_time_min={max_t // 60}", Sty.CYAN)
+            printf("  devices[", Sty.GRAY, f"{dev_str}", Sty.MAGENTA, "]: ", Sty.GRAY, f"max_reservations={max_r}, max_time_min={max_t // 60}, days_ahead={f'{max_h / 86400:g}' if max_h else 'no limit'}", Sty.CYAN)
 
         render_remote_permissions()
 
@@ -1306,16 +1309,18 @@ def _auto_block_minutes(max_t_sec: int) -> int:
             break
     return best
 
-def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, reservations_for_range, do_reserve, *, device_label=None):
+def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, reservations_for_range, do_reserve, *, device_label=None, max_days=None):
     """Shared `resdev` slot picker: days -> free slots -> pick -> confirm -> reserve.
     Native and federated homes differ only in how reservations are fetched and
-    how the reservation is made (token vs. HOME handle)."""
+    how the reservation is made (token vs. HOME handle). `max_days` is the
+    group's reservation horizon; the server refuses starts beyond it anyway."""
     device_label = chosen_device_id if device_label is None else device_label
-    num_days_s = session.prompt(stylize("Enter the number of days to check for available reservations (starting today): ", (Sty.BOLD, Sty.GREEN))).strip()
+    limit = f" (up to {max_days})" if max_days else ""
+    num_days_s = session.prompt(stylize(f"Enter the number of days to check for available reservations (starting today){limit}: ", (Sty.BOLD, Sty.GREEN))).strip()
     try:
         num_days = int(num_days_s)
-        if num_days <= 0:
-            print("Invalid number of days.")
+        if num_days <= 0 or (max_days and num_days > max_days):
+            print("Invalid number of days." if num_days <= 0 else f"Your group may reserve at most {max_days} days ahead.")
             return
     except ValueError:
         print("Invalid input. Please enter a number.")
@@ -1492,7 +1497,10 @@ def interactive_reserve_next_days_auto():
         sorted_device_ids = sorted(dev_resp.results.keys(), key=int)  # strings
 
         if allowed_dev_ids is not None:
-            sorted_device_ids = [d for d in sorted_device_ids if int(d) in allowed_dev_ids]
+            # A partner lab's device is listed only when this account is enrolled
+            # there; it needs no local group (and has no local caps: 30 min blocks).
+            sorted_device_ids = [d for d in sorted_device_ids
+                                 if int(d) in allowed_dev_ids or _PARTNER_LABEL.match(str(unmap_arg(dev_resp.results[d])))]
 
         if not sorted_device_ids:
             printf("No devices available for your permission level.", Sty.WARNING)
@@ -1501,6 +1509,7 @@ def interactive_reserve_next_days_auto():
         printf("Devices:", Sty.BOLD)
         block_by_dev: dict[str, int] = {}
         max_by_dev: dict[str, int] = {}
+        days_by_dev: dict[str, int] = {}
 
         for idx, dev_id in enumerate(sorted_device_ids):
             dev_name = unmap_arg(dev_resp.results[dev_id])
@@ -1510,6 +1519,7 @@ def interactive_reserve_next_days_auto():
                 c = _cap_for(int(dev_id))
                 try:
                     max_t_sec = int(c.get("max_reservation_time_sec", 0) or 0)
+                    days_by_dev[str(dev_id)] = -(-int(c.get("max_horizon_sec", 0) or 0) // 86400)
                 except Exception:
                     max_t_sec = 0
             elif perm_level == "Power User" and power_user_max_t_sec is not None:
@@ -1562,7 +1572,8 @@ def interactive_reserve_next_days_auto():
             )
             return
 
-        _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, fetch_reservations_for_range, _native_reserve_slot)
+        _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, fetch_reservations_for_range, _native_reserve_slot,
+                               max_days=days_by_dev.get(chosen_device_id) or None)
 
     except Exception as e:
         print(f"Error: {e}")

@@ -111,10 +111,10 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             data={"username": name, "email": email, "password": password},
         )
 
-    def verify(self, token):
+    def verify(self, login, code):
         self._operation("ACC:verify_email")
         return self.transport.request(
-            "POST", self.base + "/verify-email", data={"token": token}
+            "POST", self.base + "/verify-email", data={"login": login, "code": code}
         )
 
     def _validate_session(self, value, expected_subject=None):
