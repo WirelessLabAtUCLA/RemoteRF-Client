@@ -258,7 +258,7 @@ def _account_command(command):
         from ..deployment import homes
         typed = pending_username or _ask('Username or Email' if account.is_https_home else 'Username')
         pending_username = None
-        # `ethan@ucla` typed at ucla is `ethan` there.
+        # `alice@ucla` typed at ucla is `alice` there.
         name, where = homes.split_account(typed)
         here = homes.GLOBAL_ACCOUNTS if account.is_https_home else home_name
         account.username = name if where == here else typed
@@ -1628,9 +1628,12 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
         # Continue below the banner rather than wiping the screen: with a
         # stored login the wipe came a split second after everything appeared.
         session_line()
+        from ..deployment import homes
+        # The prompt is the account's full name: alice@ucla, alice@global.
+        where = homes.GLOBAL_ACCOUNTS if account.is_https_home else (home_name or 'remoterf')
         while True:
             try:
-                inpu = session.prompt(stylize(f'{account.username}@remoterf: ', Sty.BOLD))
+                inpu = session.prompt(stylize(f'{account.username}@{where}: ', Sty.BOLD))
                 if inpu in ('register', 'verify', 'login', 'forgot-password', 'reset-password'):
                     authenticated = _account_command(inpu)
                     if inpu == 'reset-password' and not welcome(show_banner=False):

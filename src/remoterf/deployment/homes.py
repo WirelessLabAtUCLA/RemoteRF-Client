@@ -273,7 +273,7 @@ GLOBAL_ACCOUNTS = "global"
 
 
 def split_account(text: str) -> tuple[str, str | None]:
-    """`ethan@ucla` -> ("ethan", "ucla"). A bare name, or an email (a dot
+    """`alice@ucla` -> ("alice", "ucla"). A bare name, or an email (a dot
     after the @; deployment names never have one), names no deployment."""
     text = text.strip()
     name, at, where = text.rpartition("@")

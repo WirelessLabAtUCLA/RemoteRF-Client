@@ -444,7 +444,7 @@ def test_every_command_after_login_goes_native_to_the_home(reachable, monkeypatc
         return response
 
     monkeypatch.setattr(grpc_acc, "rpc_client", rpc_client)
-    account = grpc_acc.RemoteRFAccount("ethan", "secret")
+    account = grpc_acc.RemoteRFAccount("jdoe", "secret")
     # A deployment-native account is not an HTTPS home: no Global in the path.
     assert not account.is_https_home
 
@@ -466,7 +466,7 @@ def test_every_command_after_login_goes_native_to_the_home(reachable, monkeypatc
     assert token == "reservation-token"
     # Credentials go to the HOME itself, never through any broker.
     for _, args in sent:
-        assert args["un"].string_value == "ethan"
+        assert args["un"].string_value == "jdoe"
 
     # And the transport those calls ride is this HOME's own direct channel.
     monkeypatch.setattr("grpc.secure_channel", lambda *a, **k: mock.Mock())
@@ -626,7 +626,7 @@ def test_reserve_shows_the_token_even_when_the_driver_fetch_fails(monkeypatch, c
 
     monkeypatch.setattr(grpc_acc, "rpc_client", rpc_client)
     monkeypatch.setattr("remoterf.drivers.dynamic_device.install_driver", install_driver)
-    account = grpc_acc.RemoteRFAccount("ethan", "secret")
+    account = grpc_acc.RemoteRFAccount("jdoe", "secret")
     now = datetime.datetime.now()
 
     assert account.reserve_device(0, now, now + datetime.timedelta(hours=1)) == "reservation-token"

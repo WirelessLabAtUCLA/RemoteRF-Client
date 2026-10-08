@@ -29,14 +29,14 @@ def test_login_on_a_fresh_install_registers_on_enter():
 def test_an_account_name_says_where_it_lives():
     from remoterf.deployment.homes import split_account
 
-    assert split_account(" ian@ucla ") == ("ian", "ucla")
-    assert split_account("Ian@UCLA") == ("Ian", "ucla")
-    assert split_account("ian@global") == ("ian", "global")
-    assert split_account("ian") == ("ian", None)
-    assert split_account("ian@ucla.edu") == ("ian@ucla.edu", None)  # an email
+    assert split_account(" jdoe@ucla ") == ("jdoe", "ucla")
+    assert split_account("JDoe@UCLA") == ("JDoe", "ucla")
+    assert split_account("jdoe@global") == ("jdoe", "global")
+    assert split_account("jdoe") == ("jdoe", None)
+    assert split_account("jdoe@ucla.edu") == ("jdoe@ucla.edu", None)  # an email
     assert split_account("a@b@ucla") == ("a@b", "ucla")
     assert split_account("@ucla") == ("@ucla", None)
-    assert split_account("ian@") == ("ian@", None)
+    assert split_account("jdoe@") == ("jdoe@", None)
 
 
 def test_login_on_a_fresh_install_goes_to_the_lab_in_the_account_name():
@@ -46,7 +46,7 @@ def test_login_on_a_fresh_install_goes_to_the_lab_in_the_account_name():
     route = {"kind": "relay", "host": "ucla.global.remoterf.net", "port": 12321}
     with tmp, env, \
             mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
-            mock.patch("builtins.input", return_value="ian@ucla"), \
+            mock.patch("builtins.input", return_value="jdoe@ucla"), \
             mock.patch("remoterf.deployment.homes.register_home",
                        return_value=("ucla", {"display_name": "UCLA"}, route)) as register_home, \
             mock.patch.object(remoterf_cli, "_account_shell", return_value=0) as shell:
@@ -54,13 +54,13 @@ def test_login_on_a_fresh_install_goes_to_the_lab_in_the_account_name():
     register_home.assert_called_once_with("ucla.global.remoterf.net")
     assert shell.call_args.kwargs["register"] is False
     assert shell.call_args.kwargs["home"] == "ucla"
-    assert shell.call_args.kwargs["username"] == "ian"
+    assert shell.call_args.kwargs["username"] == "jdoe"
 
 
 def test_login_on_a_fresh_install_global_bare_names_and_emails_go_to_global():
     from remoterf import remoterf_cli
 
-    for typed, username in (("ian@global", "ian"), ("ian", "ian"), ("ian@ucla.edu", "ian@ucla.edu")):
+    for typed, username in (("jdoe@global", "jdoe"), ("jdoe", "jdoe"), ("jdoe@ucla.edu", "jdoe@ucla.edu")):
         tmp, env = _fresh_home()
         with tmp, env, \
                 mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
@@ -78,7 +78,7 @@ def test_login_to_a_lab_that_does_not_answer():
     tmp, env = _fresh_home()
     with tmp, env, \
             mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
-            mock.patch("builtins.input", return_value="ian@nolab"), \
+            mock.patch("builtins.input", return_value="jdoe@nolab"), \
             mock.patch("remoterf.deployment.homes.register_home",
                        side_effect=RuntimeError("no such deployment")) as register_home, \
             mock.patch.object(remoterf_cli, "_account_shell") as shell:
@@ -96,8 +96,8 @@ def test_login_with_an_account_uses_the_saved_home():
             mock.patch("remoterf.deployment.homes.homes", return_value={"ucla": {}}), \
             mock.patch("remoterf.deployment.homes.register_home") as register_home, \
             mock.patch.object(remoterf_cli, "_use_home", return_value=0) as use_home:
-        assert remoterf_cli._login("ian@ucla") == 0
-    use_home.assert_called_once_with("ucla", register=False, username="ian")
+        assert remoterf_cli._login("jdoe@ucla") == 0
+    use_home.assert_called_once_with("ucla", register=False, username="jdoe")
     register_home.assert_not_called()
 
 
@@ -190,14 +190,14 @@ def _login_at(home, typed, *, https=False, pending=None):
 
 
 def test_a_found_username_is_not_asked_again():
-    username, ask = _login_at("ucla", None, pending="ian")
-    assert username == "ian"
+    username, ask = _login_at("ucla", None, pending="jdoe")
+    assert username == "jdoe"
     ask.assert_called_once_with("Password (Hidden)", hidden=True)
 
 
 def test_the_full_account_name_works_at_its_own_home_only():
-    assert _login_at("ucla", "ian@ucla")[0] == "ian"
-    assert _login_at("ucla", "ian")[0] == "ian"
-    assert _login_at("otheruni", "ian@ucla")[0] == "ian@ucla"  # not this lab's: no such name here
-    assert _login_at(None, "ian@global", https=True)[0] == "ian"
-    assert _login_at(None, "ian@ucla.edu", https=True)[0] == "ian@ucla.edu"  # an email
+    assert _login_at("ucla", "jdoe@ucla")[0] == "jdoe"
+    assert _login_at("ucla", "jdoe")[0] == "jdoe"
+    assert _login_at("otheruni", "jdoe@ucla")[0] == "jdoe@ucla"  # not this lab's: no such name here
+    assert _login_at(None, "jdoe@global", https=True)[0] == "jdoe"
+    assert _login_at(None, "jdoe@ucla.edu", https=True)[0] == "jdoe@ucla.edu"  # an email

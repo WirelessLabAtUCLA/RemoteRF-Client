@@ -150,7 +150,7 @@ def print_help() -> None:
     printf("  remoterf -h | --help", Sty.CYAN, "              Show this help", Sty.DEFAULT)
     print()
     printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
-    printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (ethan@ucla)", Sty.DEFAULT)
+    printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@lab)", Sty.DEFAULT)
     printf("  remoterf -r | --register [global]", Sty.CYAN, " Register with an enrollment code (or a RemoteRF Global account)", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
@@ -171,7 +171,7 @@ def print_help() -> None:
     printf("  remoterf --login", Sty.GREEN)
     printf("  remoterf --login ucla", Sty.GREEN)
     printf("  remoterf --login global", Sty.GREEN)
-    printf("  remoterf --login ethan@ucla", Sty.GREEN)
+    printf("  remoterf --login jdoe@ucla", Sty.GREEN)
     printf("  remoterf homes", Sty.GREEN)
     printf("  remoterf --version", Sty.GREEN)
     printf("  remoterf --config --addr 203.0.113.10:12321", Sty.GREEN)
@@ -417,10 +417,10 @@ def _login(target: str | None) -> int:
 
 
 def _login_by_username() -> int:
-    """A fresh install: an account says where it lives (`ethan@ucla`), so
+    """A fresh install: an account says where it lives (`alice@ucla`), so
     asking for it is enough. Enter registers, as `-l` here always did."""
     try:
-        name = input('Account, e.g. ethan@ucla (Enter to register): ').strip()
+        name = input('Account (username@lab, Enter to register): ').strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return 1
