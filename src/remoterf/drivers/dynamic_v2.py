@@ -678,7 +678,7 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
                 if install_driver_if_stale(token=self.token, current_hash=schema["schema_hash"]):
                     raise RemoteRFProtocolError(
                         f"the server's {device_type} driver changed and the local copy "
-                        f"was updated; reimport remoteRF.drivers.{device_type} and retry",
+                        f"was updated; reimport remoterf.drivers.{device_type} and retry",
                         details=dict(exc.details),
                     ) from exc
                 raise

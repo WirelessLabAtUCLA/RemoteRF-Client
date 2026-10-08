@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "remoterf"
-version = "2.1.8"
+version = "2.2.4"
 description = "A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -31,12 +31,12 @@ classifiers = [
 ]
 
 [project.scripts]
-remoterf = "remoteRF.remoterf_cli:main"
+remoterf = "remoterf.remoterf_cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-# src/remoteRF.py: see its docstring (upgrades from 2.0.7-2.0.13).
-py-modules = ["remoteRF"]
+# src/remoterf.py: see its docstring (upgrades from 2.0.14-2.1.x).
+py-modules = ["remoterf"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

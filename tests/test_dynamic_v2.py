@@ -25,22 +25,22 @@ from pathlib import Path
 import grpc
 import numpy as np
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.grpc.v2_codec import decode_value, encode_value
-from remoteRF.core.dynamic_v2_transport import DynamicV2Transport
-from remoteRF.core.v2_errors import (
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.grpc.v2_codec import decode_value, encode_value
+from remoterf.core.dynamic_v2_transport import DynamicV2Transport
+from remoterf.core.v2_errors import (
     RemoteRFPolicyError,
     RemoteRFProtocolError,
     RemoteRFTransportError,
     raise_for_envelope,
 )
-from remoteRF.drivers import dynamic_device
-from remoteRF.drivers.dynamic_v2 import (
+from remoterf.drivers import dynamic_device
+from remoterf.drivers.dynamic_v2 import (
     OverloadBinder,
     build_uhd_bindings,
     validate_schema_v2,
 )
-from remoteRF.drivers.support import uhd_v2
+from remoterf.drivers.support import uhd_v2
 
 
 def param(name, type_name="any", *, required=True, default=None):
@@ -353,7 +353,7 @@ class MalformedRXStub:
 
 class DynamicV2Tests(unittest.TestCase):
     def test_packaged_usrp_schema_advertises_qualified_profiles(self):
-        from remoteRF.drivers.usrp import usrp_remote
+        from remoterf.drivers.usrp import usrp_remote
 
         self.assertEqual(usrp_remote._SCHEMA["driver_version"], "0.0.7")
         self.assertIn("n210", usrp_remote._SCHEMA["hardware_profiles"])
@@ -419,9 +419,9 @@ class DynamicV2Tests(unittest.TestCase):
                     sys.executable,
                     "-c",
                     (
-                        "from remoteRF.core.dynamic_v2_transport "
+                        "from remoterf.core.dynamic_v2_transport "
                         "import DynamicV2Transport; "
-                        "from remoteRF.drivers.dynamic_v2 "
+                        "from remoterf.drivers.dynamic_v2 "
                         "import build_uhd_bindings"
                     ),
                 ],
@@ -573,8 +573,8 @@ class DynamicV2Tests(unittest.TestCase):
                 )
 
         _, MultiUSRP = build_uhd_bindings(schema(), transport_factory=StaleTransport)
-        with patch("remoteRF.drivers.dynamic_device.install_driver_if_stale", return_value=True) as refresh:
-            with self.assertRaisesRegex(RemoteRFProtocolError, "reimport remoteRF.drivers.usrp"):
+        with patch("remoterf.drivers.dynamic_device.install_driver_if_stale", return_value=True) as refresh:
+            with self.assertRaisesRegex(RemoteRFProtocolError, "reimport remoterf.drivers.usrp"):
                 MultiUSRP("token")
         refresh.assert_called_once_with(token="token", current_hash=schema()["schema_hash"])
 
@@ -698,6 +698,18 @@ class DynamicV2Tests(unittest.TestCase):
             self.assertIn("build_uhd_bindings", source)
             self.assertIn("@overload", stub)
             self.assertIn("def set_rx_gain", stub)
+
+    def test_default_transport_opens_the_active_channel(self):
+        # A fresh script's first call: nothing has connected yet, so the
+        # module-level grpc_client.channel is still None.
+        from unittest.mock import Mock, patch
+
+        channel = Mock()
+        with patch("remoterf.core.grpc_client.channel", None), patch(
+            "remoterf.core.grpc_client.get_active_channel", return_value=channel
+        ):
+            DynamicV2Transport()
+        self.assertTrue(channel.unary_unary.called)
 
     def test_transport_uses_raw_binary_sample_payloads(self):
         sample_stub = CapturingSampleStub()

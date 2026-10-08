@@ -268,6 +268,20 @@ def connect(name: str) -> dict:
     return route
 
 
+# An account is `name@<deployment>`; Global's own accounts are `name@global`.
+GLOBAL_ACCOUNTS = "global"
+
+
+def split_account(text: str) -> tuple[str, str | None]:
+    """`ethan@ucla` -> ("ethan", "ucla"). A bare name, or an email (a dot
+    after the @; deployment names never have one), names no deployment."""
+    text = text.strip()
+    name, at, where = text.rpartition("@")
+    if not at or not name or not where or "." in where:
+        return text, None
+    return name, where.lower()
+
+
 def register_home(host: str) -> tuple[str, dict, dict]:
     """Learn a deployment from its code, save it, and connect to it."""
     document = discover(host)

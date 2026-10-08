@@ -6,23 +6,23 @@ import grpc
 import httpx
 import pytest
 from remoterf_federation_core import local_capabilities, canonical_json, ValidationError
-from remoteRF.deployment.backend import (
+from remoterf.deployment.backend import (
     LegacyGrpcAccountBackend,
     HttpsJsonAccountBackend,
 )
-from remoteRF.deployment.http import JsonTransport, AccountBackendError
+from remoterf.deployment.http import JsonTransport, AccountBackendError
 from remoterf_federation_core import (
     MAX_HOME_PERMISSIONS_HTTP_RESPONSE_BYTES,
     PERMISSIONS_CLIENT_OVERALL_TIMEOUT_SECONDS,
 )
-from remoteRF.deployment.state import (
+from remoterf.deployment.state import (
     CredentialStore,
     select_target,
     select_direct,
     load_target,
     origin,
 )
-from remoteRF.common.grpc import deployment_capabilities_pb2 as pb
+from remoterf.common.grpc import deployment_capabilities_pb2 as pb
 
 ID = "550e8400-e29b-41d4-a716-446655440000"
 
@@ -62,7 +62,7 @@ def test_only_unimplemented_falls_back(status):
     stub = Mock()
     stub.GetCapabilities.side_effect = RpcError(status)
     with patch(
-        "remoteRF.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub",
+        "remoterf.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub",
         return_value=stub,
     ):
         if status == grpc.StatusCode.UNIMPLEMENTED:
@@ -90,7 +90,7 @@ def test_invalid_grpc_document_never_downgrades(raw):
     )
     with (
         patch(
-            "remoteRF.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub",
+            "remoterf.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub",
             return_value=stub,
         ),
         pytest.raises((ValidationError, AccountBackendError)),
@@ -104,7 +104,7 @@ def test_valid_grpc_without_identity():
         capabilities_json=canonical_json(local_capabilities())
     )
     with patch(
-        "remoteRF.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub",
+        "remoterf.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub",
         return_value=stub,
     ):
         assert (
@@ -183,7 +183,7 @@ def test_permissions_has_operation_specific_time_and_byte_budget(monkeypatch):
             return 0.0
         return 6.0
 
-    monkeypatch.setattr("remoteRF.deployment.http.time.monotonic", clock)
+    monkeypatch.setattr("remoterf.deployment.http.time.monotonic", clock)
     assert transport.permissions("/v2/deployment/permissions", access="token")["x"]
 
 
@@ -202,7 +202,7 @@ def test_permissions_exact_consumer_limit_and_one_byte_over(monkeypatch):
             transport=httpx.MockTransport(lambda _request: next(responses))
         ),
     )
-    monkeypatch.setattr("remoteRF.deployment.http.time.monotonic", lambda: 0.0)
+    monkeypatch.setattr("remoterf.deployment.http.time.monotonic", lambda: 0.0)
     assert transport.permissions("/v2/deployment/permissions", access="token")["x"]
     with pytest.raises(AccountBackendError, match="protocol limit"):
         transport.permissions("/v2/deployment/permissions", access="token")
@@ -218,7 +218,7 @@ def test_permissions_overall_deadline_is_enforced(monkeypatch):
         ),
     )
     clock = iter([0.0, PERMISSIONS_CLIENT_OVERALL_TIMEOUT_SECONDS + 0.001])
-    monkeypatch.setattr("remoteRF.deployment.http.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("remoterf.deployment.http.time.monotonic", lambda: next(clock))
     with pytest.raises(AccountBackendError, match="deadline"):
         transport.permissions("/v2/deployment/permissions", access="token")
 
@@ -243,11 +243,11 @@ def test_invalid_credential_origin(value):
     "value", ["lab:61005", "https://lab:61005", "grpc://lab:61005"]
 )
 def test_cli_keeps_explicit_hostport_direct(value):
-    from remoteRF import remoterf_cli
+    from remoterf import remoterf_cli
 
     with (
         patch.object(remoterf_cli.sys, "argv", ["remoterf", "-c", "-a", value]),
-        patch("remoteRF.config.config.configure", return_value=0) as configure,
+        patch("remoterf.config.config.configure", return_value=0) as configure,
     ):
         assert remoterf_cli.main() == 0
     configure.assert_called_once_with("lab", 61005, 61006)
@@ -255,7 +255,7 @@ def test_cli_keeps_explicit_hostport_direct(value):
 
 
 def test_custom_https_selector_and_bare_host():
-    from remoteRF import remoterf_cli
+    from remoterf import remoterf_cli
 
     for value, extra in [
         ("arbitrary.example", []),
@@ -267,9 +267,9 @@ def test_custom_https_selector_and_bare_host():
             patch.object(
                 remoterf_cli.sys, "argv", ["remoterf", "-c", "-a", value] + extra
             ),
-            patch("remoteRF.config.config._confirm_tos", return_value=True),
+            patch("remoterf.config.config._confirm_tos", return_value=True),
             patch(
-                "remoteRF.deployment.backend.HttpsJsonAccountBackend",
+                "remoterf.deployment.backend.HttpsJsonAccountBackend",
                 return_value=backend,
             ) as factory,
         ):
@@ -310,7 +310,7 @@ def test_global_v1_profile_cannot_select_new_account_or_device_home(tmp_path):
     old = tmp_path / ".config/remoterf-client/global"
     old.mkdir(parents=True)
     (old / "state.json").write_text("not valid JSON")
-    from remoteRF.deployment.direct import resolve_active_profile
+    from remoterf.deployment.direct import resolve_active_profile
 
     assert load_target() is None and resolve_active_profile() is None
 
@@ -318,7 +318,7 @@ def test_global_v1_profile_cannot_select_new_account_or_device_home(tmp_path):
 def test_proto_copy_and_descriptor():
     path = (
         Path(__file__).parents[1]
-        / "src/remoteRF/common/grpc/deployment_capabilities.proto"
+        / "src/remoterf/common/grpc/deployment_capabilities.proto"
     )
     assert (
         pb.DeploymentCapabilitiesResponse.DESCRIPTOR.fields_by_name[
@@ -420,15 +420,15 @@ def test_grpc_account_operations_remain_on_the_negotiated_channel():
     code = """
 from unittest.mock import Mock, patch
 from remoterf_federation_core import local_capabilities, canonical_json
-from remoteRF.deployment.backend import LegacyGrpcAccountBackend
-from remoteRF.common.grpc import deployment_capabilities_pb2 as pb
-from remoteRF.common.grpc.grpc_pb2 import GenericRPCResponse
+from remoterf.deployment.backend import LegacyGrpcAccountBackend
+from remoterf.common.grpc import deployment_capabilities_pb2 as pb
+from remoterf.common.grpc.grpc_pb2 import GenericRPCResponse
 capability_stub=Mock()
 capability_stub.GetCapabilities.return_value=pb.DeploymentCapabilitiesResponse(capabilities_json=canonical_json(local_capabilities()))
-with patch('remoteRF.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub',return_value=capability_stub):
+with patch('remoterf.common.grpc.deployment_capabilities_pb2_grpc.DeploymentCapabilitiesV1Stub',return_value=capability_stub):
     backend=LegacyGrpcAccountBackend(channel=Mock())
 backend.connection.stub.Call=Mock(return_value=GenericRPCResponse())
-with patch('remoteRF.core.grpc_client.get_active_connection',side_effect=AssertionError('target changed')):
+with patch('remoterf.core.grpc_client.get_active_connection',side_effect=AssertionError('target changed')):
     backend.call('ACC:login',{})
 backend.connection.stub.Call.assert_called_once()
 """
@@ -522,8 +522,8 @@ def test_ordinary_perms_renders_remote_results_even_with_zero_local_devices():
     code = f"""
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from remoteRF.common.utils import map_arg
-import remoteRF.core.app as client_app
+from remoterf.common.utils import map_arg
+import remoterf.core.app as client_app
 response=SimpleNamespace(results={{
     'UC': map_arg(str([['Normal User']])),
     'details': map_arg({details!r}),
@@ -565,8 +565,8 @@ def test_grpc_perms_always_renders_explicit_incomplete_notice():
     code = f"""
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from remoteRF.common.utils import map_arg
-import remoteRF.core.app as client_app
+from remoterf.common.utils import map_arg
+import remoterf.core.app as client_app
 response=SimpleNamespace(results={{
     'UC': map_arg(str([['Normal User']])),
     'details': map_arg({details!r}),

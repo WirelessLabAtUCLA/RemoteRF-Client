@@ -13,27 +13,27 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Rescue for an upgrade from remoterf 2.0.7-2.0.13 on Windows and macOS.
+"""Rescue for an upgrade from remoterf 2.0.14-2.1.x on Windows and macOS.
 
-Those releases installed the package in a lowercase ``remoterf`` folder. When
-that folder survives an upgrade (it holds the generated drivers pip does not
-know about), the new files land inside it, and on a case-insensitive disk
-``import remoteRF`` no longer finds the package. Python only reaches this
-module then: a correctly named ``remoteRF`` folder always takes precedence.
+Those releases installed the package in a ``remoteRF`` folder. When that
+folder survives an upgrade (it holds the generated drivers pip does not know
+about), the new files land inside it, and on a case-insensitive disk
+``import remoterf`` no longer finds the package. Python only reaches this
+module then: a correctly named ``remoterf`` folder always takes precedence.
 """
 
 import importlib.util
 import os
 import sys
 
-_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "remoterf")
+_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "remoteRF")
 _SPEC = importlib.util.spec_from_file_location(
     __name__, os.path.join(_FOLDER, "__init__.py"), submodule_search_locations=[_FOLDER]
 )
 if _SPEC is None or not os.path.isfile(os.path.join(_FOLDER, "__init__.py")):
-    raise ImportError("the remoteRF package folder is missing; reinstall with: pip install --force-reinstall remoterf")
+    raise ImportError("the remoterf package folder is missing; reinstall with: pip install --force-reinstall remoterf")
 _MODULE = importlib.util.module_from_spec(_SPEC)
 # The import system returns whatever this name maps to once this module has
-# run: the package itself, so ``remoteRF.<submodule>`` resolves inside it.
+# run: the package itself, so ``remoterf.<submodule>`` resolves inside it.
 sys.modules[__name__] = _MODULE
 _SPEC.loader.exec_module(_MODULE)

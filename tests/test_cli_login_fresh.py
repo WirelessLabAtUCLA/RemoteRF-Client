@@ -12,12 +12,13 @@ def _fresh_home():
     return tmp, mock.patch.dict(os.environ, env, clear=True)
 
 
-def test_login_on_a_fresh_install_registers():
-    from remoteRF import remoterf_cli
+def test_login_on_a_fresh_install_registers_on_enter():
+    from remoterf import remoterf_cli
 
     tmp, env = _fresh_home()
     with tmp, env, \
-            mock.patch("remoteRF.config.config.require_tos_for_login", return_value=True), \
+            mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
+            mock.patch("builtins.input", return_value=""), \
             mock.patch.object(remoterf_cli, "_register", return_value=0) as register, \
             mock.patch.object(remoterf_cli, "_account_shell") as shell:
         assert remoterf_cli._login(None) == 0
@@ -25,12 +26,98 @@ def test_login_on_a_fresh_install_registers():
     shell.assert_not_called()
 
 
-def test_login_with_a_legacy_address_still_logs_in_there():
-    from remoteRF import remoterf_cli
+def test_an_account_name_says_where_it_lives():
+    from remoterf.deployment.homes import split_account
+
+    assert split_account(" ian@ucla ") == ("ian", "ucla")
+    assert split_account("Ian@UCLA") == ("Ian", "ucla")
+    assert split_account("ian@global") == ("ian", "global")
+    assert split_account("ian") == ("ian", None)
+    assert split_account("ian@ucla.edu") == ("ian@ucla.edu", None)  # an email
+    assert split_account("a@b@ucla") == ("a@b", "ucla")
+    assert split_account("@ucla") == ("@ucla", None)
+    assert split_account("ian@") == ("ian@", None)
+
+
+def test_login_on_a_fresh_install_goes_to_the_lab_in_the_account_name():
+    from remoterf import remoterf_cli
+
+    tmp, env = _fresh_home()
+    route = {"kind": "relay", "host": "ucla.global.remoterf.net", "port": 12321}
+    with tmp, env, \
+            mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
+            mock.patch("builtins.input", return_value="ian@ucla"), \
+            mock.patch("remoterf.deployment.homes.register_home",
+                       return_value=("ucla", {"display_name": "UCLA"}, route)) as register_home, \
+            mock.patch.object(remoterf_cli, "_account_shell", return_value=0) as shell:
+        assert remoterf_cli._login(None) == 0
+    register_home.assert_called_once_with("ucla.global.remoterf.net")
+    assert shell.call_args.kwargs["register"] is False
+    assert shell.call_args.kwargs["home"] == "ucla"
+    assert shell.call_args.kwargs["username"] == "ian"
+
+
+def test_login_on_a_fresh_install_global_bare_names_and_emails_go_to_global():
+    from remoterf import remoterf_cli
+
+    for typed, username in (("ian@global", "ian"), ("ian", "ian"), ("ian@ucla.edu", "ian@ucla.edu")):
+        tmp, env = _fresh_home()
+        with tmp, env, \
+                mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
+                mock.patch("builtins.input", return_value=typed), \
+                mock.patch("remoterf.deployment.homes.register_home") as register_home, \
+                mock.patch.object(remoterf_cli, "_use_global", return_value=0) as use_global:
+            assert remoterf_cli._login(None) == 0
+        use_global.assert_called_once_with(register=False, username=username)
+        register_home.assert_not_called()
+
+
+def test_login_to_a_lab_that_does_not_answer():
+    from remoterf import remoterf_cli
 
     tmp, env = _fresh_home()
     with tmp, env, \
-            mock.patch("remoteRF.config.config.require_tos_for_login", return_value=True), \
+            mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
+            mock.patch("builtins.input", return_value="ian@nolab"), \
+            mock.patch("remoterf.deployment.homes.register_home",
+                       side_effect=RuntimeError("no such deployment")) as register_home, \
+            mock.patch.object(remoterf_cli, "_account_shell") as shell:
+        assert remoterf_cli._login(None) == 2
+    register_home.assert_called_once_with("nolab.global.remoterf.net")
+    shell.assert_not_called()
+
+
+def test_login_with_an_account_uses_the_saved_home():
+    from remoterf import remoterf_cli
+
+    tmp, env = _fresh_home()
+    with tmp, env, \
+            mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
+            mock.patch("remoterf.deployment.homes.homes", return_value={"ucla": {}}), \
+            mock.patch("remoterf.deployment.homes.register_home") as register_home, \
+            mock.patch.object(remoterf_cli, "_use_home", return_value=0) as use_home:
+        assert remoterf_cli._login("ian@ucla") == 0
+    use_home.assert_called_once_with("ucla", register=False, username="ian")
+    register_home.assert_not_called()
+
+
+def test_login_global_on_a_fresh_install_logs_in_to_global():
+    from remoterf import remoterf_cli
+
+    tmp, env = _fresh_home()
+    with tmp, env, \
+            mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
+            mock.patch.object(remoterf_cli, "_use_global", return_value=0) as use_global:
+        assert remoterf_cli._login("global") == 0
+    use_global.assert_called_once_with(register=False)
+
+
+def test_login_with_a_legacy_address_still_logs_in_there():
+    from remoterf import remoterf_cli
+
+    tmp, env = _fresh_home()
+    with tmp, env, \
+            mock.patch("remoterf.config.config.require_tos_for_login", return_value=True), \
             mock.patch.object(remoterf_cli, "_ensure_config_present", return_value=(True, "")), \
             mock.patch.object(remoterf_cli, "_register") as register, \
             mock.patch.object(remoterf_cli, "_account_shell", return_value=0) as shell:
@@ -40,15 +127,77 @@ def test_login_with_a_legacy_address_still_logs_in_there():
 
 
 def test_register_without_a_code_makes_a_global_account(monkeypatch):
-    from remoteRF import remoterf_cli
+    from remoterf import remoterf_cli
 
     monkeypatch.setattr("builtins.input", lambda prompt="": "")
-    with mock.patch("remoteRF.config.config._confirm_tos", return_value=True), \
-            mock.patch("remoteRF.config.config.forget_tos_agreement"), \
-            mock.patch("remoteRF.config.config.remember_tos_agreement"), \
+    with mock.patch("remoterf.config.config._confirm_tos", return_value=True), \
+            mock.patch("remoterf.config.config.forget_tos_agreement"), \
+            mock.patch("remoterf.config.config.remember_tos_agreement"), \
             mock.patch.object(remoterf_cli, "print_client_banner"), \
             mock.patch.object(remoterf_cli, "_use_global", return_value=0) as use_global, \
             mock.patch.object(remoterf_cli, "_account_shell") as shell:
         assert remoterf_cli._register() == 0
     use_global.assert_called_once_with(register=True, show_banner=False)
     shell.assert_not_called()
+
+
+def test_register_global_asks_for_the_tos_like_register(monkeypatch):
+    from remoterf import remoterf_cli
+
+    for arg in ("global", "-global"):
+        monkeypatch.setattr("sys.argv", ["remoterf", "-r", arg])
+        with mock.patch("remoterf.config.config._confirm_tos", return_value=True) as confirm, \
+                mock.patch("remoterf.config.config.forget_tos_agreement") as forget, \
+                mock.patch("remoterf.config.config.remember_tos_agreement") as remember, \
+                mock.patch.object(remoterf_cli, "print_client_banner"), \
+                mock.patch.object(remoterf_cli, "_use_global", return_value=0) as use_global:
+            assert remoterf_cli.main() == 0
+        forget.assert_called_once_with()
+        confirm.assert_called_once()
+        remember.assert_called_once_with()
+        use_global.assert_called_once_with(register=True, show_banner=False)
+
+    # Declining stops before any account is made.
+    monkeypatch.setattr("sys.argv", ["remoterf", "-r", "global"])
+    with mock.patch("remoterf.config.config._confirm_tos", return_value=False), \
+            mock.patch("remoterf.config.config.forget_tos_agreement"), \
+            mock.patch("remoterf.config.config.remember_tos_agreement") as remember, \
+            mock.patch.object(remoterf_cli, "print_client_banner"), \
+            mock.patch.object(remoterf_cli, "_use_global") as use_global:
+        assert remoterf_cli.main() == 1
+    remember.assert_not_called()
+    use_global.assert_not_called()
+
+
+def _login_at(home, typed, *, https=False, pending=None):
+    from remoterf.core import app
+
+    account = mock.Mock(is_https_home=https, backend=None)
+    account.login_user.return_value = True
+    with mock.patch.object(app, "account", account), \
+            mock.patch.object(app, "home_name", home), \
+            mock.patch.object(app, "pending_username", pending), \
+            mock.patch.object(app, "local_capabilities",
+                              return_value={"registration_policy": {}}), \
+            mock.patch.object(app, "_home_name", return_value=home), \
+            mock.patch.object(app, "_remember_login"), \
+            mock.patch.object(app, "_ask", side_effect=[typed, "secret"] if typed else ["secret"]) as ask:
+        if https:
+            account.backend = mock.Mock(capabilities={"registration_policy": {}})
+        assert app._account_command("login") is True
+        assert app.pending_username is None
+    return account.username, ask
+
+
+def test_a_found_username_is_not_asked_again():
+    username, ask = _login_at("ucla", None, pending="ian")
+    assert username == "ian"
+    ask.assert_called_once_with("Password (Hidden)", hidden=True)
+
+
+def test_the_full_account_name_works_at_its_own_home_only():
+    assert _login_at("ucla", "ian@ucla")[0] == "ian"
+    assert _login_at("ucla", "ian")[0] == "ian"
+    assert _login_at("otheruni", "ian@ucla")[0] == "ian@ucla"  # not this lab's: no such name here
+    assert _login_at(None, "ian@global", https=True)[0] == "ian"
+    assert _login_at(None, "ian@ucla.edu", https=True)[0] == "ian@ucla.edu"  # an email

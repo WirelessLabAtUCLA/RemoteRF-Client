@@ -23,17 +23,17 @@ from pathlib import Path
 
 import numpy as np
 
-from remoteRF.common.utils import map_arg, unmap_arg
+from remoterf.common.utils import map_arg, unmap_arg
 
 # Generated drivers resolve `rpc_client` through this module, so the tests
 # below swap that one attribute. Using the real module -- rather than leaving a
 # stub in sys.modules for the whole session -- keeps every other test that
-# imports remoteRF.core.grpc_client working.
-import remoteRF.core.grpc_client as fake_grpc_client
-import remoteRF.drivers.dynamic_device as dynamic_device
-import remoteRF.drivers.dynamic_v2 as dynamic_v2
-from remoteRF.core.v2_errors import RemoteRFProtocolError
-from remoteRF.drivers.dynamic_device import _codegen
+# imports remoterf.core.grpc_client working.
+import remoterf.core.grpc_client as fake_grpc_client
+import remoterf.drivers.dynamic_device as dynamic_device
+import remoterf.drivers.dynamic_v2 as dynamic_v2
+from remoterf.core.v2_errors import RemoteRFProtocolError
+from remoterf.drivers.dynamic_device import _codegen
 
 
 def _method(template):
@@ -412,8 +412,8 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         fake_grpc_client.rpc_client = rpc_client
         dynamic_device.install_driver_if_stale = lambda **kwargs: False
         try:
-            module = types.ModuleType("remoteRF.drivers.fake_device.fake_device_remote")
-            module.__package__ = "remoteRF.drivers.fake_device"
+            module = types.ModuleType("remoterf.drivers.fake_device.fake_device_remote")
+            module.__package__ = "remoterf.drivers.fake_device"
             code = _codegen(schema)
             compile(code, "<generated-legacy>", "exec")
             exec(code, module.__dict__)
@@ -450,7 +450,7 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         schema = {
             "device_type": "usrp",
             "client_class": "MultiUSRP",
-            "client_modules": {"uhd": "remoteRF.drivers.support.uhd"},
+            "client_modules": {"uhd": "remoterf.drivers.support.uhd"},
             "driver_version": "0.0.1",
             "schema_hash": "sha256:usrp",
             "getters": {},
@@ -500,8 +500,8 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         fake_grpc_client.rpc_client = rpc_client
         dynamic_device.install_driver_if_stale = lambda **kwargs: False
         try:
-            module = types.ModuleType("remoteRF.drivers.usrp.usrp_remote")
-            module.__package__ = "remoteRF.drivers.usrp"
+            module = types.ModuleType("remoterf.drivers.usrp.usrp_remote")
+            module.__package__ = "remoterf.drivers.usrp"
             exec(_codegen(schema), module.__dict__)
 
             usrp = module.MultiUSRP("token")
@@ -632,12 +632,12 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         dynamic_device.install_driver_if_stale = lambda **kwargs: False
         try:
             code = _codegen(schema)
-            self.assertNotIn("remoteRF.drivers.support.uhd", code)
+            self.assertNotIn("remoterf.drivers.support.uhd", code)
             self.assertIn("_CLIENT_MODULES = {}", code)
             compile(code, "<generated-client-objects>", "exec")
 
-            module = types.ModuleType("remoteRF.drivers.usrp.usrp_remote")
-            module.__package__ = "remoteRF.drivers.usrp"
+            module = types.ModuleType("remoterf.drivers.usrp.usrp_remote")
+            module.__package__ = "remoterf.drivers.usrp"
             exec(code, module.__dict__)
 
             usrp = module.MultiUSRP("token")
@@ -770,7 +770,7 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         self.assertIn('__all__.append("uhd")', init_text)
         self.assertIn("globals().setdefault('types', getattr(uhd, 'types'))", init_text)
         self.assertIn("uhd.usrp.MultiUSRP = MultiUSRP", remote_text)
-        self.assertNotIn("remoteRF.drivers.support.uhd", remote_text)
+        self.assertNotIn("remoterf.drivers.support.uhd", remote_text)
 
     def test_codegen_rejects_invalid_client_metadata_before_compile(self):
         base = {
@@ -785,12 +785,12 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
             },
         }
 
-        bad_alias = dict(base, client_modules={"bad-alias": "remoteRF.drivers.support.uhd"})
+        bad_alias = dict(base, client_modules={"bad-alias": "remoterf.drivers.support.uhd"})
         with self.assertRaisesRegex(ValueError, "alias"):
             _codegen(bad_alias)
 
         bad_module = dict(base, client_modules={"uhd": "os"})
-        with self.assertRaisesRegex(ValueError, "remoteRF.drivers.support"):
+        with self.assertRaisesRegex(ValueError, "remoterf.drivers.support"):
             _codegen(bad_module)
 
         bad_class = dict(base, client_class="Bad Class")
@@ -803,7 +803,7 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
 
         bad_return = dict(
             base,
-            client_modules={"uhd": "remoteRF.drivers.support.uhd"},
+            client_modules={"uhd": "remoterf.drivers.support.uhd"},
             calls={
                 "call_ip": {"args": []},
                 "call_get_time_now": {
@@ -821,7 +821,7 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
 
         bad_setter_return = dict(
             base,
-            client_modules={"uhd": "remoteRF.drivers.support.uhd"},
+            client_modules={"uhd": "remoterf.drivers.support.uhd"},
             setters={
                 "set_level": {
                     "client_return": {
@@ -837,7 +837,7 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
 
         duplicate_roots = dict(
             base,
-            client_modules={"uhd": "remoteRF.drivers.support.uhd"},
+            client_modules={"uhd": "remoterf.drivers.support.uhd"},
             client_objects={"uhd": {"kind": "module", "members": {}}},
         )
         with self.assertRaisesRegex(ValueError, "duplicates"):
@@ -1132,7 +1132,7 @@ class DriverInstallPathTests(unittest.TestCase):
         self.assertIn("build_uhd_bindings", text)
 
     def test_a_partner_v1_answer_replaces_an_installed_v2_driver(self):
-        from remoteRF.core import direct_path
+        from remoterf.core import direct_path
 
         self.addCleanup(direct_path._partner_owners.clear)
 
@@ -1145,7 +1145,7 @@ class DriverInstallPathTests(unittest.TestCase):
         self.assertEqual(direct_path.partner_of("partner-token"), "otheruni")
 
     def test_a_partner_v2_answer_installs_the_v2_driver(self):
-        from remoteRF.core import direct_path
+        from remoterf.core import direct_path
 
         self.addCleanup(direct_path._partner_owners.clear)
         _, text, _ = self._run(
@@ -1157,13 +1157,13 @@ class DriverInstallPathTests(unittest.TestCase):
         self.assertEqual(direct_path.partner_of("partner-token"), "otheruni")
 
     def test_rewriting_a_driver_drops_the_cached_package_so_reimport_works(self):
-        sys.modules["remoteRF.drivers.usrp"] = types.ModuleType("remoteRF.drivers.usrp")
-        sys.modules["remoteRF.drivers.usrp.usrp_remote"] = types.ModuleType("remoteRF.drivers.usrp.usrp_remote")
+        sys.modules["remoterf.drivers.usrp"] = types.ModuleType("remoterf.drivers.usrp")
+        sys.modules["remoterf.drivers.usrp.usrp_remote"] = types.ModuleType("remoterf.drivers.usrp.usrp_remote")
         try:
             self._run(lambda plain: self.V2,
                       lambda: dynamic_device.install_driver_if_stale(token="t", current_hash="sha256:v1"))
-            self.assertNotIn("remoteRF.drivers.usrp", sys.modules)
-            self.assertNotIn("remoteRF.drivers.usrp.usrp_remote", sys.modules)
+            self.assertNotIn("remoterf.drivers.usrp", sys.modules)
+            self.assertNotIn("remoterf.drivers.usrp.usrp_remote", sys.modules)
         finally:
-            sys.modules.pop("remoteRF.drivers.usrp", None)
-            sys.modules.pop("remoteRF.drivers.usrp.usrp_remote", None)
+            sys.modules.pop("remoterf.drivers.usrp", None)
+            sys.modules.pop("remoterf.drivers.usrp.usrp_remote", None)

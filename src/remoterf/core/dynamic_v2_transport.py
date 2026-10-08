@@ -157,7 +157,8 @@ class DynamicV2Transport:
         self._stream_poisoned = False
         self._stream_failure_details = {}
         if control_stub is None or sample_stub is None:
-            from .grpc_client import channel
+            from .grpc_client import get_active_channel
+            channel = get_active_channel()
             control_stub = control_stub or grpc_pb2_grpc.DynamicControlV2Stub(channel)
             sample_stub = sample_stub or grpc_pb2_grpc.SampleDataV1Stub(channel)
         self.control = control_stub

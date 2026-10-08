@@ -24,7 +24,7 @@ When a device is reserved, call install_driver(device_id) to:
 
 After install_driver() the user can do:
 
-    from remoteRF.drivers.pluto import *
+    from remoterf.drivers.pluto import *
     sdr = adi.Pluto(token)
 
 On first device init, pass device_id to also check for schema updates:
@@ -158,7 +158,7 @@ def _client_class_name(schema: dict) -> str:
     return str(schema.get("client_class") or _default_class_name(schema.get("device_type", "unknown")))
 
 
-_CLIENT_MODULE_PREFIX = "remoteRF.drivers.support."
+_CLIENT_MODULE_PREFIX = "remoterf.drivers.support."
 _CLIENT_CTOR_SENTINELS = {"$self", "$result"}
 _CLIENT_OBJECT_KINDS = {
     "module",
@@ -1405,7 +1405,7 @@ _DRIVERS_DIR = Path(__file__).parent
 
 def _write_driver_files(schema: dict) -> Path:
     pkg_dir = _write_v2_driver_files(schema) if str(schema.get("schema_version")) == "2.0" else _write_v1_driver_files(schema)
-    stale = f"remoteRF.drivers.{pkg_dir.name}"
+    stale = f"remoterf.drivers.{pkg_dir.name}"
     for name in [m for m in sys.modules if m == stale or m.startswith(stale + ".")]:
         del sys.modules[name]
     return pkg_dir
@@ -1570,10 +1570,10 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
     the reservation (and therefore never had install_driver run automatically).
     Pass the reservation token — the server resolves which device it belongs to.
 
-        from remoteRF.drivers import ensure_driver
+        from remoterf.drivers import ensure_driver
         ensure_driver(token=token)
 
-        from remoteRF.drivers.pluto import *
+        from remoterf.drivers.pluto import *
         sdr = adi.Pluto(token)
 
     One IDL:get_drivers RPC is always made (to resolve device_type and hash).
@@ -1611,7 +1611,7 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
             f"Driver for '{device_type}' updated "
             f"(was {(current_hash or '?')[:16]}…, "
             f"now {schema.get('schema_hash','?')[:16]}…).\n"
-            f"Reimport before continuing: from remoteRF.drivers.{device_type} import *"
+            f"Reimport before continuing: from remoterf.drivers.{device_type} import *"
         )
 
 
@@ -1653,7 +1653,7 @@ def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
     If the driver was reinstalled, reimport the package before using the
     new class:
 
-        from remoteRF.drivers.pluto import *
+        from remoterf.drivers.pluto import *
     """
     schema = fetch_idl(token=token, prefer_v2=True)
     if schema.get("schema_hash") == current_hash:
@@ -1666,6 +1666,6 @@ def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
     print(
         f"Driver for '{device_type}' updated "
         f"(was {current_hash[:16]}…, now {schema.get('schema_hash','?')[:16]}…).\n"
-        f"Reimport before continuing: from remoteRF.drivers.{device_type} import *"
+        f"Reimport before continuing: from remoterf.drivers.{device_type} import *"
     )
     return True

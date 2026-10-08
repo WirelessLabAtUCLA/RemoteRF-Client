@@ -6,12 +6,12 @@ from unittest.mock import Mock
 import pytest
 from remoterf_federation_core import local_capabilities
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.utils import map_arg, unmap_arg
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.utils import map_arg, unmap_arg
 import importlib
 import importlib.util
-from remoteRF.deployment.backend import HttpsJsonAccountBackend
-from remoteRF.deployment.http import AccountBackendError
+from remoterf.deployment.backend import HttpsJsonAccountBackend
+from remoterf.deployment.http import AccountBackendError
 
 HOME = "550e8400-e29b-41d4-a716-446655440000"
 DEST = "11111111-1111-4111-8111-111111111111"
@@ -35,12 +35,12 @@ def _backend(*ops):
 
 
 def test_device_rpc_relays_serialized_frames_through_the_home(monkeypatch):
-    # test_dynamic_device_codegen installs a fake remoteRF.core.grpc_client in
+    # test_dynamic_device_codegen installs a fake remoterf.core.grpc_client in
     # sys.modules at import; load the real module from its file instead.
-    import remoteRF.core as core
+    import remoterf.core as core
     from pathlib import Path
     spec = importlib.util.spec_from_file_location(
-        "remoteRF.core.grpc_client_real", Path(core.__file__).with_name("grpc_client.py")
+        "remoterf.core.grpc_client_real", Path(core.__file__).with_name("grpc_client.py")
     )
     grpc_client = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(grpc_client)

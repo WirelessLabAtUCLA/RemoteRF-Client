@@ -2,7 +2,7 @@ import socket
 import unittest
 from unittest import mock
 
-from remoteRF.config import config as config_mod
+from remoterf.config import config as config_mod
 
 
 class ParseHostPortTests(unittest.TestCase):

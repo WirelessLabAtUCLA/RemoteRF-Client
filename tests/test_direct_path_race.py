@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from remoteRF.core import direct_path
+from remoterf.core import direct_path
 
 from test_gate_i_direct_path import SERVER_NAME, FakeServer, write_certs
 
@@ -92,8 +92,8 @@ class DescribeTests(unittest.TestCase):
 
     def _describe(self, routes, endpoint="10.0.0.5:12321"):
         profile = mock.Mock(home="lab", grpc_endpoint=endpoint)
-        with mock.patch("remoteRF.core.grpc_client._current_profile", return_value=profile), \
-             mock.patch("remoteRF.deployment.homes.load_home", return_value={"routes": routes}):
+        with mock.patch("remoterf.core.grpc_client._current_profile", return_value=profile), \
+             mock.patch("remoterf.deployment.homes.load_home", return_value={"routes": routes}):
             return direct_path.describe()
 
     def test_a_lan_route_is_not_the_relay(self):
@@ -102,7 +102,7 @@ class DescribeTests(unittest.TestCase):
 
     def test_a_relay_route_and_a_failed_lookup_keep_the_old_wording(self):
         self.assertEqual(self._describe([{"kind": "relay", "host": "10.0.0.5", "port": 12321}]), "relay (direct path off)")
-        with mock.patch("remoteRF.core.grpc_client._current_profile", side_effect=RuntimeError("not configured")):
+        with mock.patch("remoterf.core.grpc_client._current_profile", side_effect=RuntimeError("not configured")):
             self.assertEqual(direct_path.describe(), "relay (direct path off)")
 
 

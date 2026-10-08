@@ -24,9 +24,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.utils import map_arg, unmap_arg
-from remoteRF.core import direct_path
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.utils import map_arg, unmap_arg
+from remoterf.core import direct_path
 
 SERVER_NAME = "direct.test"
 
@@ -183,7 +183,7 @@ class RoutingTests(unittest.TestCase):
         self.stub = mock.Mock()
         self.stub.Call.return_value = grpc_pb2.GenericRPCResponse(results={"via": map_arg("grpc")})
         connection = mock.Mock(stub=self.stub)
-        patcher = mock.patch("remoteRF.core.grpc_client.get_active_connection", return_value=connection)
+        patcher = mock.patch("remoterf.core.grpc_client.get_active_connection", return_value=connection)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -195,7 +195,7 @@ class RoutingTests(unittest.TestCase):
         return path
 
     def test_device_call_takes_the_path(self):
-        from remoteRF.core.grpc_client import rpc_client
+        from remoterf.core.grpc_client import rpc_client
 
         path = self._path(lambda name, args: grpc_pb2.GenericRPCResponse(results={"via": map_arg("direct")}))
         response = rpc_client(function_name="adalm_pluto:rx:GET", args={"a": map_arg("t")})
@@ -204,7 +204,7 @@ class RoutingTests(unittest.TestCase):
         self.stub.Call.assert_not_called()
 
     def test_control_calls_stay_on_grpc(self):
-        from remoteRF.core.grpc_client import rpc_client
+        from remoterf.core.grpc_client import rpc_client
 
         path = self._path(lambda *a: self.fail("ACC on the direct path"))
         response = rpc_client(function_name="ACC:get_dev", args={"un": map_arg("u")})
@@ -212,7 +212,7 @@ class RoutingTests(unittest.TestCase):
         path.call.assert_not_called()
 
     def test_failed_direct_call_is_retried_once_over_grpc(self):
-        from remoteRF.core.grpc_client import rpc_client
+        from remoterf.core.grpc_client import rpc_client
 
         def failing(name, args):
             raise direct_path.PathError("gone")
@@ -224,7 +224,7 @@ class RoutingTests(unittest.TestCase):
         self.stub.Call.assert_called_once()
 
     def test_a_device_error_reply_is_not_a_fallback(self):
-        from remoteRF.core.grpc_client import rpc_client
+        from remoterf.core.grpc_client import rpc_client
 
         self._path(lambda name, args: grpc_pb2.GenericRPCResponse(results={"a": map_arg("No token provided")}))
         with self.assertRaises(RuntimeError):
@@ -232,7 +232,7 @@ class RoutingTests(unittest.TestCase):
         self.stub.Call.assert_not_called()
 
     def test_rx_wire_flag_is_sent_only_with_rx_calls(self):
-        from remoteRF.core.grpc_client import rpc_client
+        from remoterf.core.grpc_client import rpc_client
 
         seen = []
         self._path(lambda name, args: seen.append((name, dict(args))) or grpc_pb2.GenericRPCResponse())
@@ -248,8 +248,22 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(unmap_arg(seen[0][1]["wire"]), "c64")
         self.assertEqual(unmap_arg(seen[3][1]["wire"]), "i16")
 
+    def test_rx_through_a_home_asks_for_i16_too(self):
+        # A Global handle's rx goes through the HOME relay, which caps a response
+        # at ~768 KiB: complex128 samples overflow it four times sooner.
+        from remoterf.core import grpc_client
+
+        seen = []
+        with mock.patch.object(grpc_client, "_federated_ref", return_value="dep:103"), \
+                mock.patch.object(grpc_client, "_federated_call",
+                                  side_effect=lambda ref, name, args: seen.append(dict(args)) or grpc_pb2.GenericRPCResponse()), \
+                mock.patch.dict("os.environ"):
+            os.environ.pop("REMOTERF_RX_WIRE", None)
+            grpc_client.rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("dep:103")})
+        self.assertEqual(unmap_arg(seen[0]["wire"]), "i16")
+
     def test_a_path_that_is_not_ready_is_skipped(self):
-        from remoteRF.core.grpc_client import rpc_client
+        from remoterf.core.grpc_client import rpc_client
 
         path = self._path(lambda *a: self.fail("not ready"))
         path.ready = False
@@ -468,3 +482,35 @@ class QuietHandlerTests(unittest.TestCase):
     def test_anything_else_still_reaches_the_default_handler(self):
         self.assertEqual(len(self._run("_Transaction__retry", ValueError("not ours"))), 1)
         self.assertEqual(len(self._run("other", AttributeError("elsewhere"))), 1)
+
+    def test_a_dead_connect_waiter_is_silent_on_every_python(self):
+        # 3.14 reports aioquic's shielded waiter differently from earlier versions.
+        seen = []
+        loop = asyncio.new_event_loop()
+        try:
+            loop.default_exception_handler = seen.append
+            direct_path.quiet_aioice_errors(loop)
+            for message in ("Future exception was never retrieved", "ConnectionError exception in shielded future"):
+                loop.call_exception_handler({"message": message, "exception": ConnectionError()})
+            loop.call_exception_handler({"message": "ValueError exception in shielded future", "exception": ValueError()})
+        finally:
+            loop.close()
+        self.assertEqual([type(c["exception"]) for c in seen], [ValueError])
+
+
+class BrokenQuicStackTests(unittest.TestCase):
+    def test_a_broken_pyopenssl_turns_the_direct_path_off_not_the_client(self):
+        # conda can swap in a cryptography the pip-installed pyOpenSSL (aioquic's) cannot use.
+        import subprocess
+        import sys
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "OpenSSL").mkdir()
+            (Path(tmp) / "OpenSSL" / "__init__.py").write_text("raise AttributeError(\"module 'lib' has no attribute 'GEN_EMAIL'\")\n")
+            probe = ("from remoterf.core import direct_path, grpc_client; "
+                     "print(direct_path.enabled(), direct_path.current(), direct_path.describe())")
+            result = subprocess.run([sys.executable, "-c", probe], env={**os.environ, "PYTHONPATH": tmp, "HOME": tmp},
+                                    capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+        self.assertTrue(result.stdout.startswith("False None relay (direct path unavailable: AttributeError"), result.stderr[-2000:])
+

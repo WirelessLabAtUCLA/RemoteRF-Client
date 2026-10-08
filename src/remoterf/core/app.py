@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from remoteRF.core.grpc_client import addr as server_addr, handle_admin_command
+from remoterf.core.grpc_client import addr as server_addr, handle_admin_command
 from . import *
 from ..common.utils import *
 
@@ -116,6 +116,8 @@ def _password_confirmation(*, enforce_policy=False):
 
 # The code typed at `remoterf -r`, used once for this registration.
 pending_enrollment_code = None
+# A username already given (`name@lab` at `-l`): the login asks only the password.
+pending_username = None
 # The saved home this shell is attached to (None on a bare direct profile).
 home_name = None
 # The route it was reached over (None on a bare direct profile or an HTTPS home).
@@ -207,6 +209,9 @@ def _account_command(command):
             account.email = _ask('Email') if policy['email_required'] else ''
             if not account.create_user():
                 raise AccountBackendError('Registration failed')
+            if account.is_https_home:
+                from ..deployment import homes
+                printf(f"Log in from anywhere as {account.username}@{homes.GLOBAL_ACCOUNTS}", Sty.GRAY)
         except BaseException:
             # The code was fine; only the details failed. Keep it for the retry.
             pending_enrollment_code = account.enrollment_code or None
@@ -249,7 +254,14 @@ def _account_command(command):
         return False
     if command in ('l', 'login'):
         printf(f"Login to {_home_name()}", (Sty.BOLD, Sty.BLUE))
-        account.username = _ask('Username or Email' if account.is_https_home else 'Username')
+        global pending_username
+        from ..deployment import homes
+        typed = pending_username or _ask('Username or Email' if account.is_https_home else 'Username')
+        pending_username = None
+        # `ethan@ucla` typed at ucla is `ethan` there.
+        name, where = homes.split_account(typed)
+        here = homes.GLOBAL_ACCOUNTS if account.is_https_home else home_name
+        account.username = name if where == here else typed
         account.password = _ask('Password (Hidden)', hidden=True)
         ok = bool(account.login_user(remember=not account.is_https_home))
         if ok:
@@ -536,10 +548,10 @@ def _federated_reservations_for_range(start_day, end_day):
 
 def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str):
     handle = account.reserve_device(device_id, chosen_slot[0], chosen_slot[1])
-    printf("Reservation successful for ", (Sty.BOLD, Sty.GREEN), f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
-    printf("Your device handle -> ", Sty.BOLD, f"{handle}", (Sty.BOLD, Sty.GREEN))
-    printf("Use it where a token goes, e.g. adi.Pluto(\"" + handle + "\"); it works while you are logged in to this home.", Sty.DEFAULT)
-    printf("The first call can take ~20 s while the radio powers on.", Sty.GRAY)
+    # Worded as a lab account's reservation; the handle goes where a token goes.
+    printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{str(device_id).rsplit(':', 1)[-1]}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
+    printf("Your Token -> ", Sty.BOLD, f"{handle}", (Sty.BOLD, Sty.GREEN))
+    account.install_reserved_driver(handle, device_id)
 
 
 def _federated_reserve():
@@ -844,6 +856,7 @@ def reserve():
         if token != '':
             printf(f"Reservation successful. Your Token -> ", Sty.BOLD, f"{token}", Sty.BG_GREEN)
             printf(f"Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one. ", Sty.DEFAULT)
+            account.install_reserved_driver(token, rows[int(pick) - 1]["id"])
     except Exception as e:
         printf(f"Error: {e}", Sty.BRIGHT_RED)
 
@@ -1060,7 +1073,7 @@ def enroll(code=None):
     # register. Here we are already logged in somewhere, so strip it -- and
     # say so if it names a different lab than this one.
     try:
-        from remoteRF.deployment import homes
+        from remoterf.deployment import homes
 
         host, code = homes.parse_code(code)
     except Exception:  # noqa: BLE001 - not in that form; send as typed
@@ -1283,6 +1296,7 @@ def interactive_reserve_next_days(block_minutes=60):
             printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
             printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
             printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
+            account.install_reserved_driver(token, int(chosen_device_id))
         
     except Exception as e:
         print(f"Error: {e}")
@@ -1426,6 +1440,7 @@ def _native_reserve_slot(chosen_device_id, chosen_day, chosen_slot, slot_start_s
         printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
         printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
         printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
+        account.install_reserved_driver(token, int(chosen_device_id))
 
 
 def interactive_reserve_next_days_auto():
@@ -1582,8 +1597,9 @@ def interactive_reserve_next_days_auto():
 
 
 def run(backend=None, *, register=False, enrollment_code=None, server_label=None,
-        show_banner=True, home=None, route=None):
-    global account, session, server_addr, pending_enrollment_code, home_name, current_route
+        show_banner=True, home=None, route=None, username=None):
+    global account, session, server_addr, pending_enrollment_code, home_name, current_route, pending_username
+    pending_username = username
     home_name = home
     current_route = route
     from ..deployment.backend import selected_backend

@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import json
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.utils import map_arg, unmap_arg
-from remoteRF.core import direct_path, grpc_client
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.utils import map_arg, unmap_arg
+from remoterf.core import direct_path, grpc_client
 
 
 class FakePath:

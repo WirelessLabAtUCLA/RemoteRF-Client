@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from remoteRF.common.utils.banner import (
+from remoterf.common.utils.banner import (
     ASCII_BANNER,
     ASCII_COMPAT_BANNER,
     BRANDED_ASCII_BANNER,
@@ -15,7 +15,7 @@ from remoteRF.common.utils.banner import (
     internal_banner_text,
     supports_unicode,
 )
-from remoteRF.common.utils import Sty
+from remoterf.common.utils import Sty
 
 
 class BannerTests(unittest.TestCase):
@@ -108,10 +108,10 @@ class BannerTests(unittest.TestCase):
         self.assertNotIn("UCLA", text)
         self.assertNotIn("Pacific Time", text)
 
-    @mock.patch("remoteRF.common.utils.banner.supports_unicode", return_value=True)
-    @mock.patch("remoteRF.common.utils.banner.printf")
+    @mock.patch("remoterf.common.utils.banner.supports_unicode", return_value=True)
+    @mock.patch("remoterf.common.utils.banner.printf")
     def test_full_logo_uses_pink_remote_and_blue_rf(self, printf, _supports_unicode):
-        from remoteRF.common.utils.banner import print_client_banner
+        from remoterf.common.utils.banner import print_client_banner
 
         print_client_banner("2.0.9", columns=140, server="example.test:61005")
 

@@ -3,16 +3,16 @@ import unittest
 
 import numpy as np
 
-from remoteRF.drivers.adalm_pluto import adi
+from remoterf.drivers.adalm_pluto import adi
 
 
 class VirtualPlutoTests(unittest.TestCase):
     def test_virtual_pluto_does_not_initialize_grpc(self):
-        grpc_was_loaded = "remoteRF.core.grpc_client" in sys.modules
+        grpc_was_loaded = "remoterf.core.grpc_client" in sys.modules
         sdr = adi.Pluto(virtual=True)
         self.assertTrue(sdr.virtual)
         self.assertEqual(
-            "remoteRF.core.grpc_client" in sys.modules,
+            "remoterf.core.grpc_client" in sys.modules,
             grpc_was_loaded,
         )
 

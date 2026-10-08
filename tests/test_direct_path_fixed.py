@@ -14,9 +14,9 @@ from aioquic.asyncio import serve
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.utils import map_arg, unmap_arg
-from remoteRF.core import direct_path
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.utils import map_arg, unmap_arg
+from remoterf.core import direct_path
 
 from test_gate_i_direct_path import SERVER_NAME, write_certs
 

@@ -50,11 +50,18 @@ import threading
 import time
 from typing import Callable, Optional
 
-from aioice import Candidate, Connection
-from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.quic import events
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.connection import QuicConnection
+try:
+    from aioice import Candidate, Connection
+    from aioquic.asyncio.protocol import QuicConnectionProtocol
+    from aioquic.quic import events
+    from aioquic.quic.configuration import QuicConfiguration
+    from aioquic.quic.connection import QuicConnection
+
+    _BROKEN = None
+except Exception as _exc:  # noqa: BLE001 - e.g. conda swapped in a cryptography pip's pyOpenSSL cannot use
+    Candidate = Connection = QuicConnectionProtocol = QuicConfiguration = QuicConnection = object
+    events = None
+    _BROKEN = f"{type(_exc).__name__}: {_exc}"
 
 from ..common.grpc import grpc_pb2
 from ..common.utils import map_arg, unmap_arg
@@ -124,7 +131,7 @@ def quiet_aioice_errors(loop) -> None:
         where = repr(context.get("handle", "")) + str(context.get("message", ""))
         if isinstance(exc, (AttributeError, OSError)) and "Transaction.__retry" in where:
             return
-        if isinstance(exc, ConnectionError) and "exception was never retrieved" in where:
+        if isinstance(exc, ConnectionError) and ("exception was never retrieved" in where or "shielded future" in where):
             return
         default(context)
 
@@ -136,7 +143,7 @@ STUN_SECONDS = 1.5  # a STUN server answers in milliseconds or not at all
 
 
 def enabled() -> bool:
-    return os.getenv("REMOTERF_DIRECT", "1").strip().lower() not in {"0", "off", "no", "false"}
+    return _BROKEN is None and os.getenv("REMOTERF_DIRECT", "1").strip().lower() not in {"0", "off", "no", "false"}
 
 
 def wants(function_name: str) -> bool:
@@ -742,6 +749,8 @@ def current(token: Optional[str] = None) -> Optional[DirectPath]:
 
 def describe() -> str:
     """What device calls use right now, for the shell."""
+    if _BROKEN is not None:
+        return f"relay (direct path unavailable: {_BROKEN}; fix: pip install --force-reinstall remoterf)"
     if not enabled():
         return "relay (direct path disabled: REMOTERF_DIRECT=0)"
     path = _path

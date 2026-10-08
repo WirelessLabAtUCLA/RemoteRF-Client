@@ -24,13 +24,13 @@ class GrpcClientTargetTests(unittest.TestCase):
         self._ca_path = Path(self._tmpdir.name) / "ca.crt"
         self._ca_path.write_bytes(FAKE_PEM)
 
-        self._saved_module = sys.modules.pop("remoteRF.core.grpc_client", None)
+        self._saved_module = sys.modules.pop("remoterf.core.grpc_client", None)
         self.addCleanup(self._restore_module)
 
     def _restore_module(self):
-        sys.modules.pop("remoteRF.core.grpc_client", None)
+        sys.modules.pop("remoterf.core.grpc_client", None)
         if self._saved_module is not None:
-            sys.modules["remoteRF.core.grpc_client"] = self._saved_module
+            sys.modules["remoterf.core.grpc_client"] = self._saved_module
 
     def _import_with_env(self, addr, tls_server_name=None):
         env = {
@@ -44,7 +44,7 @@ class GrpcClientTargetTests(unittest.TestCase):
              mock.patch("grpc.secure_channel") as secure_channel, \
              mock.patch("grpc.ssl_channel_credentials", return_value="fake-creds"), \
              mock.patch("dotenv.load_dotenv"):
-            module = importlib.import_module("remoteRF.core.grpc_client")
+            module = importlib.import_module("remoterf.core.grpc_client")
             module.get_active_connection()
         return module, secure_channel
 

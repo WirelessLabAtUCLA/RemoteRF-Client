@@ -18,7 +18,7 @@
 
 _PREFIX = "Ti_mmwave"
 _SCHEMA_HASH = "sha256:320a89d95075a472d7899ff2f98b9fdee05c0be96fa5651bf5c4f0e5d276a1c4"
-_CLIENT_MODULES = {'ti_mmwave': 'remoteRF.drivers.support.ti_mmwave'}
+_CLIENT_MODULES = {'ti_mmwave': 'remoterf.drivers.support.ti_mmwave'}
 _CLIENT_OBJECTS = {}
 
 from importlib import import_module as _import_module

@@ -225,15 +225,16 @@ def _device_token(function_name, args):
 def rpc_client(*, function_name, args, connection=None):
     global tcp_calls
     tcp_calls += 1
-    ref = _federated_ref(function_name, args) if connection is None else None
-    if ref is not None:
-        return _finish(_federated_call(ref, function_name, args))
     wire = os.getenv("REMOTERF_RX_WIRE", "i16").strip().lower()
     if wire and function_name.endswith(":rx:CALL0"):
         # Gate I slice 3: c64 halves the samples on the wire, i16 (the default)
         # quarters them when they are integer IQ; the driver still sees a complex
         # array. REMOTERF_RX_WIRE="" or "c128" opts out (servers ignore unknown).
+        # Also through a HOME, whose relay caps each response at ~768 KiB.
         args = {**args, "wire": map_arg(wire)}
+    ref = _federated_ref(function_name, args) if connection is None else None
+    if ref is not None:
+        return _finish(_federated_call(ref, function_name, args))
     if connection is None and direct_path.wants(function_name):
         path = direct_path.current(token=_device_token(function_name, args))
         if path is not None:

@@ -17,9 +17,9 @@ import unittest
 
 import numpy as np
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.utils.process_arg import map_arg, unmap_arg
-from remoteRF.drivers.support import uhd
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.utils.process_arg import map_arg, unmap_arg
+from remoterf.drivers.support import uhd
 
 
 class ProcessArgTests(unittest.TestCase):
@@ -74,7 +74,7 @@ class ProcessArgTests(unittest.TestCase):
                 np.testing.assert_array_equal(decoded, original)
 
     def test_iq16_wire_encoding_round_trips_integer_iq(self):
-        from remoteRF.common.utils.process_arg import IQ16, fits_iq16, map_iq16
+        from remoterf.common.utils.process_arg import IQ16, fits_iq16, map_iq16
 
         samples = np.array([2047 - 2048j, -1 + 1j, 0j, 32767 + 0j], dtype=np.complex128)
         arg = map_iq16(samples)

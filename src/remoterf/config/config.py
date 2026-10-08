@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# src/remoteRF/core/remoterf_config.py
+# src/remoterf/core/remoterf_config.py
 
 from __future__ import annotations
 

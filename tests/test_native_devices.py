@@ -4,8 +4,8 @@ grouped by lab; server ids stay internal."""
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import remoteRF.core.app as client_app
-from remoteRF.common.utils import map_arg
+import remoterf.core.app as client_app
+from remoterf.common.utils import map_arg
 
 
 def test_native_rows_group_partner_devices_by_lab_after_the_home():

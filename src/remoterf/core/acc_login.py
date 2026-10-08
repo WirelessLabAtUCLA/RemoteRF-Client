@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 def main(*, register=False, enrollment_code=None, server_label=None, show_banner=True,
-         home=None, route=None):
+         home=None, route=None, username=None):
     from .app import run
     return run(
         register=register,
@@ -23,4 +23,5 @@ def main(*, register=False, enrollment_code=None, server_label=None, show_banner
         show_banner=show_banner,
         home=home,
         route=route,
+        username=username,
     )

@@ -18,13 +18,13 @@ python --version
 
 ## Installation
 
-Use the package manager [pip](https://pip.pypa.io/en/stable/) to install remoteRF. It is recommended that you install this package within a [virtual environment](https://docs.python.org/3/library/venv.html).
+Use the package manager [pip](https://pip.pypa.io/en/stable/) to install remoterf. It is recommended that you install this package within a [virtual environment](https://docs.python.org/3/library/venv.html).
 
 ```bash
 python3 -m venv venv        # Create virtual environment
 source venv/bin/activate    # Activate virtual environment
 
-pip install remoterf        # Install remoteRF
+pip install remoterf        # Install remoterf
 ```
 
 ## NI USRP-2901, Ettus B205-mini, B200-family, and USRP N210
@@ -39,7 +39,7 @@ After reserving a server-local `usrp` inventory entry, fetch or refresh its
 Dynamic v2 package with the reservation token:
 
 ```python
-from remoteRF.drivers import ensure_driver
+from remoterf.drivers import ensure_driver
 
 ensure_driver(token="reservation-token")
 ```
@@ -47,7 +47,7 @@ ensure_driver(token="reservation-token")
 Both supported initialization forms then use the same generated runtime:
 
 ```python
-from remoteRF.drivers.usrp import uhd
+from remoterf.drivers.usrp import uhd
 
 with uhd.usrp.MultiUSRP(token="reservation-token") as usrp:
     print(usrp.remoterf_capabilities)
@@ -55,7 +55,7 @@ with uhd.usrp.MultiUSRP(token="reservation-token") as usrp:
 ```
 
 ```python
-from remoteRF.drivers.usrp import MultiUSRP
+from remoterf.drivers.usrp import MultiUSRP
 
 usrp = MultiUSRP("reservation-token")
 try:
@@ -69,7 +69,7 @@ leading region reported by native UHD is changed on a partial receive:
 
 ```python
 import numpy as np
-from remoteRF.drivers.usrp import uhd
+from remoterf.drivers.usrp import uhd
 
 with uhd.usrp.MultiUSRP(token="reservation-token") as usrp:
     stream_args = uhd.usrp.StreamArgs("fc32", "sc16")
@@ -83,7 +83,7 @@ with uhd.usrp.MultiUSRP(token="reservation-token") as usrp:
 
 The generated package includes native-like namespaces, aliases, overload
 stubs, deterministic `close()`, context managers, opaque session-bound
-handles, and typed errors in `remoteRF.core.v2_errors`. Streamers are never
+handles, and typed errors in `remoterf.core.v2_errors`. Streamers are never
 silently recreated after a disconnect; reopen a new device session and
 configure a new stream explicitly.
 
@@ -98,12 +98,12 @@ RTL-SDR clients are generated from the server's `rtl_sdr` schema. The machine
 running client code does not need `librtlsdr` or PyRtlSdr:
 
 ```python
-from remoteRF.drivers import ensure_driver
+from remoterf.drivers import ensure_driver
 
 token = "reservation-token"
 ensure_driver(token=token)
 
-from remoteRF.drivers.rtl_sdr import RtlSdr
+from remoterf.drivers.rtl_sdr import RtlSdr
 
 sdr = RtlSdr(token)
 sdr.sample_rate = 2_048_000
@@ -135,12 +135,12 @@ machine physically connected to the radar needs `pyserial` or a CP210x driver.
 The initial parser profile supports xWR68xx mmWave SDK 3 out-of-box TLV output.
 
 ```python
-from remoteRF.drivers import ensure_driver
+from remoterf.drivers import ensure_driver
 
 token = "reservation-token"
 ensure_driver(token=token)
 
-from remoteRF.drivers.ti_mmwave import TiMmWave, decode_frame
+from remoterf.drivers.ti_mmwave import TiMmWave, decode_frame
 
 radar = TiMmWave(token)
 print(radar.device_info)
@@ -298,7 +298,7 @@ Here is a explained sample script to get you going!
 #### Python Script:
 
 ```python
-from remoteRF.drivers.adalm_pluto import *  # Imports device Pluto SDR remote drivers. Change depending on desired device.
+from remoterf.drivers.adalm_pluto import *  # Imports device Pluto SDR remote drivers. Change depending on desired device.
 
 sdr = adi.Pluto(    # Device initialization.
     token = 'example_token'     # Place the prior token here.
@@ -307,12 +307,12 @@ sdr = adi.Pluto(    # Device initialization.
 # You can now use this 'sdr' as you normally would with the default Pluto drivers.
 ```
 
-If converting a existing `non-remoteRF` compatible script:
+If converting a existing `non-remoterf` compatible script:
 
 ```diff
 - import existing_device_drivers 
 
-+ from remoteRF.drivers.device_drivers import *
++ from remoterf.drivers.device_drivers import *
 
 - device = device(init)
 

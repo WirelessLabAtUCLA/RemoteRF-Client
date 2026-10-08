@@ -4,9 +4,9 @@ import io
 
 import pytest
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.utils import map_arg
-from remoteRF.core import grpc_client
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.utils import map_arg
+from remoterf.core import grpc_client
 
 
 @pytest.mark.parametrize("isatty", [False, True])

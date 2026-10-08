@@ -24,15 +24,15 @@ from pathlib import Path
 
 import numpy as np
 
-from remoteRF.common.utils import map_arg, unmap_arg
+from remoterf.common.utils import map_arg, unmap_arg
 
-fake_grpc_client = types.ModuleType("remoteRF.core.grpc_client")
+fake_grpc_client = types.ModuleType("remoterf.core.grpc_client")
 fake_grpc_client.rpc_client = lambda *args, **kwargs: None
-sys.modules.setdefault("remoteRF.core.grpc_client", fake_grpc_client)
+sys.modules.setdefault("remoterf.core.grpc_client", fake_grpc_client)
 
-from remoteRF.drivers import dynamic_device
-from remoteRF.drivers.dynamic_device import _codegen
-from remoteRF.drivers.support import ti_mmwave
+from remoterf.drivers import dynamic_device
+from remoterf.drivers.dynamic_device import _codegen
+from remoterf.drivers.support import ti_mmwave
 
 
 def _tlv(tlv_type: int, payload: bytes) -> bytes:
@@ -133,7 +133,7 @@ class TiMmWaveCodegenTests(unittest.TestCase):
             "device_type": "ti_mmwave",
             "client_class": "TiMmWave",
             "client_modules": {
-                "ti_mmwave": "remoteRF.drivers.support.ti_mmwave"
+                "ti_mmwave": "remoterf.drivers.support.ti_mmwave"
             },
             "driver_version": "0.1.0",
             "schema_hash": "sha256:ti-mmwave-test",
@@ -173,7 +173,7 @@ class TiMmWaveCodegenTests(unittest.TestCase):
             raise AssertionError(function_name)
 
         fake_grpc_client = __import__(
-            "remoteRF.core.grpc_client",
+            "remoterf.core.grpc_client",
             fromlist=["rpc_client"],
         )
         old_rpc = fake_grpc_client.rpc_client
@@ -182,9 +182,9 @@ class TiMmWaveCodegenTests(unittest.TestCase):
         dynamic_device.install_driver_if_stale = lambda **_kwargs: False
         try:
             module = types.ModuleType(
-                "remoteRF.drivers.ti_mmwave.ti_mmwave_remote"
+                "remoterf.drivers.ti_mmwave.ti_mmwave_remote"
             )
-            module.__package__ = "remoteRF.drivers.ti_mmwave"
+            module.__package__ = "remoterf.drivers.ti_mmwave"
             exec(_codegen(self._schema()), module.__dict__)
             radar = module.TiMmWave("token")
             self.assertEqual(radar.device_info["bridge_serial"], "00DF4F69")
@@ -210,14 +210,14 @@ class TiMmWaveCodegenTests(unittest.TestCase):
         finally:
             dynamic_device._DRIVERS_DIR = old_drivers_dir
 
-        self.assertIn("remoteRF.drivers.support.ti_mmwave", init_text)
+        self.assertIn("remoterf.drivers.support.ti_mmwave", init_text)
         self.assertIn('__all__.append("ti_mmwave")', init_text)
         self.assertIn(
             'for _name in getattr(ti_mmwave, "__all__", ()):',
             init_text,
         )
         self.assertIn(
-            "'ti_mmwave': 'remoteRF.drivers.support.ti_mmwave'",
+            "'ti_mmwave': 'remoterf.drivers.support.ti_mmwave'",
             remote_text,
         )
 

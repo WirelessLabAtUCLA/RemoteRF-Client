@@ -101,11 +101,6 @@ class RemoteRFAccount:
         if self.is_https_home:
             with _busy("Reserving…"):
                 reservation = self.backend.reserve(device_id, int(start_time.timestamp()), int(end_time.timestamp()))
-            try:
-                from ..drivers.dynamic_device import install_driver
-                install_driver(device_id=reservation['device_id'])
-            except Exception as e:
-                print(f"Warning: could not install driver for device {reservation['device_id']}: {e}")
             # The HOME reference is the driver handle: adi.Pluto("<deployment>:<id>")
             return reservation['device_id']
         username, credential_secret = self._rpc_credentials()
@@ -115,13 +110,19 @@ class RemoteRFAccount:
         if 'ace' in response.results:
             raise Exception(f'{unmap_arg(response.results["ace"])}')
         elif 'Token' in response.results:
-            token = unmap_arg(response.results["Token"])
-            try:
-                from ..drivers.dynamic_device import install_driver
-                install_driver(token=token, device_id=device_id)
-            except Exception as e:
-                print(f"Warning: could not install driver for device {device_id}: {e}")
-            return token
+            return unmap_arg(response.results["Token"])
+
+    def install_reserved_driver(self, handle, device_id):
+        """Separate from reserve_device: the token is shown before this network
+        step runs, so a failed or stuck driver fetch cannot lose it."""
+        try:
+            from ..drivers.dynamic_device import install_driver
+            if self.is_https_home:
+                install_driver(device_id=handle)
+            else:
+                install_driver(token=handle, device_id=device_id)
+        except Exception as e:
+            print(f"Warning: could not install driver for device {device_id}: {e}")
             
     def get_reservations(self):
         with _busy("Asking the labs for reservations…"):

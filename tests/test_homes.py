@@ -7,8 +7,8 @@ from unittest import mock
 import pytest
 from remoterf_federation_core import ValidationError, local_capabilities
 
-from remoteRF import remoterf_cli
-from remoteRF.deployment import homes
+from remoterf import remoterf_cli
+from remoterf.deployment import homes
 
 CERT = b"-----BEGIN CERTIFICATE-----\nucla\n-----END CERTIFICATE-----\n"
 OTHER_CERT = b"-----BEGIN CERTIFICATE-----\nnot-ucla\n-----END CERTIFICATE-----\n"
@@ -42,7 +42,7 @@ def reachable(monkeypatch):
             raise OSError("unreachable")
         return served[host]
 
-    monkeypatch.setattr("remoteRF.config.cert_fetcher.fetch_ca_bytes", fetch)
+    monkeypatch.setattr("remoterf.config.cert_fetcher.fetch_ca_bytes", fetch)
     return served
 
 
@@ -157,7 +157,7 @@ def test_the_lan_gets_a_short_timeout_and_the_relay_a_longer_one(monkeypatch):
         seen.append((host, timeout_sec))
         raise OSError("unreachable")
 
-    monkeypatch.setattr("remoteRF.config.cert_fetcher.fetch_ca_bytes", fetch)
+    monkeypatch.setattr("remoterf.config.cert_fetcher.fetch_ca_bytes", fetch)
     with pytest.raises(ValidationError):
         homes.select_route(homes.save_home("ucla", document()))
     assert sorted(seen) == [
@@ -173,7 +173,7 @@ def test_routes_are_probed_concurrently_and_the_lan_still_wins(monkeypatch):
         time.sleep(0.3)  # both take 0.3s; serial would be 0.6s
         return CERT
 
-    monkeypatch.setattr("remoteRF.config.cert_fetcher.fetch_ca_bytes", fetch)
+    monkeypatch.setattr("remoterf.config.cert_fetcher.fetch_ca_bytes", fetch)
     home = homes.save_home("ucla", document())
     started = time.time()
     route, certificate = homes.select_route(home)
@@ -190,8 +190,8 @@ def test_connecting_writes_the_ordinary_direct_profile(reachable):
     route = homes.connect("ucla")
     assert route["kind"] == "relay"
 
-    from remoteRF.deployment.direct import resolve_active_profile
-    from remoteRF.deployment.state import load_target
+    from remoterf.deployment.direct import resolve_active_profile
+    from remoterf.deployment.state import load_target
 
     profile = resolve_active_profile()
     assert profile.grpc_endpoint == "ucla.global.remoterf.net:12321"
@@ -225,7 +225,7 @@ def test_registering_a_home_discovers_saves_and_connects(reachable, monkeypatch)
 # --- migration --------------------------------------------------------------
 
 def test_a_pre_homes_configuration_becomes_the_default_home(tmp_path, monkeypatch):
-    from remoteRF.config.config import _certs_dir, _env_path, _write_env_kv
+    from remoterf.config.config import _certs_dir, _env_path, _write_env_kv
 
     certs = _certs_dir()
     certs.mkdir(parents=True, exist_ok=True)
@@ -251,7 +251,7 @@ def test_reconfiguring_the_direct_target_replaces_a_stale_default_home(monkeypat
     """A pinned "default" home from an old `-c -a` must not outlive the next one:
     once the server's CA changed, its pin would refuse the very server that
     `-c -a` just fetched a fresh CA from."""
-    from remoteRF.config import config as cfg
+    from remoterf.config import config as cfg
 
     certs = cfg._certs_dir()
     certs.mkdir(parents=True, exist_ok=True)
@@ -315,18 +315,19 @@ def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
 
 
 def test_a_blank_code_registers_on_global_and_global_has_its_own_spelling(monkeypatch):
-    answers = iter(["y", ""])
+    answers = iter(["y", "", "y"])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers, ""))
     used_global = mock.Mock(return_value=0)
     assert run_cli(["-r"], monkeypatch, _use_global=used_global) == 0
     used_global.assert_called_once_with(register=True, show_banner=False)  # no lab: the account lives on Global
     used_global.reset_mock()
+    # `-r global` asks for the Terms too, then skips the code prompt.
     assert run_cli(["-r", "global"], monkeypatch, _use_global=used_global) == 0
-    used_global.assert_called_once_with(register=True)
+    used_global.assert_called_once_with(register=True, show_banner=False)
 
 
 def test_declining_the_terms_stops_registration_before_any_code(monkeypatch):
-    from remoteRF.config import config as cfg
+    from remoterf.config import config as cfg
 
     monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(AssertionError(prompt))
                         if "code" in prompt.lower() else "n")
@@ -365,13 +366,8 @@ def test_login_names_a_home_explicitly(monkeypatch, reachable):
     assert run_cli(["-l", "nope"], monkeypatch, _account_shell=shell) == 2
 
 
-def test_login_global_requires_a_global_account(monkeypatch):
+def test_login_global_works_without_a_saved_global_account(monkeypatch):
     homes.save_home("ucla", document())
-    assert run_cli(["-l", "global"], monkeypatch, _account_shell=mock.Mock()) == 2
-
-    homes.remember_global_account(
-        "https://global.remoterf.net", "897541e5-b61f-45f7-a814-8ffeaad2ae69"
-    )
     used_global = mock.Mock(return_value=0)
     assert run_cli(["-l", "global"], monkeypatch, _use_global=used_global) == 0
     used_global.assert_called_once_with(register=False)
@@ -426,9 +422,9 @@ def test_every_command_after_login_goes_native_to_the_home(reachable, monkeypatc
     connection: the same ACC: calls, over the HOME's own gRPC channel."""
     import datetime
 
-    from remoteRF.common.grpc import grpc_pb2
-    from remoteRF.common.utils import map_arg
-    from remoteRF.core import app, grpc_acc
+    from remoterf.common.grpc import grpc_pb2
+    from remoterf.common.utils import map_arg
+    from remoterf.core import app, grpc_acc
 
     reachable["192.168.1.20"] = CERT
     homes.save_home("ucla", document())
@@ -456,7 +452,7 @@ def test_every_command_after_login_goes_native_to_the_home(reachable, monkeypatc
     account.get_devices()
     account.get_reservations()
     monkeypatch.setattr(
-        "remoteRF.drivers.dynamic_device.install_driver", lambda **kw: None
+        "remoterf.drivers.dynamic_device.install_driver", lambda **kw: None
     )
     now = datetime.datetime.now()
     token = account.reserve_device(0, now, now + datetime.timedelta(hours=1))
@@ -475,7 +471,7 @@ def test_every_command_after_login_goes_native_to_the_home(reachable, monkeypatc
     # And the transport those calls ride is this HOME's own direct channel.
     monkeypatch.setattr("grpc.secure_channel", lambda *a, **k: mock.Mock())
     monkeypatch.setattr("grpc.ssl_channel_credentials", lambda **k: "creds")
-    from remoteRF.core import grpc_client as real_client
+    from remoterf.core import grpc_client as real_client
 
     assert real_client.active_endpoint() == "192.168.1.20:12321"
 
@@ -486,8 +482,8 @@ def test_an_https_home_that_activates_without_email_skips_verify(monkeypatch):
     """If the home answers `status: active` (email unavailable), the shell
     must not sit waiting for a verification token that will never arrive, and
     it must still log in to obtain a session."""
-    from remoteRF.core import app as shell
-    from remoteRF.core.grpc_acc import RemoteRFAccount as Account
+    from remoterf.core import app as shell
+    from remoterf.core.grpc_acc import RemoteRFAccount as Account
 
     class Backend:
         capabilities = {
@@ -526,8 +522,8 @@ def test_a_direct_home_keeps_its_login_in_the_keyring_or_a_private_file(monkeypa
 
 
 def test_login_resumes_a_stored_direct_login_without_prompting(monkeypatch):
-    from remoteRF.core import app as shell
-    from remoteRF.core.grpc_acc import RemoteRFAccount as Account
+    from remoterf.core import app as shell
+    from remoterf.core.grpc_acc import RemoteRFAccount as Account
 
     monkeypatch.setattr(homes, "_keyring", lambda: None)  # never the real keychain
     homes.remember_login("ucla", "alice", "tok-abc")
@@ -542,8 +538,8 @@ def test_login_resumes_a_stored_direct_login_without_prompting(monkeypatch):
 
 
 def test_a_broken_stored_login_never_blocks_the_prompt(monkeypatch):
-    from remoteRF.core import app as shell
-    from remoteRF.core.grpc_acc import RemoteRFAccount as Account
+    from remoterf.core import app as shell
+    from remoterf.core.grpc_acc import RemoteRFAccount as Account
 
     # Corrupt file: read as "nothing stored".
     path = homes._login_file("ucla")
@@ -570,15 +566,15 @@ def test_a_broken_stored_login_never_blocks_the_prompt(monkeypatch):
 
 
 def test_the_os_keyring_is_opt_in():
-    from remoteRF.deployment.state import keyring_if_enabled
+    from remoterf.deployment.state import keyring_if_enabled
 
     assert keyring_if_enabled() is None
 
 
 def test_a_direct_login_keeps_the_token_never_the_password(monkeypatch):
-    from remoteRF.common.utils import map_arg
-    from remoteRF.core import app as shell
-    from remoteRF.core.grpc_acc import RemoteRFAccount as Account
+    from remoterf.common.utils import map_arg
+    from remoterf.core import app as shell
+    from remoterf.core.grpc_acc import RemoteRFAccount as Account
 
     class Response:
         results = {"UC": map_arg("alice"), "token": map_arg("tok-from-server")}
@@ -597,8 +593,8 @@ def test_a_direct_login_keeps_the_token_never_the_password(monkeypatch):
 
 
 def test_login_flag_means_login_and_a_failure_asks_again(monkeypatch):
-    from remoteRF.core import app as shell
-    from remoteRF.core.grpc_acc import RemoteRFAccount as Account
+    from remoterf.core import app as shell
+    from remoterf.core.grpc_acc import RemoteRFAccount as Account
 
     account = Account()
     attempts = []
@@ -609,3 +605,30 @@ def test_login_flag_means_login_and_a_failure_asks_again(monkeypatch):
     monkeypatch.setattr(shell, "session", mock.Mock(prompt=lambda *a, **k: pytest.fail("no l/r menu on -l")))
     assert shell.welcome(show_banner=False, initial=["login"]) is True
     assert len(attempts) == 2
+
+
+def test_reserve_shows_the_token_even_when_the_driver_fetch_fails(monkeypatch, capsys):
+    """The token is never stored server-side: a driver fetch that fails or
+    hangs must not stand between the reservation and the user seeing it."""
+    import datetime
+
+    from remoterf.common.grpc import grpc_pb2
+    from remoterf.common.utils import map_arg
+    from remoterf.core import grpc_acc
+
+    def rpc_client(*, function_name, args, connection=None):
+        response = grpc_pb2.GenericRPCResponse()
+        response.results["Token"].CopyFrom(map_arg("reservation-token"))
+        return response
+
+    def install_driver(**kw):
+        raise ConnectionError("direct path down")
+
+    monkeypatch.setattr(grpc_acc, "rpc_client", rpc_client)
+    monkeypatch.setattr("remoterf.drivers.dynamic_device.install_driver", install_driver)
+    account = grpc_acc.RemoteRFAccount("ethan", "secret")
+    now = datetime.datetime.now()
+
+    assert account.reserve_device(0, now, now + datetime.timedelta(hours=1)) == "reservation-token"
+    account.install_reserved_driver("reservation-token", 0)
+    assert "could not install driver" in capsys.readouterr().out

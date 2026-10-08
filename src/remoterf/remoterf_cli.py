@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# src/remoteRF/cli.py
+# src/remoterf/cli.py
 from __future__ import annotations
 
 import argparse
@@ -39,10 +39,10 @@ def _installed_version() -> str:
 
 def _connected_server(timeout_seconds: float = SERVER_CONNECT_TIMEOUT_SECONDS) -> str | None:
     """Return the configured endpoint only after its gRPC channel is ready."""
-    from remoteRF.deployment.state import load_target
+    from remoterf.deployment.state import load_target
     target = load_target()
     if target and target['transport'] == 'https-json':
-        from remoteRF.deployment.backend import selected_backend
+        from remoterf.deployment.backend import selected_backend
         backend = selected_backend()
         try:
             return backend.transport.origin
@@ -50,7 +50,7 @@ def _connected_server(timeout_seconds: float = SERVER_CONNECT_TIMEOUT_SECONDS) -
             backend.close()
     import grpc
 
-    from remoteRF.core.grpc_client import active_endpoint, get_active_channel
+    from remoterf.core.grpc_client import active_endpoint, get_active_channel
 
     try:
         channel = get_active_channel()
@@ -97,8 +97,8 @@ def _read_dotenv_kv(path: Path) -> dict[str, str]:
     return out
 
 def _ensure_config_present() -> tuple[bool, str]:
-    from remoteRF.deployment.state import load_target
-    from remoteRF.deployment.direct import resolve_active_profile
+    from remoterf.deployment.state import load_target
+    from remoterf.deployment.direct import resolve_active_profile
     target = load_target()
     if target and target['transport'] == 'https-json':
         return True, ''
@@ -150,7 +150,7 @@ def print_help() -> None:
     printf("  remoterf -h | --help", Sty.CYAN, "              Show this help", Sty.DEFAULT)
     print()
     printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
-    printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', or a home name", Sty.DEFAULT)
+    printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (ethan@ucla)", Sty.DEFAULT)
     printf("  remoterf -r | --register [global]", Sty.CYAN, " Register with an enrollment code (or a RemoteRF Global account)", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
@@ -171,6 +171,7 @@ def print_help() -> None:
     printf("  remoterf --login", Sty.GREEN)
     printf("  remoterf --login ucla", Sty.GREEN)
     printf("  remoterf --login global", Sty.GREEN)
+    printf("  remoterf --login ethan@ucla", Sty.GREEN)
     printf("  remoterf homes", Sty.GREEN)
     printf("  remoterf --version", Sty.GREEN)
     printf("  remoterf --config --addr 203.0.113.10:12321", Sty.GREEN)
@@ -180,7 +181,8 @@ def print_help() -> None:
 
 def _account_shell(*, register: bool, enrollment_code: str | None = None,
                    server_label: str | None = None, show_banner: bool = True,
-                   home: str | None = None, route: dict | None = None) -> int:
+                   home: str | None = None, route: dict | None = None,
+                   username: str | None = None) -> int:
     ok, _ = _ensure_config_present()
     if not ok:
         _print_server_unavailable()
@@ -189,7 +191,7 @@ def _account_shell(*, register: bool, enrollment_code: str | None = None,
         if _connected_server() is None:
             _print_server_unavailable()
             return 2
-        from remoteRF.core.acc_login import main as account_main
+        from remoterf.core.acc_login import main as account_main
         return int(
             account_main(
                 register=register,
@@ -198,6 +200,7 @@ def _account_shell(*, register: bool, enrollment_code: str | None = None,
                 show_banner=show_banner,
                 home=home,
                 route=route,
+                username=username,
             )
             or 0
         )
@@ -212,15 +215,15 @@ def _global_origin() -> str:
     return os.getenv('REMOTERF_GLOBAL_ORIGIN', 'https://global.remoterf.net')
 
 
-def _use_global(*, register: bool, show_banner: bool = True) -> int:
+def _use_global(*, register: bool, show_banner: bool = True, username: str | None = None) -> int:
     """Register or log in with the RemoteRF Global identity itself.
 
     A Global-native account is complete on its own: it needs no deployment
     HOME, and having one grants no access to any deployment.
     """
-    from remoteRF.deployment import homes
-    from remoteRF.deployment.backend import HttpsJsonAccountBackend
-    from remoteRF.deployment.state import origin, select_target
+    from remoterf.deployment import homes
+    from remoterf.deployment.backend import HttpsJsonAccountBackend
+    from remoterf.deployment.state import origin, select_target
 
     try:
         selected = origin(_global_origin())
@@ -238,7 +241,7 @@ def _use_global(*, register: bool, show_banner: bool = True) -> int:
     except (RuntimeError, ValueError) as exc:
         print(f'Could not reach RemoteRF Global: {exc}')
         return 2
-    return _account_shell(register=register, show_banner=show_banner)
+    return _account_shell(register=register, show_banner=show_banner, username=username)
 
 
 @contextmanager
@@ -249,7 +252,7 @@ def _working(label: str):
     if not sys.stdout.isatty():
         yield
         return
-    from remoteRF.common.utils.banner import supports_unicode
+    from remoterf.common.utils.banner import supports_unicode
 
     frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏" if supports_unicode() else "|/-\\"
     stop = threading.Event()
@@ -293,8 +296,9 @@ def _reason(exc: BaseException) -> str:
     return str(exc)
 
 
-def _use_home(name: str, *, register: bool, enrollment_code: str | None = None) -> int:
-    from remoteRF.deployment import homes
+def _use_home(name: str, *, register: bool, enrollment_code: str | None = None,
+              username: str | None = None) -> int:
+    from remoterf.deployment import homes
 
     try:
         home = homes.load_home(name)
@@ -309,28 +313,43 @@ def _use_home(name: str, *, register: bool, enrollment_code: str | None = None) 
         server_label=f'{name} ({_route_label(route)})',
         home=name,
         route={**route, 'home': home},
+        username=username,
     )
+
+
+def _agree_to_tos() -> bool:
+    """Every registration is a fresh agreement, whoever is at the keyboard --
+    and starting one forgets the old agreement, so backing out here means
+    the next login asks too."""
+    from remoterf.config.config import _confirm_tos, forget_tos_agreement, remember_tos_agreement
+
+    forget_tos_agreement()
+    if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ",
+                        "Registration cancelled."):
+        return False
+    remember_tos_agreement()
+    return True
+
+
+def _register_global() -> int:
+    """`remoterf -r global`: straight to a Global account, same agreement as -r."""
+    print_client_banner(_installed_version(), server="")
+    if not _agree_to_tos():
+        return 1
+    return _use_global(register=True, show_banner=False)
 
 
 def _register() -> int:
     """`remoterf -r`: a deployment enrollment code, or a Global account."""
     from remoterf_federation_core import ValidationError
 
-    from remoteRF.deployment import homes
-
-    from remoteRF.config.config import _confirm_tos, forget_tos_agreement, remember_tos_agreement
+    from remoterf.deployment import homes
 
     # The banner opens the session; the target is not known yet, so the shell
     # below must not print it a second time.
     print_client_banner(_installed_version(), server="")
-    # Every registration is a fresh agreement, whoever is at the keyboard --
-    # and starting one forgets the old agreement, so backing out here means
-    # the next login asks too.
-    forget_tos_agreement()
-    if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ",
-                        "Registration cancelled."):
+    if not _agree_to_tos():
         return 1
-    remember_tos_agreement()
     try:
         entered = input('Enrollment code (Enter for a RemoteRF Global account): ').strip()
     except (EOFError, KeyboardInterrupt):
@@ -362,12 +381,14 @@ def _register() -> int:
 
 
 def _login(target: str | None) -> int:
-    from remoteRF.config.config import require_tos_for_login
-    from remoteRF.deployment import homes
+    from remoterf.config.config import require_tos_for_login
+    from remoterf.deployment import homes
 
     if not require_tos_for_login():
         return 1
     homes.migrate_legacy_target()
+    if target is not None and '@' in target:
+        return _login_as(target)
     if target is None:
         last = homes.last_target()
         saved = sorted(homes.homes())
@@ -383,18 +404,51 @@ def _login(target: str | None) -> int:
             # Nothing saved. A legacy address in .env still logs in there;
             # a fresh install has nothing to log in to, so `-l` is `-r`.
             if not _ensure_config_present()[0]:
-                return _register()
+                return _login_by_username()
             return _account_shell(register=False)
     if target == 'global':
-        if not homes.has_global_account():
-            printf('No RemoteRF Global account is configured here.', Sty.WARNING)
-            printf('Run: ', Sty.GRAY, 'remoterf --register', Sty.CYAN)
-            return 2
+        # Global's address is built in, so a fresh install can log in to an
+        # existing Global account without registering again.
         return _use_global(register=False)
     if target not in homes.homes():
         printf(f'No saved home named {target!r}.', Sty.WARNING)
         return _print_pick_a_target()
     return _use_home(target, register=False)
+
+
+def _login_by_username() -> int:
+    """A fresh install: an account says where it lives (`ethan@ucla`), so
+    asking for it is enough. Enter registers, as `-l` here always did."""
+    try:
+        name = input('Account, e.g. ethan@ucla (Enter to register): ').strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 1
+    if not name:
+        return _register()
+    return _login_as(name)
+
+
+def _login_as(account: str) -> int:
+    """Log in to `name@lab` at that lab; a bare name or an email is Global."""
+    from remoterf.deployment import homes
+
+    name, lab = homes.split_account(account)
+    if lab is None or lab == homes.GLOBAL_ACCOUNTS:
+        return _use_global(register=False, username=name)
+    if lab in homes.homes():
+        return _use_home(lab, register=False, username=name)
+    host = f'{lab}.{homes.GLOBAL_DOMAIN}'
+    try:
+        with _working(f"Looking up {host}…"):
+            lab, home, route = homes.register_home(host)
+    except (RuntimeError, ValueError) as exc:
+        printf(f'Could not reach {host}: {_reason(exc)}', Sty.WARNING)
+        return 2
+    return _account_shell(
+        register=False, server_label=f'{lab} ({_route_label(route)})',
+        home=lab, route={**route, 'home': home}, username=name,
+    )
 
 
 def _print_pick_a_target() -> int:
@@ -404,7 +458,7 @@ def _print_pick_a_target() -> int:
 
 
 def _print_homes() -> int:
-    from remoteRF.deployment import homes
+    from remoterf.deployment import homes
 
     homes.migrate_legacy_target()
     saved = homes.homes()
@@ -434,8 +488,8 @@ def main() -> int:
         return 0
 
     if argv[0] in ("--register", "-register", "-r"):
-        if len(argv) == 2 and argv[1] == "global":
-            return _use_global(register=True)
+        if len(argv) == 2 and argv[1].lstrip("-") == "global":
+            return _register_global()
         if len(argv) > 1:
             print("ERROR: --register takes no arguments (or 'global')")
             return 2
@@ -451,14 +505,14 @@ def main() -> int:
         return _print_homes()
 
     if argv[0] in ("--version", "-version", "-v"):
-        from remoteRF.version import main as version_main
+        from remoterf.version import main as version_main
         
         print("RemoteRF version:", end=" ")
         version_main()
         return 0
 
     if argv[0] in ("--config", "-config", "-c"):
-        from remoteRF.config.config import configure, wipe_config
+        from remoterf.config.config import configure, wipe_config
 
         addr = None
         wipe = False
@@ -527,13 +581,13 @@ def main() -> int:
             return int(wipe_config(yes=yes))
 
         if addr is not None:
-            from remoteRF.deployment.state import origin, select_target, select_direct
+            from remoterf.deployment.state import origin, select_target, select_direct
             # Explicit host:port (even with a scheme) remains direct by default.
             stripped = addr.strip().split('://', 1)[-1]
             use_https = account_transport == 'https-json' or (':' not in stripped and account_transport != 'grpc')
             if use_https:
-                from remoteRF.deployment.backend import HttpsJsonAccountBackend
-                from remoteRF.config.config import _confirm_tos
+                from remoterf.deployment.backend import HttpsJsonAccountBackend
+                from remoterf.config.config import _confirm_tos
                 try:
                     selected_origin = origin(addr)
                     if not _confirm_tos():

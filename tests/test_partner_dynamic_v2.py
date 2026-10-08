@@ -5,17 +5,17 @@ import json
 
 import pytest
 
-from remoteRF.common.grpc import grpc_pb2
-from remoteRF.common.utils import map_arg, unmap_arg
-from remoteRF.core import direct_path
-from remoteRF.core import grpc_client
-from remoteRF.core.dynamic_v2_transport import (
+from remoterf.common.grpc import grpc_pb2
+from remoterf.common.utils import map_arg, unmap_arg
+from remoterf.core import direct_path
+from remoterf.core import grpc_client
+from remoterf.core.dynamic_v2_transport import (
     CONTROL_PROTOCOL_VERSION,
     SCHEMA_VERSION,
     STREAMING_PROTOCOL_VERSION,
     DynamicV2Transport,
 )
-from remoteRF.core.v2_errors import RemoteRFReservationError
+from remoterf.core.v2_errors import RemoteRFReservationError
 
 SCHEMA = {"schema_version": SCHEMA_VERSION, "schema_hash": "sha256:abc"}
 

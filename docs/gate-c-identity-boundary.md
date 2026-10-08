@@ -11,7 +11,7 @@ selected explicitly by the deployment target configuration. A home access
 token is scoped to its issuing HTTPS home and is never accepted as a native
 Server password, device token, reservation token, or destination session.
 
-The old `remoteRF.global_client` package and its Global-specific credential,
+The old `remoterf.global_client` package and its Global-specific credential,
 profile, catalog, route, and CLI compatibility surface are absent. Useful
-generic account-home functionality lives under `remoteRF.deployment`; future
+generic account-home functionality lives under `remoterf.deployment`; future
 federation transport and resource access are outside Gate C.
