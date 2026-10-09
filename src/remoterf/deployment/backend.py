@@ -3,6 +3,7 @@
 import re
 import time
 import inspect
+import threading
 import base64
 from remoterf_federation_core import (
     DEVICE_AGGREGATION_TIMEOUT_SECONDS,
@@ -98,6 +99,9 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
         self.clock = clock
         self.store = store or CredentialStore(self.transport.origin, ident)
         self.credentials = None
+        # One refresh at a time: a direct-path thread shares this session, and
+        # Global revokes a session whose refresh token is presented twice.
+        self._refresh_lock = threading.RLock()
 
     def _operation(self, name):
         if name not in self.capabilities["supported_operations"]:
@@ -186,33 +190,35 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
 
     def refresh(self):
         self._operation("ACC:refresh_session")
-        if not self.credentials:
-            raise AccountBackendError("Log in first")
-        old = self.credentials
-        try:
-            pair = self._validate_session(
-                self.transport.request(
-                    "POST",
-                    self.base + "/refresh",
-                    data={"refresh_token": old["refresh_token"]},
-                ),
-                old["subject_id"],
-            )
-        except Exception:
-            # Ambiguous rotation must not automatically replay a spent refresh token.
-            self.credentials = None
-            self.store.clear()
-            raise
-        self.credentials = pair
-        self.store.save(pair)
-        return pair
+        with self._refresh_lock:
+            if not self.credentials:
+                raise AccountBackendError("Log in first")
+            old = self.credentials
+            try:
+                pair = self._validate_session(
+                    self.transport.request(
+                        "POST",
+                        self.base + "/refresh",
+                        data={"refresh_token": old["refresh_token"]},
+                    ),
+                    old["subject_id"],
+                )
+            except Exception:
+                # Ambiguous rotation must not automatically replay a spent refresh token.
+                self.credentials = None
+                self.store.clear()
+                raise
+            self.credentials = pair
+            self.store.save(pair)
+            return pair
 
     def _access(self):
-        if not self.credentials:
-            raise AccountBackendError("Log in first")
-        if self.credentials["access_expires_at"] <= self.clock() + 5:
-            self.refresh()
-        return self.credentials["access_token"]
+        with self._refresh_lock:
+            if not self.credentials:
+                raise AccountBackendError("Log in first")
+            if self.credentials["access_expires_at"] <= self.clock() + 5:
+                self.refresh()
+            return self.credentials["access_token"]
 
     def _own(self, value):
         if (
@@ -382,6 +388,25 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
         )
         return self._device_frame(value)
+
+    def device_direct(self, ref, deployment_id, ice):
+        """Signal a direct path to the lab behind ``ref`` (a device ref under
+        this login, or an ``rfg_`` token with no login): the ICE offer goes in,
+        the lab's signed answer comes back as Global relayed it."""
+
+        if ref.startswith("rfg_"):
+            data, auth = {"token": ref, "ice": ice}, {}
+            if deployment_id is not None:
+                data["deployment_id"] = deployment_id
+        else:
+            data, auth = {"device_id": self._ref(ref, "device_id"), "ice": ice}, {"access": self._access()}
+        value = self.transport.request(
+            "POST", self.base + "/devices/direct", data=data,
+            overall_timeout=DEVICE_WRITE_TIMEOUT_SECONDS + 5, **auth,
+        )
+        if value.get("provenance") != "destination" or type(value.get("ice")) is not str:
+            raise AccountBackendError("Invalid home device response")
+        return value["ice"]
 
     @staticmethod
     def _device_frame(value):

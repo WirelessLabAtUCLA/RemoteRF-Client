@@ -43,3 +43,56 @@ def test_a_protocol_error_from_v2_falls_back_too(monkeypatch):
     calls = _v1(monkeypatch)
     assert dynamic_device.fetch_idl(token="tok2", prefer_v2=True)["device_type"] == "sim_sdr"
     assert calls == ["IDL:get_drivers"]
+
+
+def _schema_rpc(monkeypatch, schema_hash):
+    import json
+
+    import remoterf.core.grpc_client as grpc_client
+
+    calls = []
+
+    def fake_rpc(*, function_name, args, connection=None):
+        calls.append(function_name)
+        schema = {"device_type": "sim_sdr", "schema_hash": schema_hash}
+        return grpc_pb2.GenericRPCResponse(results={"schema": map_arg(json.dumps(schema))})
+
+    monkeypatch.setattr(grpc_client, "rpc_client", fake_rpc)
+    dynamic_device._verified.clear()
+    return calls
+
+
+def test_a_matching_v1_driver_costs_one_rpc_and_none_again_in_this_process(monkeypatch):
+    import remoterf.drivers.dynamic_v2 as dynamic_v2
+
+    def probe(token):
+        raise AssertionError("no v2 probe for a matching v1 driver")
+
+    monkeypatch.setattr(dynamic_v2, "fetch_schema_v2", probe)
+    calls = _schema_rpc(monkeypatch, "sha256:v1")
+    assert dynamic_device.install_driver_if_stale(token="tok3", current_hash="sha256:v1") is False
+    assert calls == ["IDL:get_drivers"]
+    assert dynamic_device.install_driver_if_stale(token="tok3", current_hash="sha256:v1") is False
+    assert calls == ["IDL:get_drivers"]  # re-created driver: no schema RPC
+    dynamic_device.install_driver_if_stale(token="tok4", current_hash="sha256:v1")
+    assert len(calls) == 2  # another reservation is checked again
+
+
+def test_a_v1_hash_that_differs_still_lets_v2_decide_and_reinstall(monkeypatch, tmp_path):
+    import remoterf.drivers.dynamic_v2 as dynamic_v2
+
+    v2 = {"schema_version": "2.0", "device_type": "sim_sdr", "schema_hash": "sha256:v2"}
+    probes = []
+    monkeypatch.setattr(dynamic_v2, "fetch_schema_v2", lambda token: probes.append(token) or v2)
+    written = []
+    monkeypatch.setattr(dynamic_device, "_write_driver_files", lambda schema: written.append(schema) or tmp_path)
+    calls = _schema_rpc(monkeypatch, "sha256:v1")
+
+    # A v2 driver whose Server reported a mismatch: v2 still matches, never memoized.
+    for _ in range(2):
+        assert dynamic_device.install_driver_if_stale(token="tok5", current_hash="sha256:v2") is False
+    assert probes == ["tok5", "tok5"] and calls == ["IDL:get_drivers"] * 2 and written == []
+
+    # A stale v1 driver: reinstalled from what v2 says, exactly as before.
+    assert dynamic_device.install_driver_if_stale(token="tok5", current_hash="sha256:old") is True
+    assert written == [v2]

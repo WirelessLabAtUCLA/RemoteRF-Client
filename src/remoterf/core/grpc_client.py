@@ -25,6 +25,7 @@ import grpc
 from ..common.grpc import grpc_pb2
 from ..common.grpc import grpc_pb2_grpc
 from ..common.utils import *
+from ..common.utils.process_arg import IQ16, fits_iq16, map_iq16
 from .secure_channel import build_secure_channel
 from . import direct_path
 from ..deployment.direct import ConnectionProfile, DirectConnectionProfile, resolve_active_profile
@@ -171,6 +172,9 @@ def get_tcp_calls():
 # GenericRPCResponse, so generated drivers do not know the difference.
 
 _federated_backend = None
+# A direct-path thread may ask at the same moment: two backends would each
+# refresh the stored session, and Global revokes a replayed refresh token.
+_federated_backend_lock = threading.Lock()
 
 
 def bind_federated_backend(backend) -> None:
@@ -181,15 +185,16 @@ def bind_federated_backend(backend) -> None:
 
 def federated_backend():
     global _federated_backend
-    if _federated_backend is None:
-        from ..deployment.backend import selected_backend
-        backend = selected_backend()
-        if backend.capabilities["account_transport"] != "https-json":
-            raise RuntimeError("Federated device references require an HTTPS account home")
-        if not backend.resume():
-            raise RuntimeError("Log in to the account home first (run `remoterf`, then `login`)")
-        _federated_backend = backend
-    return _federated_backend
+    with _federated_backend_lock:
+        if _federated_backend is None:
+            from ..deployment.backend import selected_backend
+            backend = selected_backend()
+            if backend.capabilities["account_transport"] != "https-json":
+                raise RuntimeError("Federated device references require an HTTPS account home")
+            if not backend.resume():
+                raise RuntimeError("Log in to the account home first (run `remoterf`, then `login`)")
+            _federated_backend = backend
+        return _federated_backend
 
 
 def _federated_ref(function_name, args):
@@ -207,6 +212,19 @@ def _federated_call(route, function_name, args):
     """Relay through Global: an ``rfg_`` token needs no login, a ref the bearer."""
     from ..deployment.http import AccountBackendError
     ref = getattr(route, "wire", route)
+    if direct_path.wants(function_name):
+        path = direct_path.global_path(ref, getattr(route, "deployment_id", None))
+        if path is not None:
+            try:
+                response = path.call(function_name, args)
+            except direct_path.PathError:
+                pass  # the path is down now; this call takes the relay, once
+            else:
+                # The lab refused it unrun: the path's reservation is over, but a
+                # newer one on this device may be live, and the relay honours that.
+                refused = "a" in response.results and unmap_arg(response.results["a"]) == "the reservation has ended"
+                if not refused:
+                    return response
     request = grpc_pb2.GenericRPCRequest(function_name=function_name, args=args)
     try:
         if ref.startswith("rfg_"):
@@ -455,6 +473,34 @@ def rpc_client(*, function_name, args, connection=None):
         # array. REMOTERF_RX_WIRE="" or "c128" opts out (servers ignore unknown).
         # Also through a HOME, whose relay caps each response at ~768 KiB.
         args = {**args, "wire": map_arg(wire)}
+    token = _device_token(function_name, args)
+    if function_name.endswith(":tx:CALL1") and "arg1" in args and token in _ci16_tokens:
+        args = {**args, "arg1": _tx_wire(args["arg1"])}
+    response = _dispatch(function_name, args, connection)
+    if token is not None and function_name.endswith(":rx:CALL0") and _is_ci16(response.results.get(function_name.split(":")[1])):
+        _ci16_tokens.add(token)
+    return response
+
+
+# Device tokens whose Server answered an rx in ci16: it decodes ci16 too (the
+# same Gate I slice 3 change), so their tx may go out that way.
+_ci16_tokens: set = set()
+
+
+def _is_ci16(arg) -> bool:
+    return arg is not None and arg.WhichOneof("value") == "ndarray_value" and arg.ndarray_value.dtype == IQ16
+
+
+def _tx_wire(arg):
+    """TX samples as int16 IQ, a quarter of complex128, only when that is
+    lossless (integer-valued, in range); REMOTERF_TX_WIRE="" opts out."""
+    if os.getenv("REMOTERF_TX_WIRE", "i16").strip().lower() != "i16" or arg.WhichOneof("value") != "ndarray_value":
+        return arg
+    samples = unmap_arg(arg)
+    return map_iq16(samples) if fits_iq16(samples) else arg
+
+
+def _dispatch(function_name, args, connection):
     ref = _federated_ref(function_name, args) if connection is None else None
     if ref is not None:
         return _finish(_federated_call(ref, function_name, args))

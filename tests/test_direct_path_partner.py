@@ -14,8 +14,8 @@ from remoterf.core import direct_path, grpc_client
 class FakePath:
     instances: list = []
 
-    def __init__(self, *, offer, server_name, ca_pem, stun=None):
-        self.offer, self.server_name, self.ca_pem = offer, server_name, ca_pem
+    def __init__(self, *, offer, server_name, ca_pem, stun=None, memo=None):
+        self.offer, self.server_name, self.ca_pem, self.memo = offer, server_name, ca_pem, memo
         self.state, self.calls = "ready", []
         FakePath.instances.append(self)
 
@@ -32,8 +32,9 @@ class FakePath:
     repunch = True  # whether a woken path comes back within the wait
 
     def wake(self, wait=0.0):
+        # As the real one: only an idle path is waited for; a down one retries in the background.
         self.woken = getattr(self, "woken", 0) + 1
-        if wait and self.repunch:
+        if wait and self.repunch and self.state == "idle":
             self.state = "ready"
 
     def stop(self):
@@ -58,7 +59,7 @@ def test_a_marked_token_gets_its_own_path_and_other_tokens_do_not(monkeypatch):
     direct_path.mark_partner("tok", "owner-uuid")
 
     path = direct_path.current(token="tok")
-    assert path is FakePath.instances[0]
+    assert path is FakePath.instances[0] and path.memo == "owner-uuid"
     assert direct_path.current(token="tok") is path  # one path per token, kept
     assert direct_path.current(token="native") is None  # the home's path, not opened here
     assert direct_path.current() is None
@@ -126,7 +127,7 @@ def test_a_partner_path_that_is_down_sends_the_call_to_the_home(monkeypatch):
     direct_path.mark_partner("tok", "owner-uuid")
     path = direct_path.current(token="tok")
     path.state = "down"
-    assert direct_path.current(token="tok") is None
+    assert direct_path.current(token="tok") is None and path.woken == 1  # a failed path retries on demand
     path.state = "idle"
     path.repunch = False
     assert direct_path.current(token="tok") is None  # woken, but not back in time: the relay it is

@@ -1128,7 +1128,8 @@ class DriverInstallPathTests(unittest.TestCase):
             self.assertFalse(dynamic_device.install_driver_if_stale(token="t", current_hash=self.V2["schema_hash"]))
 
         seen, text, _ = self._run(lambda plain: self.V1, call)
-        self.assertEqual(len(seen), 2)
+        # install, the v1 check, then v2's say (no v2 channel here: v1 again)
+        self.assertEqual(len(seen), 3)
         self.assertIn("build_uhd_bindings", text)
 
     def test_a_partner_v1_answer_replaces_an_installed_v2_driver(self):

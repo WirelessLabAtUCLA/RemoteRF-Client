@@ -64,6 +64,7 @@ def routes(monkeypatch, tmp_path):
     (config / ".env").write_text(
         f"REMOTERF_ADDR=203.0.113.10:12321\nREMOTERF_CA_CERT={ca}\nREMOTERF_PROFILE=ucla\n")
     monkeypatch.setattr(direct_path, "current", lambda token=None: None)
+    monkeypatch.setattr(direct_path, "global_path", lambda ref, deployment_id=None: None)
     active = Stub()
     monkeypatch.setattr(grpc_client, "get_active_connection", lambda: SimpleNamespace(stub=active))
     monkeypatch.setattr(homes, "discover", _never)

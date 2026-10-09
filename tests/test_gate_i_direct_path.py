@@ -262,6 +262,40 @@ class RoutingTests(unittest.TestCase):
             grpc_client.rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("dep:103")})
         self.assertEqual(unmap_arg(seen[0]["wire"]), "i16")
 
+    def test_tx_goes_ci16_only_once_this_tokens_server_answered_an_rx_in_ci16(self):
+        from remoterf.common.utils.process_arg import map_iq16
+        from remoterf.core import grpc_client
+
+        iq = np.array([1 + 2j, -3 - 4j, 32767 - 32767j])  # complex128, integer-valued
+        sent = []
+
+        def call(name, args):
+            if name.endswith(":tx:CALL1"):
+                sent.append(args["arg1"])
+            if name.endswith(":rx:CALL0"):
+                return grpc_pb2.GenericRPCResponse(results={"rx": map_iq16(iq)})
+            return grpc_pb2.GenericRPCResponse()
+
+        self._path(call)
+        grpc_client._ci16_tokens.clear()
+        self.addCleanup(grpc_client._ci16_tokens.clear)
+
+        def tx(samples, token="t"):
+            grpc_client.rpc_client(function_name="adalm_pluto:tx:CALL1", args={"a": map_arg(token), "arg1": map_arg(samples)})
+
+        with mock.patch.dict("os.environ"):
+            os.environ.pop("REMOTERF_TX_WIRE", None)
+            tx(iq)  # this Server has not shown it decodes ci16
+            grpc_client.rpc_client(function_name="adalm_pluto:rx:CALL0", args={"a": map_arg("t")})
+            tx(iq)
+            tx(iq + 0.5)  # not lossless
+            tx(iq, token="other")  # another Server, maybe
+        with mock.patch.dict("os.environ", {"REMOTERF_TX_WIRE": ""}):  # opt out
+            tx(iq)
+        self.assertEqual([arg.ndarray_value.dtype for arg in sent], ["<c16", "ci16", "<c16", "<c16", "<c16"])
+        self.assertEqual(len(sent[1].ndarray_value.data), 4 * len(iq))
+        self.assertTrue(np.array_equal(unmap_arg(sent[1]), iq))
+
     def test_a_path_that_is_not_ready_is_skipped(self):
         from remoterf.core.grpc_client import rpc_client
 
@@ -417,19 +451,97 @@ class LoopbackPathTests(unittest.TestCase):
             self.skipTest("no default route")
         self.assertEqual(asyncio.run(run()), [("host", address)])
 
-    def test_no_stun_answer_fails_fast_without_an_offer(self):
+    def test_no_stun_answer_still_offers_host_candidates(self):
+        # A lab on this machine or LAN, or its fixed port, needs no reflexive address.
         offers = []
         path = direct_path.DirectPath(
-            offer=lambda offer: offers.append(offer), server_name=SERVER_NAME,
-            ca_pem=self.ca_pem, stun=("192.0.2.1", 3478),  # TEST-NET: never answers
+            offer=lambda offer: offers.append(offer) or {"ufrag": "u", "pwd": "p", "candidates": []},
+            server_name=SERVER_NAME, ca_pem=self.ca_pem, stun=("192.0.2.1", 3478),  # TEST-NET: never answers
         )
         self.addCleanup(path.stop)
-        started = time.monotonic()
         path.start()
         self.assertFalse(path.wait(15))
-        self.assertLess(time.monotonic() - started, direct_path.STUN_SECONDS + 3)
-        self.assertIn("no STUN answer", path.reason)
-        self.assertEqual(offers, [])
+        self.assertEqual(len(offers), 1)
+        if direct_path.default_route_address() is not None:
+            self.assertTrue(offers[0]["candidates"])
+        self.assertTrue(all(" typ host" in sdp for sdp in offers[0]["candidates"]), offers[0]["candidates"])
+
+    def _until(self, condition, seconds=15):
+        deadline = time.monotonic() + seconds
+        while not condition() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return condition()
+
+    def test_a_failed_race_is_remembered_and_this_network_is_not_signaled_again(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as other:
+            other_ca = write_certs(Path(other))  # the server keeps its own cert: every race fails
+        server = FakeServer(self.cert_dir, self.handler)
+        self.addCleanup(server.close)
+        first = direct_path.DirectPath(offer=server.offer, server_name=SERVER_NAME, ca_pem=other_ca, stun=None, memo="lab")
+        self.addCleanup(first.stop)
+        first.start()
+        self.assertTrue(self._until(lambda: first.state == "down"), first.describe())
+        self.assertEqual(direct_path._memo_outcome("lab")[0], "failed")
+        self.assertEqual(server.offers, 1)
+
+        # Another process on this network: no signaling, and no wait for it.
+        with mock.patch.object(direct_path, "MEMO_SECONDS", 3):
+            second = direct_path.DirectPath(offer=server.offer, server_name=SERVER_NAME, ca_pem=other_ca, stun=None, memo="lab")
+            self.addCleanup(second.stop)
+            started = time.monotonic()
+            second.start()
+            self.assertFalse(second.wait())
+            self.assertLess(time.monotonic() - started, 0.2)
+            time.sleep(3.5)  # past the memo: still nothing until a call wants the path
+            self.assertEqual(server.offers, 1)
+            second.wake()
+            self.assertTrue(self._until(lambda: server.offers == 2, 5))
+            time.sleep(0.5)
+            self.assertEqual(server.offers, 2)
+
+    def test_wait_blocks_only_where_the_path_last_worked(self):
+        server = FakeServer(self.cert_dir, self.handler)
+        self.addCleanup(server.close)
+
+        def slow(offer):
+            time.sleep(0.5)
+            return server.offer(offer)
+
+        first = direct_path.DirectPath(offer=slow, server_name=SERVER_NAME, ca_pem=self.ca_pem, stun=None, memo="lab2")
+        self.addCleanup(first.stop)
+        started = time.monotonic()
+        first.start()
+        self.assertFalse(first.wait())  # never worked here: the relay at once
+        self.assertLess(time.monotonic() - started, 0.3)
+        self.assertTrue(self._until(lambda: first.ready), first.describe())
+        self.assertEqual(direct_path._memo_outcome("lab2")[0], "ready")
+
+        second = direct_path.DirectPath(offer=slow, server_name=SERVER_NAME, ca_pem=self.ca_pem, stun=None, memo="lab2")
+        self.addCleanup(second.stop)
+        second.start()
+        self.assertTrue(second.wait(15), second.describe())  # it worked here: worth the wait
+
+    def test_a_refused_offer_retries_only_when_a_call_wants_it(self):
+        offers = []
+
+        def refuse(offer):
+            offers.append(offer)
+            raise direct_path.PathError("no_active_reservation [home]")
+
+        with mock.patch.object(direct_path, "RETRY_SECONDS", 0.2):
+            path = direct_path.DirectPath(offer=refuse, server_name=SERVER_NAME, ca_pem=self.ca_pem, stun=None, memo="lab3")
+            self.addCleanup(path.stop)
+            path.start()
+            time.sleep(1)
+            self.assertEqual(len(offers), 1)  # no background polling
+            path.wake()
+            self.assertTrue(self._until(lambda: len(offers) == 2, 5))
+            time.sleep(0.5)
+            self.assertEqual(len(offers), 2)
+        self.assertEqual(path.state, "down")
+        self.assertIsNone(direct_path._memo_outcome("lab3"))  # a refusal is not the network's fault
 
     def test_a_refused_offer_stays_on_the_relay(self):
         def refuse(offer):

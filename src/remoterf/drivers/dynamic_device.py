@@ -1642,6 +1642,11 @@ def _read_schema_hash(path: Path) -> str | None:
     return None
 
 
+# (wire token, v1 schema hash) pairs this process already checked: a driver
+# re-created in a notebook makes no schema RPC for the same reservation.
+_verified: set = set()
+
+
 def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
     """
     Fetch the server schema hash via the reservation token and reinstall the
@@ -1657,6 +1662,17 @@ def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
 
         from remoterf.drivers.pluto import *
     """
+    from ..core.grpc_client import wire_token
+
+    key = (wire_token(token), current_hash)
+    if key in _verified:
+        return False
+    # The v1 schema first: every device publishes one, and a v1 driver (Pluto)
+    # matches it in one RPC. The v2 probe only decides a reinstall.
+    schema = fetch_idl(token=token, prefer_v2=False)
+    if schema.get("schema_hash") == current_hash:
+        _verified.add(key)
+        return False
     schema = fetch_idl(token=token, prefer_v2=True)
     if schema.get("schema_hash") == current_hash:
         return False

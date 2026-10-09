@@ -52,6 +52,8 @@ def test_device_rpc_relays_serialized_frames_through_the_home(monkeypatch):
         "response_b64": base64.b64encode(answer.SerializeToString()).decode(),
     }
     grpc_client.bind_federated_backend(backend)
+    from remoterf.core import direct_path
+    monkeypatch.setattr(direct_path, "global_path", lambda ref, deployment_id=None: None)
     monkeypatch.setattr(grpc_client, "get_active_connection", Mock(side_effect=AssertionError("no direct transport")))
 
     response = grpc_client.rpc_client(function_name="pluto:tx_lo:GET", args={"a": map_arg(REF)})
@@ -113,3 +115,61 @@ def test_reserve_and_cancel_use_home_references_and_verify_provenance():
     unsupported, _ = _backend()
     with pytest.raises(AccountBackendError, match="Operation unavailable"):
         unsupported.device_rpc(REF, b"x")
+
+
+def test_device_direct_posts_bearer_or_token_body():
+    backend, transport = _backend()
+    transport.request.return_value = {"provenance": "destination", "deployment_id": DEST, "ice": "ANSWER"}
+    assert backend.device_direct(REF, None, "OFFER") == "ANSWER"
+    assert transport.request.call_args.args == ("POST", "/v2/deployment/devices/direct")
+    kwargs = transport.request.call_args.kwargs
+    assert kwargs["data"] == {"device_id": REF, "ice": "OFFER"} and kwargs["access"] == "acc"
+
+    rfg = "rfg_" + "A" * 43
+    backend.device_direct(rfg, DEST, "OFFER")
+    kwargs = transport.request.call_args.kwargs
+    assert kwargs["data"] == {"token": rfg, "deployment_id": DEST, "ice": "OFFER"} and "access" not in kwargs
+    backend.device_direct(rfg, None, "OFFER")
+    assert transport.request.call_args.kwargs["data"] == {"token": rfg, "ice": "OFFER"}
+
+    for bad in ({"provenance": "home", "ice": "x"}, {"provenance": "destination"}, {"provenance": "destination", "ice": 1}):
+        transport.request.return_value = bad
+        with pytest.raises(AccountBackendError, match="Invalid home device response"):
+            backend.device_direct(REF, None, "OFFER")
+    with pytest.raises(AccountBackendError, match="invalid_device_id"):
+        backend.device_direct("12", None, "OFFER")
+
+
+def test_concurrent_access_refreshes_once():
+    import threading
+    import time
+
+    backend, transport = _backend("ACC:refresh_session")
+    backend.credentials = {"access_token": "old", "refresh_token": "r1", "access_expires_at": 0, "subject_id": HOME}
+    spent = []
+
+    def refresh(method, path, **kwargs):
+        spent.append(kwargs["data"]["refresh_token"])
+        time.sleep(0.2)  # both threads see the expired token meanwhile
+        return {"deployment_id": HOME, "subject_id": HOME, "username": "jdoe", "access_token": "new",
+                "refresh_token": "r2", "token_type": "Bearer",
+                "access_expires_at": 10**12, "refresh_expires_at": 10**12}
+
+    transport.request.side_effect = refresh
+    got = []
+    threads = [threading.Thread(target=lambda: got.append(backend._access())) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(5)
+    assert spent == ["r1"] and got == ["new", "new"]  # a replayed refresh token would end the session
+
+
+def test_https_keeps_an_idle_connection_for_a_minute(monkeypatch):
+    from remoterf.deployment import http
+
+    seen = {}
+    monkeypatch.setattr(http.httpx, "Client", lambda **kwargs: seen.update(kwargs) or Mock())
+    http.JsonTransport("https://home.example")
+    limits = seen["limits"]
+    assert (limits.keepalive_expiry, limits.max_connections, limits.max_keepalive_connections) == (60, 100, 20)

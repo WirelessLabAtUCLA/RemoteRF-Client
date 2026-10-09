@@ -19,9 +19,11 @@ On a home reached over its relay, ICE (aioice) punches one UDP pair to the
 Server and QUIC (aioquic) runs over it; device RPCs then travel as one stream
 per call (4-byte big-endian length + GenericRPCRequest, reply likewise)
 instead of through the relay. Control RPCs (ACC:*) stay on gRPC. When the
-punch fails or the path dies, calls fall back to gRPC and the path is retried
-every 30 s. Signaling is ACC:direct_offer over the channel the client already
-has. See RemoteRF-Server docs/gate-i-direct-path.md.
+punch fails or the path dies, calls fall back to gRPC; a path that died is
+retried after 30 s, a failed attempt only once a device call wants it.
+Signaling is ACC:direct_offer over the channel the client already has. See
+RemoteRF-Server docs/gate-i-direct-path.md. A Global device ref or rfg_
+token signals through Global instead (global_path).
 
 A partner lab's device (one the home lists on a federation agreement) gets a
 path of its own, punched to that lab: the offer goes to the home with the
@@ -42,6 +44,7 @@ import asyncio
 import atexit
 import collections
 import contextlib
+import hashlib
 import json
 import os
 import secrets
@@ -74,6 +77,8 @@ FIXED_SECONDS = 2.0  # a reachable fixed port answers in one round trip; a filte
 SETTLE_SECONDS = 20.0  # gathering, the offer RPC and both budgets: one attempt, worst case
 WAIT_SECONDS = 3.0  # how long a login or a first device call waits for that attempt
 RETRY_SECONDS = 30.0
+MEMO_SECONDS = 600  # a route that failed here is not signaled again for this long, by any process
+MEMO_FILE = "direct-v1.json"
 IDLE_SECONDS = 600
 SLEEP_CHECK_SECONDS = 5.0  # how often the path looks for a system sleep it slept through
 async def close_ice(ice) -> None:
@@ -202,6 +207,53 @@ class PathError(Exception):
     """The direct path could not carry this call and is down now."""
 
 
+class PathUnavailable(PathError):
+    """This route can never carry a direct path: stop trying."""
+
+
+# ---- what the last attempt per (route, network) came to, across processes ----
+#
+# Keys are hashes: no ref, token or address is stored in clear.
+
+def _memo_key(scope: str) -> str:
+    return hashlib.sha256(f"{scope}|{default_route_address()}".encode()).hexdigest()[:32]
+
+
+def _memo_entries() -> dict:
+    from ..deployment.state import root
+
+    memo = json.loads((root() / MEMO_FILE).read_text())
+    now = time.time()
+    return {key: [str(value[0]), int(value[1])] for key, value in memo.items() if now - value[1] < 86400}
+
+
+def _memo_outcome(scope: Optional[str]) -> Optional[tuple[str, int]]:
+    """("ready" | "failed" | "unavailable", when) for ``scope`` on this network, if known."""
+    if scope is None:
+        return None
+    try:
+        outcome, at = _memo_entries()[_memo_key(scope)]
+        return outcome, at
+    except Exception:  # noqa: BLE001 - ponytail: a lost memo costs one extra attempt
+        return None
+
+
+def _remember(scope: Optional[str], outcome: str) -> None:
+    if scope is None:
+        return
+    try:
+        from ..deployment.state import private_write, root
+
+        try:
+            memo = _memo_entries()
+        except Exception:  # noqa: BLE001 - none yet, or unreadable: start over
+            memo = {}
+        memo[_memo_key(scope)] = [outcome, int(time.time())]
+        private_write(root() / MEMO_FILE, memo)
+    except Exception:  # noqa: BLE001 - ponytail: a lost memo costs one extra attempt
+        pass
+
+
 def _why(exc: BaseException) -> str:
     return "timed out" if isinstance(exc, asyncio.TimeoutError) else f"{type(exc).__name__}: {exc}"
 
@@ -257,14 +309,18 @@ class DirectPath:
     ``offer`` sends the ICE offer dict and returns the answer dict (it runs
     the ACC:direct_offer RPC, blocking). ``server_name`` is the hostname the
     Server's certificate must carry; ``ca_pem`` the CA pinned for this home.
+    ``memo`` names the route in the cross-process record of how the last
+    attempt on this network went (None: no record, and calls always wait).
     """
 
     def __init__(self, *, offer: Callable[[dict], dict], server_name: str, ca_pem: bytes,
-                 stun: Optional[tuple[str, int]] = STUN):
+                 stun: Optional[tuple[str, int]] = STUN, memo: Optional[str] = None):
         self._offer = offer
         self._server_name = server_name
         self._ca_pem = ca_pem
         self._stun = stun
+        self._memo = memo
+        self._answered = False  # this attempt's offer was answered: a failure now is the network's
         self._id = secrets.token_hex(8)  # tells this process's path from the session's others
         self._loop = asyncio.new_event_loop()
         quiet_aioice_errors(self._loop)
@@ -300,10 +356,19 @@ class DirectPath:
         """Block until the first attempt has settled, or ``timeout``; True when ready.
 
         A punch that works takes well under a second; one that cannot work
-        spends the whole ICE budget, and nobody should wait for that.
+        spends the whole ICE budget, and nobody should wait for that. Nor
+        for a path that has not worked on this network before.
         """
-        self._settled.wait(timeout)
+        if self._worth_waiting():
+            self._settled.wait(timeout)
         return self.ready
+
+    def _worth_waiting(self) -> bool:
+        """Only where the last attempt on this network reached ready."""
+        if self._memo is None:
+            return True
+        outcome = _memo_outcome(self._memo)
+        return outcome is not None and outcome[0] == "ready"
 
     @property
     def ready(self) -> bool:
@@ -342,6 +407,8 @@ class DirectPath:
         """A device call wants the idle path back; with ``wait`` it gives the
         re-punch that long before settling for the relay."""
         self._loop.call_soon_threadsafe(lambda: self._wanted and self._wanted.set())
+        if wait and self.state in ("idle", "connecting") and not self._worth_waiting():
+            wait = 0.0
         deadline = time.monotonic() + wait
         while wait and not self.ready and self.state in ("idle", "connecting") and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -368,16 +435,35 @@ class DirectPath:
         try:
             while not self._stopping:
                 self._dead = asyncio.Event()
+                memo = _memo_outcome(self._memo)
+                remaining = MEMO_SECONDS - (time.time() - memo[1]) if memo and memo[0] != "ready" else 0
+                if remaining > 0:
+                    # At most one signaling attempt per MEMO_SECONDS on a network
+                    # that cannot carry the path, whichever process makes it.
+                    self.state, self.reason = "down", f"the last attempt on this network: {memo[0]}"
+                    self._settled.set()
+                    await self._on_demand(remaining)
+                    continue
                 try:
                     await asyncio.wait_for(self._establish(), SETTLE_SECONDS)
                 except Exception as exc:  # noqa: BLE001 - a failed punch is expected on some networks
                     self.reason = str(exc) if isinstance(exc, PathError) else _why(exc)
-                    self.state = "down"
-                    if "No matching server function" in self.reason:
+                    if isinstance(exc, PathUnavailable) or "No matching server function" in self.reason:
                         self.state = "unavailable"
-                        self.reason = "this Server has no direct path"
+                        if not isinstance(exc, PathUnavailable):
+                            self.reason = "this Server has no direct path"
+                        _remember(self._memo, "unavailable")
                         return
+                    if self._answered:
+                        _remember(self._memo, "failed")
+                    self.state = "down"
+                    self._settled.set()
+                    await self._teardown()
+                    # No polling: the next attempt waits for a device call to want it.
+                    await self._on_demand(RETRY_SECONDS)
+                    continue
                 else:
+                    _remember(self._memo, "ready")
                     self.state = "ready"
                     self._settled.set()
                     await self._dead.wait()
@@ -398,14 +484,19 @@ class DirectPath:
             self._settled.set()
             await self._teardown()
 
+    async def _on_demand(self, delay: float) -> None:
+        """Until a device call wants the path, and no sooner than ``delay``."""
+        self._wanted = asyncio.Event()
+        await asyncio.sleep(delay)
+        await self._wanted.wait()
+
     async def _establish(self) -> None:
         loop = asyncio.get_running_loop()
+        self._answered = False
         ice = self._ice = Ice(ice_controlling=True, stun_server=self._stun)
+        # A silent STUN server still leaves the host candidate: a lab on this
+        # machine or LAN, or its fixed port, needs nothing more.
         await ice.gather_candidates()
-        if self._stun and not any(c.type == "srflx" for c in ice.local_candidates):
-            # Without a reflexive address there is nothing to punch with, and a
-            # network that drops STUN drops the checks too: skip the 5 s of them.
-            raise PathError("no STUN answer (UDP blocked?)")
         offer = {
             "id": self._id,
             "ufrag": ice.local_username,
@@ -417,6 +508,7 @@ class DirectPath:
             "race": True,
         }
         answer = await loop.run_in_executor(None, self._offer, offer)
+        self._answered = True
 
         # A partner lab's answer names the lab whose certificate to pin.
         server_name = str(answer.get("server_name") or self._server_name)
@@ -633,7 +725,7 @@ def start(*, username: str, secret: str, route: dict) -> Optional[DirectPath]:
 
     _path = DirectPath(
         offer=_offer_rpc(username, secret), server_name=route["host"],
-        ca_pem=_current_profile().ca_path.read_bytes(),
+        ca_pem=_current_profile().ca_path.read_bytes(), memo=route["host"],
     )
     _path.start()
     return _path
@@ -675,7 +767,7 @@ def _from_stored_login() -> Optional[DirectPath]:
         return None
     return DirectPath(
         offer=_offer_rpc(login["username"], login["secret"]), server_name=route["host"],
-        ca_pem=profile.ca_path.read_bytes(),
+        ca_pem=profile.ca_path.read_bytes(), memo=route["host"],
     )
 
 
@@ -698,23 +790,68 @@ def partner_of(token: Optional[str]) -> Optional[str]:
     return _partner_owners.get(token) if token else None
 
 
-def _partner(token: str) -> Optional[DirectPath]:
-    """The path to the lab owning the device behind ``token``, punched on first use."""
+def _side_path(key: str, make: Callable[[], Optional[DirectPath]]) -> Optional[DirectPath]:
+    """The path kept for ``key`` (``make`` builds it on first use; None: no
+    path), when it is ready for this call."""
     with _lock:
-        path = _partners.get(token)
+        path = _partners.get(key)
         if path is None:
-            credentials = _credentials()
-            if credentials is None:
+            path = make()
+            if path is None:
                 return None
-            path = _partners[token] = DirectPath(
-                offer=_offer_rpc(*credentials, token=token), server_name="", ca_pem=b"",
-            )
+            _partners[key] = path
             path.start()
-    if path.state == "idle":
+    if path.state in ("idle", "down"):
         path.wake(WAIT_SECONDS)  # a punch takes well under a second; a 2 MB buffer will not fit the relay
     elif path.state == "connecting":
         path.wait()  # the first call waits briefly, as a script's first capture does
     return path if path.ready else None
+
+
+def _partner(token: str) -> Optional[DirectPath]:
+    """The path to the lab owning the device behind ``token``, punched on first use."""
+    def make() -> Optional[DirectPath]:
+        credentials = _credentials()
+        if credentials is None:
+            return None
+        return DirectPath(
+            offer=_offer_rpc(*credentials, token=token), server_name="", ca_pem=b"",
+            memo=_partner_owners.get(token),
+        )
+
+    return _side_path(token, make)
+
+
+def _global_offer(ref: str, deployment_id: Optional[str]) -> Callable[[dict], dict]:
+    """The offer through Global: an ``rfg_`` token is its own credential, a ref takes the login."""
+    def send(offer: dict) -> dict:
+        from ..deployment.http import AccountBackendError
+        from . import grpc_client
+
+        backend = grpc_client._token_backend() if ref.startswith("rfg_") else grpc_client.federated_backend()
+        try:
+            answer = json.loads(backend.device_direct(ref, deployment_id, json.dumps(offer)))
+        except AccountBackendError as exc:
+            # not_found: a Global without the route; the others: a lab without it.
+            if exc.code in {"not_found", "action_unavailable", "direct_path_unavailable"}:
+                raise PathUnavailable(f"no direct path: {exc.code}") from None
+            raise PathError(str(exc)) from None
+        if not (answer.get("server_name") and answer.get("ca_pem")):
+            raise PathUnavailable("the lab's Server predates direct paths for Global users")
+        return answer
+
+    return send
+
+
+def global_path(ref: str, deployment_id: Optional[str] = None) -> Optional[DirectPath]:
+    """The path to the lab behind a Global device ref or ``rfg_`` token,
+    signaled through Global, when it is ready for this call."""
+    if not enabled():
+        return None
+    return _side_path(ref, lambda: DirectPath(
+        offer=_global_offer(ref, deployment_id), server_name="", ca_pem=b"",
+        memo=deployment_id or ref.rsplit(":", 1)[0],
+    ))
 
 
 def current(token: Optional[str] = None) -> Optional[DirectPath]:
@@ -742,7 +879,7 @@ def current(token: Optional[str] = None) -> Optional[DirectPath]:
                     _path.start()
                     _path.wait()
     path = _path
-    if path is not None and path.state == "idle":
+    if path is not None and path.state in ("idle", "down"):
         path.wake(WAIT_SECONDS)
     return path if path is not None and path.ready else None
 

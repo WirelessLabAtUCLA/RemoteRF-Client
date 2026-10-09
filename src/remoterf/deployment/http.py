@@ -30,6 +30,9 @@ class JsonTransport:
             timeout=5,
             follow_redirects=False,
             trust_env=False,
+            # httpx drops an idle connection after 5 s; a notebook's next call
+            # would pay a fresh TCP+TLS handshake. Stay under Caddy's 5 min.
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=60),
         )
 
     def request(
