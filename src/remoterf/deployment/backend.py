@@ -366,6 +366,25 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             overall_timeout=DEVICE_RPC_CLIENT_TIMEOUT_SECONDS,
             max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
         )
+        return self._device_frame(value)
+
+    def device_token_rpc(self, token, deployment_id, request_bytes):
+        """Relay one frame on a Global device API token (``rfg_``): the token
+        is the credential, so there is no login and no bearer."""
+
+        data = {"token": token,
+                "request_b64": base64.b64encode(bytes(request_bytes)).decode("ascii")}
+        if deployment_id is not None:
+            data["deployment_id"] = deployment_id
+        value = self.transport.request(
+            "POST", self.base + "/devices/token-rpc", data=data,
+            overall_timeout=DEVICE_RPC_CLIENT_TIMEOUT_SECONDS,
+            max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
+        )
+        return self._device_frame(value)
+
+    @staticmethod
+    def _device_frame(value):
         encoded = value.get("response_b64")
         # An empty frame is a valid setter response (no results).
         if value.get("provenance") != "destination" or type(encoded) is not str:

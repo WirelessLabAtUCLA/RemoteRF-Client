@@ -21,6 +21,7 @@ import getpass
 import os
 import re
 import datetime
+import functools
 import time
 import ast
 from pathlib import Path
@@ -122,6 +123,73 @@ pending_username = None
 home_name = None
 # The route it was reached over (None on a bare direct profile or an HTTPS home).
 current_route = None
+
+# What each generated driver package exposes, for the usage lines after a reservation.
+DRIVER_CALLS = {"pluto": "adi.Pluto", "adalm_pluto": "adi.Pluto", "usrp": "uhd.usrp.MultiUSRP"}
+_HANDLE_TAG = re.compile(r"^(?P<name>.*) \[(?P<handle>\S+)\]$")  # handles have no whitespace
+_NO_HANDLE = "This device has no handle"
+_UNROUTABLE = "Its handle {} can't be used from here: {}"
+
+
+def _token_lab():
+    """The lab `<token>@<lab>` routes to from here: this shell's home, else the
+    direct profile's (a shell started by --register has no home yet)."""
+    from .grpc_client import _active_home_name
+
+    return home_name or _active_home_name()
+
+
+def _routable(token):
+    """The token as a driver takes it: @<this lab>, so it is never sent elsewhere."""
+    lab = _token_lab()
+    return f"{token}@{lab}" if lab else f"{token}"
+
+
+def _name_and_handle(name):
+    """A listed device name, 'Pluto SDR [PlutoA]' -> ('Pluto SDR', 'PlutoA')."""
+    m = _HANDLE_TAG.match(name)
+    return (m["name"], m["handle"]) if m else (name, None)
+
+
+def _print_reserved(where, when, token, handle, logged_in_to, install, no_handle=_NO_HANDLE):
+    """The token and, when the device has one, its handle (both @<deployment>).
+    Printed before the driver install, which can fail or stall; the usage
+    lines follow it, once the device type is known. `no_handle`: why no
+    handle is shown."""
+    printf("Reservation successful on ", (Sty.BOLD, Sty.GREEN), where, Sty.MAGENTA, " for ", Sty.DEFAULT, f"{when}.", Sty.CYAN)
+    printf("", Sty.DEFAULT)
+    width = len("Device handle") if handle else len("Token")
+    printf(f"  {'Token':<{width}}  ", Sty.BOLD, token, (Sty.BOLD, Sty.GREEN))
+    if handle:
+        printf("  Device handle  ", Sty.BOLD, handle, (Sty.BOLD, Sty.GREEN))
+    printf("", Sty.DEFAULT)
+    if handle:
+        printf("  Token   works anywhere, no login needed. Keep it safe: it can't be shown again.", Sty.DEFAULT)
+        printf(f"  Handle  works while you're logged in to {logged_in_to} and this reservation is active.", Sty.DEFAULT)
+    else:
+        printf("  Works anywhere, no login needed. Keep it safe: it can't be shown again.", Sty.DEFAULT)
+        printf(f"  ({no_handle}. Lost the token? Cancel and reserve again.)", Sty.DEFAULT)
+    printf("", Sty.DEFAULT)
+    call = DRIVER_CALLS.get(install())
+    if call:
+        printf("Use either one as the token:" if handle else "Use it as the token:", Sty.DEFAULT)
+        for text in (token, handle) if handle else (token,):
+            printf(f'  sdr = {call}(token="{text}")', Sty.CYAN)
+
+
+def _print_native_reserved(device_id, label, when, token):
+    """`label` as the server lists the device: 'Pluto SDR [PlutoA] (online)',
+    or a partner lab's 'Pluto SDR @mit (online)' (partner handles: none yet)."""
+    partner = _PARTNER_LABEL.match(label)
+    local = None if partner else _LOCAL_LABEL.match(label)
+    name, handle = (partner["name"], None) if partner else _name_and_handle(local["name"] if local else label)
+    home = _token_lab()
+    lab = partner["lab"] if partner else home
+    name = handle or name or f"device {device_id}"
+    _print_reserved(f"{name} @{lab}" if lab else name, when, _routable(token),
+                    f"{handle}@{home}" if handle and home else None, home,
+                    lambda: account.install_reserved_driver(token, int(device_id)),
+                    _UNROUTABLE.format(handle, "this lab has no saved name") if handle else _NO_HANDLE)
 
 
 def _print_connected(name, home, route):
@@ -450,6 +518,10 @@ def _render_destinations(entries):
         print()
 
 
+def _handle_tag(dev):
+    return f" [{dev['handle']}]" if dev.get("handle") else ""
+
+
 def _federated_devices():
     data = account.get_devices()
     _render_destinations(data["destinations"])
@@ -466,7 +538,7 @@ def _federated_devices():
             deployment = dev["deployment_name"]
             printf(f"  @{deployment}", (Sty.BOLD, Sty.MAGENTA))
         state = "online" if dev["online"] else "offline"
-        printf("    Device Name: ", Sty.GRAY, f"{dev['display_name']}", Sty.DEFAULT, f" ({dev['device_type'] or 'unknown'}, {state})", Sty.GRAY)
+        printf("    Device Name: ", Sty.GRAY, f"{dev['display_name']}{_handle_tag(dev)}", Sty.DEFAULT, f" ({dev['device_type'] or 'unknown'}, {state})", Sty.GRAY)
     if data.get("incomplete"):
         printf(f"{data['omitted_count']} more deployment(s) were not queried.", Sty.WARNING)
     return data
@@ -546,12 +618,38 @@ def _federated_reservations_for_range(start_day, end_day):
     return res_dict
 
 
-def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str):
-    handle = account.reserve_device(device_id, chosen_slot[0], chosen_slot[1])
-    # Worded as a lab account's reservation; the handle goes where a token goes.
-    printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{str(device_id).rsplit(':', 1)[-1]}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
-    printf("Your Token -> ", Sty.BOLD, f"{handle}", (Sty.BOLD, Sty.GREEN))
-    account.install_reserved_driver(handle, device_id)
+def _global_slug(device_id, deployment_name):
+    """The lab's name when it is its own Global slug (checked by discovery),
+    else None: then the bare token, which works as is."""
+    from .grpc_client import _deployment_id
+    from ..deployment.homes import NAME_RE
+
+    name = str(deployment_name or "").lower()
+    try:
+        if NAME_RE.match(name) and _deployment_id(name) == str(device_id).split(":")[0]:
+            return name
+    except RuntimeError:
+        pass
+    return None
+
+
+def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str,
+                            deployment_name=None, device_name=None, device_handle=None):
+    token = account.reserve_device(device_id, chosen_slot[0], chosen_slot[1])
+    when = f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}"
+    install = lambda: account.install_reserved_driver(token, device_id)
+    if not token.startswith("rfg_"):
+        # An older Global: the HOME reference goes where a token goes.
+        printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{str(device_id).rsplit(':', 1)[-1]}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{when}.", Sty.CYAN)
+        printf("Your Token -> ", Sty.BOLD, token, (Sty.BOLD, Sty.GREEN))
+        install()
+        return
+    slug = _global_slug(device_id, deployment_name)
+    name = device_handle or device_name or str(device_id).rsplit(":", 1)[-1]
+    lab = slug or deployment_name
+    _print_reserved(f"{name} @{lab}" if lab else name, when, f"{token}@{slug}" if slug else token,
+                    f"{device_handle}@{slug}" if device_handle and slug else None, "RemoteRF Global", install,
+                    _UNROUTABLE.format(device_handle, "this lab's Global name is unknown") if device_handle else _NO_HANDLE)
 
 
 def _federated_reserve():
@@ -572,7 +670,7 @@ def _federated_reserve():
         printf(
             f"{idx}.", Sty.CYAN,
             "  Name: ", Sty.DEFAULT,
-            f"{dev['display_name']}", Sty.GRAY,
+            f"{dev['display_name']}{_handle_tag(dev)}", Sty.GRAY,
             " Duration: ", Sty.DEFAULT,
             f"{dev['block_min']} min", Sty.GREEN,
         )
@@ -594,7 +692,9 @@ def _federated_reserve():
             f" is < 10 minutes (max_sec={dev['max_reservation_time_sec'] or 0}). Cannot create valid reservations.", Sty.DEFAULT,
         )
         return
-    _pick_slot_and_reserve(dev["device_id"], dev["display_name"], dev["block_min"], _federated_reservations_for_range, _federated_reserve_slot,
+    reserve_slot = functools.partial(_federated_reserve_slot, deployment_name=dev["deployment_name"],
+                                     device_name=dev["display_name"], device_handle=dev.get("handle"))
+    _pick_slot_and_reserve(dev["device_id"], dev["display_name"], dev["block_min"], _federated_reservations_for_range, reserve_slot,
                            device_label=f"{dev['display_name']} @{dev['deployment_name']}",
                            max_days=-(-int(dev.get("max_horizon_sec") or 0) // 86400) or None)
 
@@ -747,7 +847,8 @@ def cancel_my_reservation():
         print("Aborting. A non integer key was given.")
 
 _PARTNER_LABEL = re.compile(r"^(?P<name>.*) @(?P<lab>.+?) \((?P<state>[^)]*)\)$")
-_LOCAL_LABEL = re.compile(r"^(?P<name>.*) \((?P<state>[^)]*)\)$")
+# The state always starts with online/offline; a PoE fault after it can hold brackets.
+_LOCAL_LABEL = re.compile(r"^(?P<name>.*?) \((?P<state>(?:online|offline)\b.*)\)$")
 
 
 def _native_device_rows():
@@ -808,7 +909,7 @@ def _print_native_devices(rows, *, numbered=False):
         if row["lab"] != lab:
             lab = row["lab"]
             printf(f"  @{lab}", (Sty.BOLD, Sty.MAGENTA))
-        prefix = (f"{index}.", Sty.CYAN, " ") if numbered else ()
+        prefix = (f"{index}. ", Sty.CYAN) if numbered else ()
         printf(*prefix, "    Device Name: " if not numbered else "  Device Name: ", Sty.GRAY,
                row["name"], Sty.DEFAULT, f" ({row['state']})" if row["state"] else "", Sty.GRAY)
 
@@ -852,11 +953,18 @@ def reserve():
         if not pick.isdigit() or not 1 <= int(pick) <= len(rows):
             printf("Pick a number from the list.", Sty.WARNING)
             return
-        token = account.reserve_device(rows[int(pick) - 1]["id"], get_datetime("Reserve Start Time"), get_datetime("Reserve End Time"))
+        row = rows[int(pick) - 1]
+        start, end = get_datetime("Reserve Start Time"), get_datetime("Reserve End Time")
+        token = account.reserve_device(row["id"], start, end)
         if token != '':
-            printf(f"Reservation successful. Your Token -> ", Sty.BOLD, f"{token}", Sty.BG_GREEN)
-            printf(f"Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one. ", Sty.DEFAULT)
-            account.install_reserved_driver(token, rows[int(pick) - 1]["id"])
+            name, handle = (row["name"], None) if row["away"] else _name_and_handle(row["name"])
+            home = _token_lab()
+            lab = row["lab"] if row["away"] else home or row["lab"]
+            _print_reserved(f"{handle or name} @{lab}" if lab else handle or name,
+                            f"{start:%Y-%m-%d %I:%M %p}-{end:%I:%M %p}", _routable(token),
+                            f"{handle}@{home}" if handle and home else None, home,
+                            lambda: account.install_reserved_driver(token, row["id"]),
+                            _UNROUTABLE.format(handle, "this lab has no saved name") if handle else _NO_HANDLE)
     except Exception as e:
         printf(f"Error: {e}", Sty.BRIGHT_RED)
 
@@ -1293,11 +1401,9 @@ def interactive_reserve_next_days(block_minutes=60):
         # --- 6) Reserve the chosen slot on the chosen device ---
         token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
         if token:
-            printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
-            printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
-            printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
-            account.install_reserved_driver(token, int(chosen_device_id))
-        
+            _print_native_reserved(chosen_device_id, str(unmap_arg(data.results[chosen_device_id])),
+                                   f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}", token)
+
     except Exception as e:
         print(f"Error: {e}")
         
@@ -1413,7 +1519,7 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     slot_end_str = chosen_slot[1].strftime("%I:%M %p")
 
     confirmation = session.prompt(stylize(
-        "Reservation successful on ", Sty.DEFAULT,
+        "Reserve ", Sty.DEFAULT,
         f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
         " from ", Sty.DEFAULT,
         f"{slot_start_str}", Sty.CYAN,
@@ -1421,7 +1527,7 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
         f"{slot_end_str}", Sty.CYAN,
         " for ", Sty.DEFAULT,
         f"{chosen_device_name}", Sty.GRAY,
-        ". \nConfirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
+        "?\nConfirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
     )).strip().lower()
 
     if confirmation != "y":
@@ -1434,13 +1540,11 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     do_reserve(chosen_device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str)
 
 
-def _native_reserve_slot(chosen_device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str):
+def _native_reserve_slot(chosen_device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str, device_label=""):
     token = account.reserve_device(int(chosen_device_id), chosen_slot[0], chosen_slot[1])
     if token:
-        printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{chosen_device_id}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}.", Sty.CYAN)
-        printf("Your Token -> ", Sty.BOLD, f"{token}", (Sty.BOLD, Sty.GREEN))
-        printf("Please keep this token safe, as it is not saved on the server and cannot be retrieved again. If you lose it, cancel your reservation and make a new one.", Sty.DEFAULT)
-        account.install_reserved_driver(token, int(chosen_device_id))
+        _print_native_reserved(chosen_device_id, device_label,
+                               f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}", token)
 
 
 def interactive_reserve_next_days_auto():
@@ -1578,19 +1682,23 @@ def interactive_reserve_next_days_auto():
 
         chosen_device_key = sorted_device_ids[sel_i]
         chosen_device_id = str(chosen_device_key)
-        chosen_device_name = unmap_arg(dev_resp.results[chosen_device_key])
+        chosen_device_name = str(unmap_arg(dev_resp.results[chosen_device_key]))
+        # 'Pluto SDR [PlutoA] (online)' -> 'Pluto SDR [PlutoA]', 'Pluto SDR @mit (online)' -> 'Pluto SDR @mit'
+        shown = _LOCAL_LABEL.match(chosen_device_name)
+        shown = shown["name"] if shown else chosen_device_name
         block_minutes = int(block_by_dev.get(chosen_device_id, 30))
 
         if block_minutes < 10:
             printf(
                 "Your max reservation duration for device ", Sty.DEFAULT,
-                f"{chosen_device_id}", Sty.MAGENTA,
+                shown, Sty.MAGENTA,
                 f" is < 10 minutes (max_sec={max_by_dev.get(chosen_device_id, 0)}). Cannot create valid reservations.", Sty.DEFAULT,
             )
             return
 
-        _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, fetch_reservations_for_range, _native_reserve_slot,
-                               max_days=days_by_dev.get(chosen_device_id) or None)
+        _pick_slot_and_reserve(chosen_device_id, shown, block_minutes, fetch_reservations_for_range,
+                               functools.partial(_native_reserve_slot, device_label=chosen_device_name),
+                               device_label=shown, max_days=days_by_dev.get(chosen_device_id) or None)
 
     except Exception as e:
         print(f"Error: {e}")

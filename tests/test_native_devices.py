@@ -55,3 +55,10 @@ def test_many_devices_across_labs_ask_for_a_lab_first():
         assert client_app._pick_lab(rows[:5]) == rows[:5]
         assert client_app._pick_lab([r for r in rows if r["lab"] == "ucla"] * 2) is not None
         session.prompt.assert_not_called()
+
+
+def test_a_handle_in_brackets_stays_part_of_a_local_name():
+    label = "Pluto SDR [Pl)ut(o] (online, reserved)"
+    assert not client_app._PARTNER_LABEL.match(label)
+    local = client_app._LOCAL_LABEL.match(label)
+    assert (local["name"], local["state"]) == ("Pluto SDR [Pl)ut(o]", "online, reserved")

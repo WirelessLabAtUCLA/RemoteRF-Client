@@ -92,8 +92,9 @@ def fetch_idl(
     """
     from remoterf_federation_core import is_global_ref
 
-    # A HOME-minted device reference has no direct v2 control channel; the
-    # schema is fetched through the same relayed IDL RPC every driver uses.
+    # A bare HOME-minted device reference is fetched through the same relayed
+    # IDL RPC every driver uses; an rfg_ token tries v2 over the relayed device
+    # plane first.
     federated = is_global_ref(token) or is_global_ref(device_id)
     if token is not None and device_id is None and prefer_v2 and not federated:
         from .dynamic_v2 import fetch_schema_v2
@@ -137,8 +138,9 @@ def fetch_idl(
         if token is not None:
             # A partner lab answered: device calls with this token can punch to it.
             from ..core import direct_path
+            from ..core.grpc_client import wire_token
 
-            direct_path.mark_partner(str(token), str(unmap_arg(resp.results['federated'])))
+            direct_path.mark_partner(wire_token(str(token)), str(unmap_arg(resp.results['federated'])))
         if str(schema.get("schema_version")) != "2.0":
             # A partner's v1 answer may replace an installed v2 driver (see
             # _write_v1_driver_files); a v2 schema is hashed, so left as is.

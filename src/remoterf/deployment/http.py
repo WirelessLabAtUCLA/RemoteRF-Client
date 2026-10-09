@@ -93,7 +93,8 @@ class JsonTransport:
                     if not isinstance(code, str) or not re.fullmatch(
                         "[a-z_]{1,64}", code
                     ):
-                        code = "account_request_failed"
+                        # A bare 404 is a route this server does not have.
+                        code = "not_found" if response.status_code == 404 else "account_request_failed"
                     provenance = (
                         error.get("provenance") if isinstance(error, dict) else None
                     )

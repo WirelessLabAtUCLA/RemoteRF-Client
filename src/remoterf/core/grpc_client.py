@@ -14,6 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
+import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -200,12 +202,23 @@ def _federated_ref(function_name, args):
     return None
 
 
-def _federated_call(ref, function_name, args):
+def _federated_call(route, function_name, args):
+    """Relay through Global: an ``rfg_`` token needs no login, a ref the bearer."""
     from ..deployment.http import AccountBackendError
+    ref = getattr(route, "wire", route)
     request = grpc_pb2.GenericRPCRequest(function_name=function_name, args=args)
     try:
-        raw = federated_backend().device_rpc(ref, request.SerializeToString())
+        if ref.startswith("rfg_"):
+            raw = _token_backend().device_token_rpc(
+                ref, getattr(route, "deployment_id", None), request.SerializeToString()
+            )
+        else:
+            raw = federated_backend().device_rpc(ref, request.SerializeToString())
     except AccountBackendError as exc:
+        if ref.startswith("rfg_") and str(exc) == "not_found":
+            raise RuntimeError(
+                "this RemoteRF Global does not accept device tokens yet; use the device reference"
+            ) from None
         label = f" [{exc.provenance}]" if exc.provenance else ""
         raise RuntimeError(f"{exc}{label}") from None
     response = grpc_pb2.GenericRPCResponse()
@@ -222,6 +235,208 @@ def _device_token(function_name, args):
     return value if isinstance(value, str) else None
 
 
+_token_backend_cache = None
+
+
+def _token_backend():
+    """Global, unauthenticated: an ``rfg_`` token is its own credential."""
+    global _token_backend_cache
+    if _token_backend_cache is None:
+        from ..deployment import homes
+        from ..deployment.backend import HttpsJsonAccountBackend
+
+        saved = homes.load_state()["global_account"]
+        if saved:
+            origin, ident = saved["origin"], saved["deployment_id"]
+        else:
+            from ..remoterf_cli import _global_origin
+
+            origin, ident = _global_origin(), None
+        _token_backend_cache = HttpsJsonAccountBackend(origin, expected_id=ident)
+    return _token_backend_cache
+
+
+# ── device tokens: <token or handle>@<deployment> ────────────────────
+#
+# A driver keeps the string it was given; it is resolved here, at the wire,
+# and only ever sent to the deployment it names. A bare token (no "@") is
+# used exactly as before.
+
+@dataclass(frozen=True)
+class DeviceRoute:
+    wire: str                           # what goes on the wire as `a` / `token`
+    kind: str                           # "active" | "home" | "global"
+    connection: object = None           # kind "home": that saved home's connection
+    deployment_id: Optional[str] = None  # kind "global", rfg_x@dep: dep's uuid
+    res_id: Optional[int] = None        # set iff `wire` came from a handle exchange
+
+
+_routes: Dict[str, DeviceRoute] = {}
+_routes_lock = threading.Lock()
+_deployment_ids: Dict[str, str] = {}
+_home_connections: Dict[str, Any] = {}
+_told: set = set()  # x@lab strings whose refusal ("why") was already printed
+
+
+def _unreachable(dep):
+    return RuntimeError(
+        f"can't reach {dep}: log in with remoterf --login username@{dep} or use a token from {dep}"
+    )
+
+
+def device_route(token: str, *, refresh: bool = False) -> DeviceRoute:
+    route = None if refresh else _routes.get(token)
+    if route is not None:
+        return route
+    with _routes_lock:
+        if refresh:
+            _routes.pop(token, None)
+        route = _routes.get(token)
+        if route is None:
+            route = _routes[token] = _resolve(token)
+    return route
+
+
+def wire_token(token):
+    return device_route(token).wire if isinstance(token, str) else token
+
+
+def renewed_route(token, route, refusal):
+    """For ``x@lab`` whose ``route.wire`` the lab refused as an unknown or dead
+    token (a lab restart, the next reservation, the slot starting, a login
+    saved since): the lab's answer now, or None when it is unchanged."""
+    # Every lab refusal of a token says "invalid token": v1, IDL and v2 alike.
+    if "invalid token" not in str(refusal or "") or "@" not in token or route.kind == "global":
+        return None
+    fresh = device_route(token, refresh=True)
+    if route.res_id is not None and fresh.res_id is None:
+        # A refusal keeps the driver's reservation: the next re-resolve compares against it.
+        with _routes_lock:
+            _routes[token] = route
+    return fresh if fresh.wire != route.wire else None
+
+
+def _active_home_name():
+    """The home of the profile the channel uses (None under a REMOTERF_ADDR override)."""
+    try:
+        return _current_profile().home
+    except RuntimeError:
+        return None
+
+
+def _resolve(t):
+    from remoterf_federation_core import is_global_ref
+
+    if "@" not in t:
+        return DeviceRoute(t, "global" if t.startswith("rfg_") or is_global_ref(t) else "active")
+    x, _, dep = t.rpartition("@")
+    dep = dep.strip().lower()
+    if not x or not dep:
+        raise ValueError(f"{t!r}: expected <token or handle>@<deployment>")
+    if x.startswith("rfg_"):
+        return DeviceRoute(x, "global", deployment_id=_deployment_id(dep))
+    from ..deployment import homes
+    from ..deployment.state import load_target
+
+    target = load_target()
+    if target and target["transport"] == "https-json":
+        route = _global_handle(x, dep)
+        if route is not None:
+            return route
+    elif _active_home_name() == dep:
+        return _lab(t, x, dep, None)
+    try:
+        home = homes.homes().get(dep)
+    except Exception:  # noqa: BLE001 - a corrupt homes file is no homes
+        home = None
+    if home and home["transport"] == "grpc":
+        return _lab(t, x, dep, _home_connection(dep))
+    raise _unreachable(dep)
+
+
+def _deployment_id(dep):
+    """The uuid behind <dep>.global.remoterf.net, from its own discovery."""
+    ident = _deployment_ids.get(dep)
+    if ident is None:
+        from ..deployment import homes
+
+        try:
+            if homes.NAME_RE.match(dep):
+                ident = homes.discover(f"{dep}.{homes.GLOBAL_DOMAIN}")["deployment_id"]
+        except Exception:  # noqa: BLE001 - unreachable is unreachable
+            ident = None
+        if not ident:
+            raise _unreachable(dep)
+        _deployment_ids[dep] = ident
+    return ident
+
+
+def _home_connection(dep):
+    """A channel to a saved home that is not the active one."""
+    connection = _home_connections.get(dep)
+    if connection is None:
+        from types import SimpleNamespace
+        from remoterf_federation_core import ValidationError
+        from ..deployment import homes
+
+        try:
+            route, certificate = homes.select_route(homes.load_home(dep))
+        except ValidationError:
+            raise _unreachable(dep) from None
+        selected = build_secure_channel(f"{route['host']}:{route['port']}", certificate)
+        connection = _home_connections[dep] = SimpleNamespace(
+            channel=selected, stub=grpc_pb2_grpc.GenericRPCStub(selected)
+        )
+    return connection
+
+
+def _lab(t, x, dep, connection):
+    """Ask the lab whether ``x`` is a handle of a device the caller holds now.
+
+    Without a saved login, or from a lab that does not know handles, ``x`` is
+    simply a token."""
+    kind = "active" if connection is None else "home"
+    if connection is None:
+        credentials = direct_path._credentials()
+    else:
+        from ..deployment import homes
+
+        login = homes.recall_login(dep)
+        credentials = (login["username"], login["secret"]) if login else None
+    if credentials is None:
+        return DeviceRoute(x, kind, connection)
+    results = rpc_client(
+        function_name="ACC:device_token",
+        args={"un": map_arg(credentials[0]), "pw": map_arg(credentials[1]), "h": map_arg(x)},
+        connection=connection,
+    ).results
+    if "Token" not in results:
+        return DeviceRoute(x, kind, connection)
+    if "why" not in results:
+        _told.discard(t)
+    elif t not in _told:
+        _told.add(t)
+        print(f"{t}: {unmap_arg(results['why'])}; using {x!r} as a token", file=sys.stderr)
+    res_id = unmap_arg(results["res_id"]) if "res_id" in results else None
+    return DeviceRoute(unmap_arg(results["Token"]), kind, connection, res_id=res_id)
+
+
+def _global_handle(x, dep):
+    """A handle on a device Global lists for this user, as its ref (None: no match)."""
+    try:
+        backend = federated_backend()
+        dep_id = _deployment_id(dep)
+    except Exception:  # noqa: BLE001 - not logged in to Global, or no such slug
+        return None
+    matches = [
+        d for d in backend.devices()["devices"]
+        if d.get("deployment_id") == dep_id and d.get("handle") == x
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(f"{x}@{dep}: more than one device has that handle")
+    return DeviceRoute(matches[0]["device_id"], "global") if matches else None
+
+
 def rpc_client(*, function_name, args, connection=None):
     global tcp_calls
     tcp_calls += 1
@@ -235,11 +450,43 @@ def rpc_client(*, function_name, args, connection=None):
     ref = _federated_ref(function_name, args) if connection is None else None
     if ref is not None:
         return _finish(_federated_call(ref, function_name, args))
+    token = (
+        _device_token(function_name, args)
+        if connection is None and direct_path.wants(function_name) else None
+    )
+    if token is not None:
+        route = device_route(token)
+        response = _route_call(route, function_name, args)
+        key = "error" if function_name.startswith("IDL:") else "a"
+        fresh = renewed_route(token, route, unmap_arg(response.results[key]) if key in response.results else None)
+        if fresh is not None:
+            if key == "a" and route.res_id is not None and fresh.res_id not in (None, route.res_id):
+                # The device was reset between holders; never carry on silently.
+                raise RuntimeError(f"{token}: reservation changed; re-create the driver")
+            response = _route_call(fresh, function_name, args)
+        return _finish(response)
+    return _finish(_send(function_name, args, connection))
+
+
+def _route_call(route, function_name, args):
+    key = "token" if function_name == "IDL:get_drivers" else "a"
+    if route.wire.startswith("rfg_"):
+        # The rfg_ token is Global's credential and goes only in the request body;
+        # the frame is relayed to the lab, which pins the device itself.
+        args = {**args, key: map_arg("")}
+    elif unmap_arg(args[key]) != route.wire:
+        args = {**args, key: map_arg(route.wire)}
+    if route.kind == "global":
+        return _federated_call(route, function_name, args)
+    return _send(function_name, args, route.connection, token=route.wire)
+
+
+def _send(function_name, args, connection, token=None):
     if connection is None and direct_path.wants(function_name):
-        path = direct_path.current(token=_device_token(function_name, args))
+        path = direct_path.current(token=token)
         if path is not None:
             try:
-                return _finish(path.call(function_name, args))
+                return path.call(function_name, args)
             except direct_path.PathError:
                 pass  # the path is down now; this call goes over gRPC, once
     # print(tcp_calls)
@@ -256,8 +503,7 @@ def rpc_client(*, function_name, args, connection=None):
     # TODO: Handle Errors
     
     # print(f"Calling function: {function_name}")
-    response = (connection or get_active_connection()).stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
-    return _finish(response)
+    return (connection or get_active_connection()).stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
 
 
 def _finish(response):

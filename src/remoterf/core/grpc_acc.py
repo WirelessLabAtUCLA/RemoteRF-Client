@@ -101,8 +101,9 @@ class RemoteRFAccount:
         if self.is_https_home:
             with _busy("Reserving…"):
                 reservation = self.backend.reserve(device_id, int(start_time.timestamp()), int(end_time.timestamp()))
-            # The HOME reference is the driver handle: adi.Pluto("<deployment>:<id>")
-            return reservation['device_id']
+            # Global's device API token (rfg_...), else (an older Global) the
+            # HOME reference, which also drives: adi.Pluto("<deployment>:<id>")
+            return reservation.get('token') or reservation['device_id']
         username, credential_secret = self._rpc_credentials()
         with _busy("Reserving…"):
             response = self._call(function_name="ACC:reserve_device", args={"un":map_arg(username), "pw":map_arg(credential_secret), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
@@ -114,13 +115,14 @@ class RemoteRFAccount:
 
     def install_reserved_driver(self, handle, device_id):
         """Separate from reserve_device: the token is shown before this network
-        step runs, so a failed or stuck driver fetch cannot lose it."""
+        step runs, so a failed or stuck driver fetch cannot lose it. Returns
+        the installed device type, or None."""
         try:
             from ..drivers.dynamic_device import install_driver
             if self.is_https_home:
-                install_driver(device_id=handle)
-            else:
-                install_driver(token=handle, device_id=device_id)
+                # By the ref, which needs no live slot (an rfg_ token does).
+                return install_driver(device_id=device_id).name
+            return install_driver(token=handle, device_id=device_id).name
         except Exception as e:
             print(f"Warning: could not install driver for device {device_id}: {e}")
             

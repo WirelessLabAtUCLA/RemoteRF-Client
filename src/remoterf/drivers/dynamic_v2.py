@@ -177,7 +177,7 @@ def _validate_sample_array(array, *, operation: str):
 
 def fetch_schema_v2(token: str, *, transport=None) -> dict:
     return validate_schema_v2(
-        (transport or DynamicV2Transport()).get_schema(token)
+        (transport or DynamicV2Transport(token=token)).get_schema(token)
     )
 
 
@@ -654,7 +654,7 @@ def _assign_path(root, dotted_path, value):
     setattr(target, parts[-1], value)
 
 
-def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
+def build_uhd_bindings(schema: dict, *, transport_factory=None):
     validate_schema_v2(schema)
     method_descriptors = list(schema.get("methods", ()))
     by_owner = {}
@@ -665,7 +665,10 @@ def build_uhd_bindings(schema: dict, *, transport_factory=DynamicV2Transport):
     class MultiUSRP:
         def __init__(self, token: str):
             self.token = str(token)
-            self._transport = transport_factory()
+            self._transport = (
+                transport_factory() if transport_factory is not None
+                else DynamicV2Transport(token=self.token)
+            )
             self._transport.negotiate()
             try:
                 opened = self._transport.open_session(self.token, schema["schema_hash"])

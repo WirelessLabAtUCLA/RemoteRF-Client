@@ -82,8 +82,9 @@ class _DevicePlaneStub:
     call on that token (the direct path to the owner when it is up, else the
     HOME, which relays it). The owner runs it through its own servicers."""
 
-    def __init__(self, token: str):
+    def __init__(self, token: str, label: str = "partner device: "):
         self._token = str(token)
+        self._label = label
 
     def _rpc(self, operation, request, response_type):
         from ..common.utils import map_arg, unmap_arg
@@ -97,7 +98,7 @@ class _DevicePlaneStub:
         except RuntimeError as exc:
             # A refusal the HOME or the owner carried in "a": no live
             # reservation, a revoked agreement, a device no longer visible.
-            raise RemoteRFReservationError(f"partner device: {exc}") from exc
+            raise RemoteRFReservationError(f"{self._label}{exc}") from exc
         wire = unmap_arg(response.results["wire"]) if "wire" in response.results else None
         if not isinstance(wire, bytes):
             raise RemoteRFProtocolError("partner device plane returned no Dynamic v2 reply")
@@ -131,6 +132,7 @@ class DynamicV2Transport:
         *,
         control_stub=None,
         sample_stub=None,
+        token=None,
         control_timeout_sec: float = 30.0,
         open_timeout_sec: float = 120.0,
         stream_timeout_margin_sec: float = 5.0,
@@ -156,11 +158,18 @@ class DynamicV2Transport:
             )
         self._stream_poisoned = False
         self._stream_failure_details = {}
+        self._renewed = False
         if control_stub is None or sample_stub is None:
-            from .grpc_client import get_active_channel
-            channel = get_active_channel()
-            control_stub = control_stub or grpc_pb2_grpc.DynamicControlV2Stub(channel)
-            sample_stub = sample_stub or grpc_pb2_grpc.SampleDataV1Stub(channel)
+            from .grpc_client import device_route, get_active_channel
+            route = device_route(token) if token is not None else None
+            if route is not None and route.kind == "global":
+                # No device channel through Global: each request is a relayed RPC.
+                plane = _DevicePlaneStub(token, label="")
+                control_stub, sample_stub = control_stub or plane, sample_stub or plane
+            else:
+                channel = route.connection.channel if route and route.connection else get_active_channel()
+                control_stub = control_stub or grpc_pb2_grpc.DynamicControlV2Stub(channel)
+                sample_stub = sample_stub or grpc_pb2_grpc.SampleDataV1Stub(channel)
         self.control = control_stub
         self.samples = sample_stub
 
@@ -168,16 +177,25 @@ class DynamicV2Transport:
         """Carry this transport over the device plane when ``token`` drives a
         partner lab's device (named by the HOME's refusal, or already known)."""
         from . import direct_path
+        from .grpc_client import wire_token
 
         if isinstance(self.control, _DevicePlaneStub):
             return False
-        owner = owner or direct_path.partner_of(str(token))
+        owner = owner or direct_path.partner_of(wire_token(str(token)))
         if not owner:
             return False
         # Marked, the token's device calls take the direct path to the owner.
-        direct_path.mark_partner(str(token), str(owner))
+        direct_path.mark_partner(wire_token(str(token)), str(owner))
         self.control = self.samples = _DevicePlaneStub(token)
         return True
+
+    def _inner_token(self, token: str) -> str:
+        # Over the device plane the owner substitutes its own bridge token, so
+        # no bearer secret ever rides inside a frame.
+        if isinstance(self.control, _DevicePlaneStub):
+            return ""
+        from .grpc_client import wire_token
+        return wire_token(str(token))
 
     def _checked(self, response, token: str) -> bool:
         """raise_for_envelope, except for the refusal of a partner's token:
@@ -188,6 +206,14 @@ class DynamicV2Transport:
             if self._to_owner(token, exc.details.get("federated")):
                 return True
             raise
+        except RemoteRFReservationError as exc:
+            # A dead bridge token behind x@lab: ask the lab again, once.
+            from .grpc_client import device_route, renewed_route
+
+            if self._renewed or renewed_route(str(token), device_route(str(token)), str(exc)) is None:
+                raise
+            self._renewed = True
+            return True
         return False
 
     def _call(self, fn, request, *, timeout: float | None = None):
@@ -229,7 +255,7 @@ class DynamicV2Transport:
         response = self._call(
             self.control.GetSchema,
             grpc_pb2.GetSchemaRequest(
-                token=str(token),
+                token=self._inner_token(token),
                 schema_versions=[SCHEMA_VERSION],
             ),
         )
@@ -254,7 +280,7 @@ class DynamicV2Transport:
         response = self._call(
             self.control.OpenSession,
             grpc_pb2.OpenSessionRequest(
-                token=str(token),
+                token=self._inner_token(token),
                 requested_schema_hash=str(schema_hash),
                 control_protocol_version=CONTROL_PROTOCOL_VERSION,
                 streaming_protocol_version=STREAMING_PROTOCOL_VERSION,
