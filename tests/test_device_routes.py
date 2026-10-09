@@ -182,6 +182,7 @@ def test_a_handle_is_exchanged_once_at_the_active_lab(monkeypatch, routes):
 @pytest.mark.parametrize("reply, wire, printed", [
     ({"Token": "Zm9vYmFy"}, "Zm9vYmFy", False),  # not a handle: the lab hands it back
     ({"Token": "SuperTok_3_force"}, "SuperTok_3_force", False),  # <super token>@<lab>: same path
+    ({"Token": "Zm9v__YmFy"}, "Zm9v__YmFy", False),  # a token is never keyed
     ({"Token": "PlutoA", "why": "no active reservation of yours on PlutoA right now"}, "PlutoA", True),
     ({"ace": "No matching server function to call: device_token"}, "PlutoA", False),  # old server
 ])
@@ -191,6 +192,7 @@ def test_the_lab_decides_handle_or_token(monkeypatch, routes, capsys, reply, wir
     t = f"{reply.get('Token', 'PlutoA')}@ucla" if "why" not in reply else "PlutoA@ucla"
     for _ in range(2):
         grpc_client.rpc_client(function_name=GET, args={"a": map_arg(t)})
+    assert routes.calls[0] == ("ACC:device_token", {"un": "jdoe", "pw": "s3cret", "h": t[:-len("@ucla")]})
     assert [c for c in routes.calls if c[0] == GET] == [(GET, {"a": wire})] * 2
     err = capsys.readouterr().err
     if printed:
@@ -338,6 +340,12 @@ def test_a_global_user_handle_maps_to_the_listed_device(monkeypatch, routes):
     monkeypatch.setattr(grpc_client, "federated_backend", lambda: SimpleNamespace(devices=lambda: listing))
     monkeypatch.setattr(homes, "discover", lambda host: {"deployment_id": DEST})
     assert grpc_client.device_route("PlutoA@ucla") == grpc_client.DeviceRoute(REF, "global")
+    # The handle is the name: spaces and underscores are one.
+    assert grpc_client._key("pluto A") == grpc_client._key("pluto_A") == grpc_client._key(" pluto\tA ") \
+        == grpc_client._key("pluto__A") == "pluto_A"
+    listing["devices"][1]["handle"] = "pluto_A"
+    for typed in ("pluto A@ucla", "pluto__A@ucla"):
+        assert grpc_client.device_route(typed) == grpc_client.DeviceRoute(REF, "global")
     with pytest.raises(RuntimeError) as exc:
         grpc_client.device_route("PlutoB@ucla")
     assert str(exc.value) == _unreachable("ucla")
@@ -436,7 +444,7 @@ def test_a_lab_reservation_shows_the_token_and_the_handle(monkeypatch):
     account.install_reserved_driver.assert_called_once_with("Zm9vYmFy", 3)
 
 
-def test_a_device_without_a_handle_shows_only_the_token(monkeypatch):
+def test_an_untagged_device_is_reached_by_its_name(monkeypatch):
     import datetime
     import remoterf.core.app as client_app
 
@@ -448,10 +456,9 @@ def test_a_device_without_a_handle_shows_only_the_token(monkeypatch):
     monkeypatch.setattr(client_app, "home_name", "ucla")
     client_app._native_reserve_slot(4, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
                                     device_label="USRP B210 (online)")
-    assert "Reservation successful on USRP B210 @ucla for 2026-01-01 10:00-11:00." in lines
-    assert _row(lines, "Token", "Zm9vYmFy@ucla") and not any("Device handle" in line for line in lines)
-    assert any("This device has no handle" in line for line in lines)
-    assert '  sdr = uhd.usrp.MultiUSRP(token="Zm9vYmFy@ucla")' in lines
+    assert "Reservation successful on USRP_B210 @ucla for 2026-01-01 10:00-11:00." in lines
+    assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Device", "handle", "USRP_B210@ucla")
+    assert '  sdr = uhd.usrp.MultiUSRP(token="USRP_B210@ucla")' in lines
     # A failed driver install: the token is still shown, just no usage lines.
     lines.clear()
     account.install_reserved_driver.return_value = None
@@ -514,6 +521,7 @@ def test_a_global_listing_shows_the_handle():
 
     assert client_app._handle_tag({"handle": "PlutoA"}) == " [PlutoA]"
     assert client_app._handle_tag({}) == ""
+    assert client_app._handle_tag({"display_name": "pluto A", "handle": "pluto_A"}) == ""
 
 
 def test_install_after_a_global_reservation_uses_the_ref():
@@ -598,7 +606,9 @@ def test_a_handle_is_the_last_bracketed_word():
 
     assert client_app._name_and_handle("SimSDR-0 [Lab]A]") == ("SimSDR-0", "Lab]A")
     assert client_app._name_and_handle("Bench [x] [B1]") == ("Bench [x]", "B1")
-    assert client_app._name_and_handle("Bench [a b]") == ("Bench [a b]", None)
+    assert client_app._name_and_handle("Bench [a b]") == ("Bench [a b]", "Bench_[a_b]")
+    assert client_app._name_and_handle("pluto A") == ("pluto A", "pluto_A")
+    assert [client_app._name_and_handle(n)[1] for n in ("a@b", "rfg_x", "bridge-x", " _ ")] == [None] * 4
 
 
 def test_a_shell_without_a_home_shows_the_profiles_lab(monkeypatch):

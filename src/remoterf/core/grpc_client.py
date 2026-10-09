@@ -14,6 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
+import re
 import sys
 import threading
 from dataclasses import dataclass
@@ -421,8 +422,15 @@ def _lab(t, x, dep, connection):
     return DeviceRoute(unmap_arg(results["Token"]), kind, connection, res_id=res_id)
 
 
+def _key(s):
+    """A device name as a handle: 'pluto A', 'pluto_A' and 'pluto__A' are one.
+    Only for comparing names; never rewrite a string that may be a token."""
+    return re.sub(r"[\s_]+", "_", s).strip("_")
+
+
 def _global_handle(x, dep):
     """A handle on a device Global lists for this user, as its ref (None: no match)."""
+    key = _key(x)
     try:
         backend = federated_backend()
         dep_id = _deployment_id(dep)
@@ -430,7 +438,7 @@ def _global_handle(x, dep):
         return None
     matches = [
         d for d in backend.devices()["devices"]
-        if d.get("deployment_id") == dep_id and d.get("handle") == x
+        if key and d.get("deployment_id") == dep_id and _key(d.get("handle") or "") == key
     ]
     if len(matches) > 1:
         raise RuntimeError(f"{x}@{dep}: more than one device has that handle")

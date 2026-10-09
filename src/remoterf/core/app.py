@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from remoterf.core.grpc_client import addr as server_addr, handle_admin_command
+from remoterf.core.grpc_client import addr as server_addr, handle_admin_command, _key
 from . import *
 from ..common.utils import *
 
@@ -146,9 +146,16 @@ def _routable(token):
 
 
 def _name_and_handle(name):
-    """A listed device name, 'Pluto SDR [PlutoA]' -> ('Pluto SDR', 'PlutoA')."""
+    """A listed device name -> (name, handle). The handle is the name keyed,
+    'Pluto SDR' -> 'Pluto_SDR' (None when the lab can't address it), unless a
+    1.2.0 lab tags it: 'Pluto SDR [PlutoA]'."""
     m = _HANDLE_TAG.match(name)
-    return (m["name"], m["handle"]) if m else (name, None)
+    if m:
+        return m["name"], m["handle"]
+    h = _key(name)
+    # The lab's is_device_handle (core 0.19.0; this client pins 0.16.0).
+    ok = h and not h.startswith(("rfg_", "bridge-")) and not any(c in "@:" or c.isspace() or not c.isprintable() for c in h)
+    return name, h if ok else None
 
 
 def _print_reserved(where, when, token, handle, logged_in_to, install, no_handle=_NO_HANDLE):
@@ -519,7 +526,9 @@ def _render_destinations(entries):
 
 
 def _handle_tag(dev):
-    return f" [{dev['handle']}]" if dev.get("handle") else ""
+    """' [handle]' only when it isn't just the name."""
+    h = dev.get("handle")
+    return f" [{h}]" if h and _key(dev.get("display_name") or "") != _key(h) else ""
 
 
 def _federated_devices():
