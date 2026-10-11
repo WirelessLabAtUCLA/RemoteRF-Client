@@ -102,6 +102,7 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
         # One refresh at a time: a direct-path thread shares this session, and
         # Global revokes a session whose refresh token is presented twice.
         self._refresh_lock = threading.RLock()
+        self._framed = False  # this deployment answered a device RPC with a raw frame
 
     def _operation(self, name):
         if name not in self.capabilities["supported_operations"]:
@@ -365,29 +366,40 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
         """Relay one serialized GenericRPCRequest; returns the response bytes."""
 
         self._operation("DEV:rpc")
-        value = self.transport.request(
-            "POST", self.base + "/devices/rpc", access=self._access(),
-            data={"device_id": self._ref(device_id, "device_id"),
-                  "request_b64": base64.b64encode(bytes(request_bytes)).decode("ascii")},
-            overall_timeout=DEVICE_RPC_CLIENT_TIMEOUT_SECONDS,
-            max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
+        return self._device_call(
+            "/devices/rpc", {"device_id": self._ref(device_id, "device_id")}, request_bytes,
+            access=self._access(),
         )
-        return self._device_frame(value)
 
     def device_token_rpc(self, token, deployment_id, request_bytes):
         """Relay one frame on a Global device API token (``rfg_``): the token
         is the credential, so there is no login and no bearer."""
 
-        data = {"token": token,
-                "request_b64": base64.b64encode(bytes(request_bytes)).decode("ascii")}
+        data = {"token": token}
         if deployment_id is not None:
             data["deployment_id"] = deployment_id
-        value = self.transport.request(
-            "POST", self.base + "/devices/token-rpc", data=data,
-            overall_timeout=DEVICE_RPC_CLIENT_TIMEOUT_SECONDS,
-            max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
-        )
-        return self._device_frame(value)
+        return self._device_call("/devices/token-rpc", data, request_bytes)
+
+    def _device_call(self, path, data, request_bytes, **auth):
+        """Raw frames once this deployment has answered with one; base64 JSON before."""
+        request_bytes = bytes(request_bytes)
+        framed = self._framed
+        while True:
+            try:
+                value = self.transport.request(
+                    "POST", self.base + path, **auth,
+                    data=data if framed else {**data, "request_b64": base64.b64encode(request_bytes).decode("ascii")},
+                    frame=request_bytes if framed else None, accept_framed=True,
+                    overall_timeout=DEVICE_RPC_CLIENT_TIMEOUT_SECONDS,
+                    max_response_bytes=MAX_DEVICE_HTTP_RESPONSE_BYTES,
+                )
+            except AccountBackendError as exc:
+                # A rolled-back deployment refuses the framed body before routing it.
+                if framed and exc.code == "invalid_request":
+                    self._framed = framed = False
+                    continue
+                raise
+            return self._device_frame(value)
 
     def device_direct(self, ref, deployment_id, ice):
         """Signal a direct path to the lab behind ``ref`` (a device ref under
@@ -408,8 +420,12 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             raise AccountBackendError("Invalid home device response")
         return value["ice"]
 
-    @staticmethod
-    def _device_frame(value):
+    def _device_frame(self, value):
+        if "frame" in value:
+            if value.get("provenance") != "destination" or type(value["frame"]) is not bytes:
+                raise AccountBackendError("Invalid home device response")
+            self._framed = True
+            return value["frame"]
         encoded = value.get("response_b64")
         # An empty frame is a valid setter response (no results).
         if value.get("provenance") != "destination" or type(encoded) is not str:

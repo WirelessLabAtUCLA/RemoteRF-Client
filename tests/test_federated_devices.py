@@ -4,7 +4,7 @@ import base64
 from unittest.mock import Mock
 
 import pytest
-from remoterf_federation_core import local_capabilities
+from remoterf_federation_core import ValidationError, local_capabilities
 
 from remoterf.common.grpc import grpc_pb2
 from remoterf.common.utils import map_arg, unmap_arg
@@ -173,3 +173,117 @@ def test_https_keeps_an_idle_connection_for_a_minute(monkeypatch):
     http.JsonTransport("https://home.example")
     limits = seen["limits"]
     assert (limits.keepalive_expiry, limits.max_connections, limits.max_keepalive_connections) == (60, 100, 20)
+
+
+def test_device_rpcs_go_framed_once_the_deployment_answers_framed():
+    backend, transport = _backend("DEV:rpc")
+    b64 = base64.b64encode(b"req").decode()
+    transport.request.return_value = {"provenance": "destination", "response_b64": base64.b64encode(b"old").decode()}
+    assert backend.device_rpc(REF, b"req") == b"old"
+    kw = transport.request.call_args.kwargs
+    assert (kw["accept_framed"], kw["frame"], kw["data"]) == (True, None, {"device_id": REF, "request_b64": b64})
+
+    # A framed reply proves the deployment is new; the request after it goes framed.
+    transport.request.return_value = {"provenance": "destination", "frame": b"new"}
+    assert backend.device_rpc(REF, b"req") == b"new"
+    assert transport.request.call_args.kwargs["frame"] is None
+    assert backend.device_token_rpc("rfg_x", DEST, b"req") == b"new"
+    kw = transport.request.call_args.kwargs
+    assert (kw["frame"], kw["data"], "access" in kw) == (b"req", {"token": "rfg_x", "deployment_id": DEST}, False)
+    assert backend.device_rpc(REF, b"req") == b"new"
+    kw = transport.request.call_args.kwargs
+    assert (kw["frame"], kw["data"], kw["access"]) == (b"req", {"device_id": REF}, "acc")
+
+    # Rolled back: its parser refuses the framed body unrouted, so it is resent once as JSON.
+    transport.request.reset_mock()
+    transport.request.side_effect = [AccountBackendError("invalid_request"),
+                                     {"provenance": "destination", "response_b64": ""}]
+    assert backend.device_rpc(REF, b"req") == b""
+    first, second = transport.request.call_args_list
+    assert first.kwargs["frame"] == b"req" and second.kwargs["frame"] is None
+    assert second.kwargs["data"] == {"device_id": REF, "request_b64": b64} and backend._framed is False
+
+    # JSON refused is refused; a frame not from the destination is refused.
+    transport.request.reset_mock()
+    transport.request.side_effect = AccountBackendError("invalid_request")
+    with pytest.raises(AccountBackendError, match="invalid_request"):
+        backend.device_rpc(REF, b"req")
+    assert transport.request.call_count == 1
+    transport.request.side_effect = None
+    for bad in ({"provenance": "home", "frame": b"x"}, {"provenance": "destination", "frame": "x"}):
+        transport.request.return_value = bad
+        with pytest.raises(AccountBackendError, match="Invalid home device response"):
+            backend.device_rpc(REF, b"req")
+
+
+def test_json_transport_frames_bodies_both_ways():
+    import httpx
+    from remoterf.deployment.http import FRAMED_CONTENT_TYPE, JsonTransport
+
+    seen, reply = [], {}
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(reply.get("status", 200), headers={"content-type": reply["type"]}, content=reply["body"])
+
+    def framed(envelope, frame):
+        return len(envelope).to_bytes(4, "big") + envelope + frame
+
+    transport = JsonTransport("https://home.example", client=httpx.Client(transport=httpx.MockTransport(handler)))
+    reply.update(type=FRAMED_CONTENT_TYPE, body=framed(b'{"provenance":"destination"}', b"\x00raw"))
+    value = transport.request("POST", "/v2/x", data={"device_id": REF}, frame=b"\x01req", accept_framed=True)
+    assert value == {"provenance": "destination", "frame": b"\x00raw"}
+    sent = seen[-1]
+    assert sent.headers["content-type"] == FRAMED_CONTENT_TYPE
+    assert sent.headers["accept"] == f"{FRAMED_CONTENT_TYPE}, application/json"
+    assert sent.content == framed(b'{"device_id":"' + REF.encode() + b'"}', b"\x01req")
+
+    # JSON stays JSON: body, Accept, and a JSON reply to a framed Accept.
+    reply.update(type="application/json", body=b'{"provenance":"destination","response_b64":""}')
+    assert transport.request("POST", "/v2/x", data={"a": 1}, accept_framed=True)["response_b64"] == ""
+    assert transport.request("POST", "/v2/x", data={"a": 1})["response_b64"] == ""
+    assert seen[-1].headers["accept"] == "application/json" and seen[-1].content == b'{"a":1}'
+
+    # Errors stay JSON; a framed body is never read without asking for one.
+    reply.update(status=422, body=b'{"error":{"code":"invalid_request"}}')
+    with pytest.raises(AccountBackendError, match="invalid_request"):
+        transport.request("POST", "/v2/x", data={}, frame=b"x", accept_framed=True)
+    reply.update(status=200, type=FRAMED_CONTENT_TYPE, body=framed(b"{}", b""))
+    with pytest.raises(ValidationError):
+        transport.request("POST", "/v2/x", data={})
+
+    for body in (b"\x00\x00", (99).to_bytes(4, "big") + b"{}", framed(b"[]", b"x"), framed(b"{bad", b"")):
+        reply["body"] = body
+        with pytest.raises(AccountBackendError, match="Invalid home device response"):
+            transport.request("POST", "/v2/x", data={}, accept_framed=True)
+    reply["body"] = framed(b"{}", b"x" * 100)
+    with pytest.raises(AccountBackendError, match="exceeds"):
+        transport.request("POST", "/v2/x", data={}, accept_framed=True, max_response_bytes=50)
+
+
+def test_a_relayed_get_is_resent_once_after_an_internal_transport_error(monkeypatch):
+    from remoterf.core import direct_path, grpc_client
+
+    monkeypatch.setattr(direct_path, "global_path", lambda ref, deployment_id=None: None)
+    relay = Mock()
+    monkeypatch.setattr(grpc_client, "_federated_backend", relay)
+    ok = grpc_pb2.GenericRPCResponse(results={"tx_lo": map_arg(5)}).SerializeToString()
+    tick = AccountBackendError("internal_error", provenance="transport")
+
+    def call(function_name, *side_effect):
+        relay.device_rpc.reset_mock()
+        relay.device_rpc.side_effect = list(side_effect)
+        return grpc_client.rpc_client(function_name=function_name, args={"a": map_arg(REF)})
+
+    assert unmap_arg(call("pluto:tx_lo:GET", tick, ok).results["tx_lo"]) == 5
+    assert relay.device_rpc.call_count == 2
+    with pytest.raises(RuntimeError, match=r"internal_error \[transport\]"):
+        call("pluto:tx_lo:GET", tick, tick)
+    assert relay.device_rpc.call_count == 2
+    # Never a SET or CALL; never another error.
+    for name, error in (("pluto:tx_lo:SET", tick), ("pluto:rx:CALL0", tick),
+                        ("pluto:tx_lo:GET", AccountBackendError("internal_error", provenance="destination")),
+                        ("pluto:tx_lo:GET", AccountBackendError("route_unavailable", provenance="transport"))):
+        with pytest.raises(RuntimeError):
+            call(name, error, ok)
+        assert relay.device_rpc.call_count == 1

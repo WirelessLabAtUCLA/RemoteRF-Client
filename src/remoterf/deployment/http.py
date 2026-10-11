@@ -1,5 +1,6 @@
 """Verified same-origin JSON transport with bounded responses and no retries."""
 
+import json
 import os
 import ssl
 import time
@@ -13,6 +14,10 @@ from remoterf_federation_core import (
     ValidationError,
 )
 from .state import origin
+
+# Device RPC bodies: u32be len(envelope) || JSON envelope || raw frame. The
+# core's FRAMED_CONTENT_TYPE, kept here while the client pins an older core.
+FRAMED_CONTENT_TYPE = "application/x-remoterf-framed"
 
 
 class AccountBackendError(RuntimeError):
@@ -44,6 +49,8 @@ class JsonTransport:
         access=None,
         overall_timeout=None,
         max_response_bytes=65536,
+        frame=None,
+        accept_framed=False,
     ):
         if (
             not path.startswith("/")
@@ -51,7 +58,12 @@ class JsonTransport:
             or any(c in path for c in ("?", "#", "\\", "%"))
         ):
             raise ValidationError("Invalid same-origin account path")
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": f"{FRAMED_CONTENT_TYPE}, application/json" if accept_framed else "application/json"}
+        content = None
+        if frame is not None:
+            envelope = json.dumps(data, separators=(",", ":")).encode()
+            content, data = len(envelope).to_bytes(4, "big") + envelope + bytes(frame), None
+            headers["Content-Type"] = FRAMED_CONTENT_TYPE
         if access:
             headers["Authorization"] = "Bearer " + access
         overall_timeout = (
@@ -71,6 +83,7 @@ class JsonTransport:
                 method,
                 self.origin + path,
                 json=data,
+                content=content,
                 headers=headers,
                 follow_redirects=False,
                 timeout=timeout,
@@ -86,6 +99,10 @@ class JsonTransport:
                         )
                 if 300 <= response.status_code < 400:
                     raise AccountBackendError("Account redirects are not allowed")
+                if accept_framed and response.status_code < 300 and (
+                    response.headers.get("content-type", "").split(";")[0].strip() == FRAMED_CONTENT_TYPE
+                ):
+                    return _unframe(bytes(raw), max_response_bytes)
                 value = strict_json(bytes(raw), max_bytes=max_response_bytes)
                 if response.status_code >= 400:
                     # Never print arbitrary server text (could contain secrets/terminal escapes).
@@ -123,3 +140,17 @@ class JsonTransport:
 
     def close(self):
         self.client.close()
+
+
+def _unframe(raw, max_bytes):
+    """A framed body -> {**envelope, "frame": frame}."""
+    size = int.from_bytes(raw[:4], "big")
+    if len(raw) < 4 or 4 + size > len(raw):
+        raise AccountBackendError("Invalid home device response")
+    try:
+        value = strict_json(raw[4:4 + size], max_bytes=max_bytes)
+    except ValidationError:
+        raise AccountBackendError("Invalid home device response") from None
+    if type(value) is not dict:
+        raise AccountBackendError("Invalid home device response")
+    return {**value, "frame": raw[4 + size:]}
