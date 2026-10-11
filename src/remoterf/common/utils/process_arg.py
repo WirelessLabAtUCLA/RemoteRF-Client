@@ -98,7 +98,7 @@ def _json_safe(value: Any):
         return _json_safe(value.as_payload())
     if isinstance(value, np.ndarray):
         if value.dtype == object:
-            raise ValueError(f"Cannot JSON-map object-dtype array: {value!r}")
+            return _json_safe(value.tolist())
         array = np.asarray(value)
         if np.iscomplexobj(array):
             data = [[float(num.real), float(num.imag)] for num in array.ravel()]
@@ -206,13 +206,15 @@ def map_arg(value: Any) -> grpc_pb2.Argument:
             try:
                 array = np.stack(value)
             except Exception:
-                arg.json_value = json.dumps(_json_safe(value), separators=(",", ":"))
-                return arg
+                pass
+        if array.dtype == object:
+            arg.json_value = json.dumps(_json_safe(value), separators=(",", ":"))
+            return arg
         return map_arg(array)
     elif isinstance(value, np.ndarray):
-        if value.dtype == object:
-            raise ValueError(f"Cannot map object-dtype array: {value!r}")
-        if value.dtype.kind not in _SUPPORTED_NDARRAY_KINDS:
+        # Object arrays (a list of dicts, say) and non-numeric dtypes go as
+        # JSON, which the client decodes back to lists.
+        if value.dtype == object or value.dtype.kind not in _SUPPORTED_NDARRAY_KINDS:
             arg.json_value = json.dumps(
                 _json_safe(value.tolist()), separators=(",", ":")
             )

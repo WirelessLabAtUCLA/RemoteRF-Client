@@ -249,6 +249,15 @@ class ProcessArgTests(unittest.TestCase):
             },
         )
 
+    def test_values_numpy_makes_object_arrays_of_go_as_json(self):
+        scan = [{"address": "AA:BB", "rssi": -60}, {"address": "CC:DD", "rssi": -70}]
+        for value in (scan, scan[:1], [None, 1.5], np.array(scan, dtype=object)):
+            with self.subTest(value=value):
+                mapped = map_arg(value)
+                self.assertEqual(mapped.WhichOneof("value"), "json_value")
+                self.assertEqual(unmap_arg(mapped), list(value))
+        self.assertEqual(map_arg((34.07, -118.44)).WhichOneof("value"), "ndarray_value")
+
 
 if __name__ == "__main__":
     unittest.main()
