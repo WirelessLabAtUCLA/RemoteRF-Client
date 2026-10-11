@@ -151,6 +151,10 @@ class HackRF:
         from ..dynamic_device import install_driver_if_stale
         install_driver_if_stale(token=token, current_hash=_SCHEMA_HASH)
 
+    def batch(self):
+        from ...core.grpc_client import batch
+        return batch(self.token)
+
     @property
     def amplifier_on(self):
         'Whether the 14 dB RF front-end amplifier is enabled.'

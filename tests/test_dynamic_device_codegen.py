@@ -335,6 +335,28 @@ class DynamicDeviceCodegenTests(unittest.TestCase):
         self.assertIn('_try_call("ip", token)', with_ip)
         self.assertNotIn('_try_call("ip", token)', without_ip)
 
+    def test_batch_method_emitted_unless_the_schema_has_a_batch_member(self):
+        base = {
+            "device_type": "fake_device",
+            "client_class": "FakeDevice",
+            "driver_version": "0.0.0",
+            "schema_hash": "sha256:test",
+            "getters": {},
+            "setters": {},
+        }
+        code = _codegen(dict(base, calls={"call_rx": {"args": []}}))
+        self.assertIn(
+            "    def batch(self):\n"
+            "        from ...core.grpc_client import batch\n"
+            "        return batch(self.token)\n",
+            code,
+        )
+        compile(code, "<driver>", "exec")
+        for member in ({"calls": {"call_batch": {"args": []}}},
+                       {"calls": {}, "getters": {"get_batch": {"args": []}}}):
+            own = _codegen(dict(base, **member))
+            self.assertNotIn("from ...core.grpc_client import batch", own)
+
     def test_pluto_style_schema_preserves_get_set_call0_and_call1(self):
         code = _codegen({
             "device_type": "adalm_pluto",

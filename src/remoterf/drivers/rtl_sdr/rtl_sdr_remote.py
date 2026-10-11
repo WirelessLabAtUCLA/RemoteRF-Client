@@ -119,6 +119,10 @@ class RtlSdr:
         from ..dynamic_device import install_driver_if_stale
         install_driver_if_stale(token=token, current_hash=_SCHEMA_HASH)
 
+    def batch(self):
+        from ...core.grpc_client import batch
+        return batch(self.token)
+
     @property
     def agc_mode(self):
         return _try_get("agc_mode", self.token)

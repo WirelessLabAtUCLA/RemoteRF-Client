@@ -152,6 +152,10 @@ class Pluto:
         install_driver_if_stale(token=token, current_hash=_SCHEMA_HASH)
         _try_call("ip", token)
 
+    def batch(self):
+        from ...core.grpc_client import batch
+        return batch(self.token)
+
     @property
     def dds_enabled(self):
         return _try_get("dds_enabled", self.token)

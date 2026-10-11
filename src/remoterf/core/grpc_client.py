@@ -17,6 +17,9 @@ import os
 import re
 import sys
 import threading
+import time
+from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -226,20 +229,26 @@ def _federated_call(route, function_name, args):
                 if not refused:
                     return response
     request = grpc_pb2.GenericRPCRequest(function_name=function_name, args=args)
-    try:
-        if ref.startswith("rfg_"):
-            raw = _token_backend().device_token_rpc(
-                ref, getattr(route, "deployment_id", None), request.SerializeToString()
-            )
-        else:
-            raw = federated_backend().device_rpc(ref, request.SerializeToString())
-    except AccountBackendError as exc:
-        if ref.startswith("rfg_") and str(exc) == "not_found":
-            raise RuntimeError(
-                "this RemoteRF Global does not accept device tokens yet; use the device reference"
-            ) from None
-        label = f" [{exc.provenance}]" if exc.provenance else ""
-        raise RuntimeError(f"{exc}{label}") from None
+    for retry in (function_name.endswith(":GET"), False):
+        try:
+            if ref.startswith("rfg_"):
+                raw = _token_backend().device_token_rpc(
+                    ref, getattr(route, "deployment_id", None), request.SerializeToString()
+                )
+            else:
+                raw = federated_backend().device_rpc(ref, request.SerializeToString())
+            break
+        except AccountBackendError as exc:
+            if retry and exc.code == "internal_error" and exc.provenance == "transport":
+                # An older lab drops ~0.1% of relayed results when a clock second
+                # ticks mid-call; a GET changes nothing, so it is sent once more.
+                continue
+            if ref.startswith("rfg_") and str(exc) == "not_found":
+                raise RuntimeError(
+                    "this RemoteRF Global does not accept device tokens yet; use the device reference"
+                ) from None
+            label = f" [{exc.provenance}]" if exc.provenance else ""
+            raise RuntimeError(f"{exc}{label}") from None
     response = grpc_pb2.GenericRPCResponse()
     response.ParseFromString(raw)
     return response
@@ -476,10 +485,179 @@ def rpc_client(*, function_name, args, connection=None):
     token = _device_token(function_name, args)
     if function_name.endswith(":tx:CALL1") and "arg1" in args and token in _ci16_tokens:
         args = {**args, "arg1": _tx_wire(args["arg1"])}
-    response = _dispatch(function_name, args, connection)
+    response = _driver_hooks(function_name, args, token) if connection is None else None
+    if response is None:
+        response = _dispatch(function_name, args, connection)
     if token is not None and function_name.endswith(":rx:CALL0") and _is_ci16(response.results.get(function_name.split(":")[1])):
         _ci16_tokens.add(token)
+    if token is not None and function_name.endswith(":rx:CALL0") and _readahead_k():
+        _rx_sizes[token] = response.ByteSize()
     return response
+
+
+def _driver_hooks(function_name, args, token):
+    """Batching and RX read-ahead for driver calls; None: send it as usual."""
+    parts = function_name.split(":")
+    driver_call = token is not None and len(parts) == 3
+    if driver_call and parts[2] != "GET" and parts[1:] != ["rx", "CALL0"]:
+        _rx_queues.clear()
+    pending = _batch_local.pending
+    same = driver_call and pending is not None and pending[:2] == (token, parts[0])
+    if same and parts[2] != "SET":
+        return _flush((function_name, args))
+    if pending is not None and not same:
+        _flush()
+    if driver_call and parts[2] == "SET" and parts[0] != "DynamicV2" and token in _batch_local.depth:
+        if _batch_local.pending is None:
+            _batch_local.pending = (token, parts[0], [])
+        _batch_local.pending[2].append((function_name, args))
+        if len(_batch_local.pending[2]) >= _BATCH_MAX_OPS:
+            _flush()
+        return grpc_pb2.GenericRPCResponse()  # setters' results are never read
+    if driver_call and parts[1:] == ["rx", "CALL0"] and _readahead_k():
+        return _rx_readahead(parts[0], args, token)
+    return None
+
+
+# ── config batching: with sdr.batch(): ───────────────────────────────
+#
+# A driver's property SETs queue up and go out as one <Prefix>:batch:CALLN
+# RPC, which the lab runs in order under the device lock. The queue is sent
+# when the block ends or at any other call; a call on the batching driver
+# rides along as the last op and gets its own results back. A failed SET
+# raises there, naming it; the SETs before it ran, the ones after did not.
+
+_BATCH_MAX_OPS = 64
+_batch_support: Dict[str, bool] = {}  # token -> the lab runs batches (unknown until the first)
+
+
+class _BatchState(threading.local):
+    pending = None  # (token, prefix, [(function_name, args), ...])
+
+    def __init__(self):
+        self.depth = {}  # token -> nesting of its open `with batch(token)`
+
+
+_batch_local = _BatchState()
+
+
+@contextmanager
+def batch(token):
+    """Queue this token's property SETs until the block ends (re-entrant)."""
+    from ..drivers._virtual import is_virtual_token
+
+    if is_virtual_token(token):
+        yield
+        return
+    depth = _batch_local.depth
+    depth[token] = depth.get(token, 0) + 1
+    try:
+        yield
+    finally:
+        depth[token] -= 1
+        if not depth[token]:
+            del depth[token]
+            pending = _batch_local.pending
+            if pending is not None and pending[0] == token:
+                _flush()
+
+
+def _flush(last=None):
+    token, prefix, ops = _batch_local.pending
+    _batch_local.pending = None
+    if last is not None:
+        ops.append(last)
+    if len(ops) == 1 or _batch_support.get(token) is False:
+        return _replay(ops)
+    args = {"a": ops[0][1]["a"]}
+    for i, (name, op_args) in enumerate(ops):
+        op = grpc_pb2.GenericRPCRequest(function_name=name, args={k: v for k, v in op_args.items() if k != "a"})
+        args[f"op{i}"] = grpc_pb2.Argument(bytes_value=op.SerializeToString())
+    try:
+        response = _dispatch(f"{prefix}:batch:CALLN", args, None)
+    except RuntimeError as exc:
+        # An older lab or Host refuses it before running anything: as before, one by one.
+        if not any(s in str(exc) for s in ("call_batch", "device_unavailable")):
+            raise
+        response = None
+    if response is None or "batch_done" not in response.results:
+        _batch_support[token] = False
+        return _replay(ops)
+    _batch_support[token] = True
+    if "batch_failed" in response.results:
+        failed = unmap_arg(response.results["batch_failed"])
+        name = ops[failed][0] if isinstance(failed, int) and 0 <= failed < len(ops) else f"{prefix}:batch:CALLN"
+        raise RuntimeError(f"{name}: {unmap_arg(response.results['batch_error'])}")
+    del response.results["batch_done"]
+    return response
+
+
+def _replay(ops):
+    for name, op_args in ops:
+        response = _dispatch(name, op_args, None)
+    return response
+
+
+# ── RX read-ahead (opt-in): REMOTERF_RX_READAHEAD=<k> ────────────────
+#
+# One <Prefix>:rx_n:CALL1 RPC captures up to k buffers back to back; the
+# next rx() calls are served from them. They were captured when the first
+# rx() of the group ran, not when each later rx() is called, so use this only
+# for continuous-capture loops. They are dropped after 1 s and on any SET or
+# CALL (not GET) on any device of this process; changes made elsewhere
+# (another program, another user's TX, the RF environment) are not seen.
+
+# ponytail: fixed 1 s bound; make it configurable if a real loop needs another.
+_RX_READAHEAD_MAX_AGE = 1.0
+# The relay's response frame cap (core MAX_DEVICE_RPC_RESPONSE_FRAME_BYTES), less headroom.
+_RX_N_BYTES = 786432 - 4096
+_rx_queues: Dict[str, tuple] = {}  # token -> (captured at, deque of rx Arguments)
+_rx_sizes: Dict[str, int] = {}  # token -> size of its last rx response
+_rx_n_unsupported: set = set()
+
+
+def _readahead_k():
+    try:
+        k = int(os.getenv("REMOTERF_RX_READAHEAD") or 0)
+    except ValueError:
+        return 0
+    return min(k, 64) if k >= 2 else 0
+
+
+def _rx_readahead(prefix, args, token):
+    stamp, buffers = _rx_queues.get(token, (0.0, None))
+    if buffers and time.monotonic() - stamp <= _RX_READAHEAD_MAX_AGE:
+        try:
+            return grpc_pb2.GenericRPCResponse(results={"rx": buffers.popleft()})
+        except IndexError:
+            pass  # another thread took the last one
+    size = _rx_sizes.get(token)
+    k = min(_readahead_k(), _RX_N_BYTES // size) if size and token not in _rx_n_unsupported else 0
+    if k < 2:
+        return None
+    stamp = time.monotonic()
+    try:
+        response = _dispatch(f"{prefix}:rx_n:CALL1", {**args, "arg1": map_arg(k)}, None)
+    except RuntimeError as exc:
+        # An older lab or Host refused it unrun, or it outgrew the relay: plain rx from now on.
+        if not any(s in str(exc) for s in ("call_rx_n", "device_unavailable", "response_too_large")):
+            raise
+        response = None
+    arg = response.results.get("rx_n") if response is not None else None
+    nd = arg.ndarray_value if arg is not None and arg.WhichOneof("value") == "ndarray_value" else None
+    m = nd.shape[0] if nd is not None and nd.shape else 0
+    if m < 1 or len(nd.data) % m:
+        _rx_n_unsupported.add(token)
+        return None
+    step = len(nd.data) // m
+    buffers = deque(
+        grpc_pb2.Argument(ndarray_value=grpc_pb2.NDArrayValue(
+            dtype=nd.dtype, shape=nd.shape[1:], data=nd.data[i * step:(i + 1) * step]))
+        for i in range(m)
+    )
+    first = buffers.popleft()
+    _rx_queues[token] = (stamp, buffers)
+    return grpc_pb2.GenericRPCResponse(results={"rx": first})
 
 
 # Device tokens whose Server answered an rx in ci16: it decodes ci16 too (the

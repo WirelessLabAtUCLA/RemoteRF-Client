@@ -1267,6 +1267,13 @@ def _codegen(schema: dict) -> str:
     if "ip" in call_map:
         lines.append('        _try_call("ip", token)')
     lines.append("")
+    if "batch" not in getter_map and "batch" not in setter_map and "batch" not in call_map:
+        lines += [
+            "    def batch(self):",
+            "        from ...core.grpc_client import batch",
+            "        return batch(self.token)",
+            "",
+        ]
 
     # ── Properties ────────────────────────────────────────────────────
     all_props = sorted(set(getter_map) | set(setter_map))
