@@ -51,6 +51,9 @@ def setup_function(function):
     FakePath.instances.clear()
 
 
+teardown_function = setup_function  # no fake path outlives its test
+
+
 def test_a_marked_token_gets_its_own_path_and_other_tokens_do_not(monkeypatch):
     monkeypatch.setenv("REMOTERF_DIRECT", "1")
     monkeypatch.setattr(direct_path, "DirectPath", FakePath)
@@ -105,19 +108,78 @@ def test_rpc_client_routes_by_the_token_the_call_carries(monkeypatch):
     assert routed[-1] is None  # only a string token can name a partner path
 
 
-def test_no_login_means_no_partner_path_and_disabled_means_none(monkeypatch):
+def test_no_login_offers_with_the_token_alone_and_disabled_means_none(monkeypatch):
     monkeypatch.setattr(direct_path, "DirectPath", FakePath)
     monkeypatch.setattr(direct_path, "_from_stored_login", lambda: None)
     monkeypatch.setattr(direct_path, "_stored_login", lambda: None)
     direct_path._login = None
     monkeypatch.setenv("REMOTERF_DIRECT", "1")
     direct_path.mark_partner("tok", "owner-uuid")
-    assert direct_path.current(token="tok") is None and FakePath.instances == []  # nothing to log in with
+    path = direct_path.current(token="tok")
+    assert path is FakePath.instances[0] and path.memo == "owner-uuid|token"  # its own memo scope
+    seen = {}
+
+    def fake_rpc(*, function_name, args, connection=None):
+        seen.update(function_name=function_name, args={k: unmap_arg(v) for k, v in args.items()})
+        return grpc_pb2.GenericRPCResponse(results={"ice": map_arg("{}")})
+
+    monkeypatch.setattr(grpc_client, "rpc_client", fake_rpc)
+    path.offer({"id": "x"})
+    assert seen["function_name"] == "ACC:direct_offer" and sorted(seen["args"]) == ["a", "ice"]
+    assert seen["args"]["a"] == "tok"
+    direct_path.stop()
     direct_path._login = ("alice", "secret")
-    assert direct_path.current(token="tok") is FakePath.instances[0]
+    assert direct_path.current(token="tok").memo == "owner-uuid"  # a login signs as before
     monkeypatch.setenv("REMOTERF_DIRECT", "0")
     assert direct_path.current(token="tok") is None  # disabled: nothing, however marked
     direct_path._login = None
+
+
+def test_an_old_home_refusing_a_token_offer_means_no_direct_path(monkeypatch):
+    replies = []
+    monkeypatch.setattr(grpc_client, "rpc_client", lambda **k: grpc_pb2.GenericRPCResponse(
+        results={"ace": map_arg(replies.pop())}))
+    send = direct_path._offer_rpc(None, None, token="tok")
+    # A Server older than token offers fails reading the missing login.
+    replies.append("Internal server error; please try again or contact your instructor.")
+    try:
+        send({})
+    except direct_path.PathUnavailable as exc:
+        assert "needs a login" in str(exc)
+    else:
+        raise AssertionError("an old home must stop the path")
+    replies.append("That reservation is not active now.")  # a new home's refusal: retried later
+    try:
+        send({})
+    except direct_path.PathError as exc:
+        assert not isinstance(exc, direct_path.PathUnavailable)
+    else:
+        raise AssertionError("a refusal is no answer")
+
+
+def test_describe_reports_partner_paths(monkeypatch):
+    monkeypatch.setattr(direct_path, "DirectPath", FakePath)
+    monkeypatch.setattr(direct_path, "_from_stored_login", lambda: None)
+    monkeypatch.setattr(grpc_client, "_current_profile", lambda: None)
+    monkeypatch.setattr(direct_path, "_active_route", lambda profile: None)
+    monkeypatch.setattr(direct_path, "_credentials", lambda: None)
+    monkeypatch.setenv("REMOTERF_DIRECT", "1")
+    assert direct_path.describe() == "relay (direct path off)"  # nothing partnered yet
+    direct_path.mark_partner("tok", "lab-b")
+    path = direct_path.current(token="tok")
+    path.describe = lambda: "direct 192.0.2.7:4433 (3 calls)"
+    assert direct_path.describe() == "partner lab-b: direct 192.0.2.7:4433 (3 calls)"
+    path.state = "down"
+    path.describe = lambda: "relay (direct path down: timed out; retrying)"
+    assert direct_path.describe() == "partner lab-b: via HOME (direct path down: timed out; retrying)"
+    direct_path._path = home = FakePath(offer=None, server_name="", ca_pem=b"")
+    home.describe = lambda: "direct 192.0.2.1:4433"
+    assert direct_path.describe() == (
+        "direct 192.0.2.1:4433; partner lab-b: via HOME (direct path down: timed out; retrying)"
+    )
+    direct_path._path = None
+    monkeypatch.setattr(direct_path, "_active_route", lambda profile: {"kind": "lan"})
+    assert direct_path.describe().startswith("LAN (direct); partner lab-b: via HOME")
 
 
 def test_a_partner_path_that_is_down_sends_the_call_to_the_home(monkeypatch):

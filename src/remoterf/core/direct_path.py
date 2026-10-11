@@ -691,17 +691,25 @@ _partners: dict[str, DirectPath] = {}  # device token -> the path to the lab tha
 _partner_owners: dict[str, str] = {}  # device token -> owner deployment id
 
 
-def _offer_rpc(username: str, secret: str, token: Optional[str] = None) -> Callable[[dict], dict]:
-    """The offer RPC; with ``token`` the home has the partner lab answer instead."""
+def _offer_rpc(username: Optional[str], secret: Optional[str], token: Optional[str] = None) -> Callable[[dict], dict]:
+    """The offer RPC; with ``token`` the home has the partner lab answer instead.
+
+    Without a login (``username`` None) the partner token alone authorizes it."""
     def send(offer: dict) -> dict:
         from .grpc_client import rpc_client
 
-        args = {"un": map_arg(username), "pw": map_arg(secret), "ice": map_arg(json.dumps(offer))}
+        args = {"ice": map_arg(json.dumps(offer))}
+        if username is not None:
+            args.update(un=map_arg(username), pw=map_arg(secret))
         if token is not None:
             args["a"] = map_arg(token)
         response = rpc_client(function_name="ACC:direct_offer", args=args)
         if "ace" in response.results:
-            raise PathError(unmap_arg(response.results["ace"]))
+            reason = unmap_arg(response.results["ace"])
+            if username is None and reason.startswith("Internal server error"):
+                # A home Server that predates token offers fails on the missing login.
+                raise PathUnavailable("the home's Server needs a login for a direct path")
+            raise PathError(reason)
         answer = json.loads(unmap_arg(response.results["ice"]))
         for key in ("server_name", "ca_pem"):
             if key in response.results:
@@ -811,12 +819,18 @@ def _side_path(key: str, make: Callable[[], Optional[DirectPath]]) -> Optional[D
 def _partner(token: str) -> Optional[DirectPath]:
     """The path to the lab owning the device behind ``token``, punched on first use."""
     def make() -> Optional[DirectPath]:
+        owner = _partner_owners.get(token)
         credentials = _credentials()
         if credentials is None:
-            return None
+            # No login (a token-only script): the token is its own credential.
+            # Its own memo, so an old home refusing it cannot hold back a
+            # logged-in process's path to the same lab.
+            return DirectPath(
+                offer=_offer_rpc(None, None, token=token), server_name="", ca_pem=b"",
+                memo=owner and f"{owner}|token",
+            )
         return DirectPath(
-            offer=_offer_rpc(*credentials, token=token), server_name="", ca_pem=b"",
-            memo=_partner_owners.get(token),
+            offer=_offer_rpc(*credentials, token=token), server_name="", ca_pem=b"", memo=owner,
         )
 
     return _side_path(token, make)
@@ -890,18 +904,27 @@ def describe() -> str:
         return f"relay (direct path unavailable: {_BROKEN}; fix: pip install --force-reinstall remoterf)"
     if not enabled():
         return "relay (direct path disabled: REMOTERF_DIRECT=0)"
+    partners = "; ".join(
+        f"partner {_partner_owners[key]}: "
+        + (path.describe() if path.ready else path.describe().replace("relay", "via HOME", 1))
+        for key, path in list(_partners.items()) if key in _partner_owners
+    )
     path = _path
     if path is not None:
-        return path.describe()
-    try:
-        from .grpc_client import _current_profile
+        home = path.describe()
+    else:
+        try:
+            from .grpc_client import _current_profile
 
-        route = _active_route(_current_profile())
-    except Exception:  # noqa: BLE001 - not configured, no home: nothing to add
-        route = None
-    if route is None or route["kind"] == "relay":
-        return "relay (direct path off)"
-    return "LAN (direct)" if route["kind"] == "lan" else str(route["kind"])
+            route = _active_route(_current_profile())
+        except Exception:  # noqa: BLE001 - not configured, no home: nothing to add
+            route = None
+        if route is None or route["kind"] == "relay":
+            if partners:  # the home path is not what these device calls take
+                return partners
+            return "relay (direct path off)"
+        home = "LAN (direct)" if route["kind"] == "lan" else str(route["kind"])
+    return f"{home}; {partners}" if partners else home
 
 
 def stop() -> None:
