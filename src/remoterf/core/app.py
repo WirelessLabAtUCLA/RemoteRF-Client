@@ -177,11 +177,31 @@ def _print_reserved(where, when, token, handle, logged_in_to, install, no_handle
         printf("  Works anywhere, no login needed. Keep it safe: it can't be shown again.", Sty.DEFAULT)
         printf(f"  ({no_handle}. Lost the token? Cancel and reserve again.)", Sty.DEFAULT)
     printf("", Sty.DEFAULT)
-    call = DRIVER_CALLS.get(install())
+    device_type = install()
+    call = DRIVER_CALLS.get(device_type)
     if call:
         printf("Use either one as the token:" if handle else "Use it as the token:", Sty.DEFAULT)
         for text in (token, handle) if handle else (token,):
             printf(f'  sdr = {call}(token="{text}")', Sty.CYAN)
+    elif device_type and (cls := _client_class(device_type)):
+        # A lab's own driver (bluetooth, gps, ...): its class, from its IDL.
+        printf("Use either one as the token:" if handle else "Use it as the token:", Sty.DEFAULT)
+        printf("  from remoterf.drivers import ensure_driver", Sty.CYAN)
+        printf(f'  ensure_driver(token="{token}")  # installs it on any other machine', Sty.CYAN)
+        printf(f"  from remoterf.drivers.{device_type} import {cls}", Sty.CYAN)
+        for text in (token, handle) if handle else (token,):
+            printf(f'  dev = {cls}(token="{text}")', Sty.CYAN)
+
+
+def _client_class(device_type):
+    """The client class a generated driver package exports (beside its `adi` alias)."""
+    from importlib import import_module
+
+    try:
+        names = import_module(f"remoterf.drivers.{device_type}").__all__
+    except Exception:  # noqa: BLE001 - no usage lines is all a bad package costs
+        return None
+    return next((n for n in names if n != "adi"), None)
 
 
 def _print_native_reserved(device_id, label, when, token):

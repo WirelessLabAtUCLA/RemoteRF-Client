@@ -445,6 +445,37 @@ def test_a_lab_reservation_shows_the_token_and_the_handle(monkeypatch):
     account.install_reserved_driver.assert_called_once_with("Zm9vYmFy", 3)
 
 
+def test_a_custom_device_shows_its_own_class_and_how_to_install_it(monkeypatch):
+    import datetime
+    import sys
+    import remoterf.core.app as client_app
+
+    lines = _shown(monkeypatch, client_app)
+    account = Mock()
+    account.reserve_device.return_value = "Zm9vYmFy"
+    account.install_reserved_driver.return_value = "bluetooth"
+    monkeypatch.setattr(client_app, "account", account)
+    monkeypatch.setattr(client_app, "home_name", "ucla")
+    monkeypatch.setitem(sys.modules, "remoterf.drivers.bluetooth",
+                        SimpleNamespace(__all__=["adi", "BluetoothModule", "helpers"]))
+    client_app._native_reserve_slot(10, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+                                    device_label="BT Dongle [BT1] (online)")
+    start = lines.index("Use either one as the token:")
+    assert lines[start + 1:] == [
+        "  from remoterf.drivers import ensure_driver",
+        '  ensure_driver(token="Zm9vYmFy@ucla")  # installs it on any other machine',
+        "  from remoterf.drivers.bluetooth import BluetoothModule",
+        '  dev = BluetoothModule(token="Zm9vYmFy@ucla")',
+        '  dev = BluetoothModule(token="BT1@ucla")',
+    ]
+    # A package that will not import: the token is still shown, just no usage lines.
+    lines.clear()
+    monkeypatch.setitem(sys.modules, "remoterf.drivers.bluetooth", None)
+    client_app._native_reserve_slot(10, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+                                    device_label="BT Dongle [BT1] (online)")
+    assert _row(lines, "Token", "Zm9vYmFy@ucla") and not any("dev =" in line for line in lines)
+
+
 def test_an_untagged_device_is_reached_by_its_name(monkeypatch):
     import datetime
     import remoterf.core.app as client_app
