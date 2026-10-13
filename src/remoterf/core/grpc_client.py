@@ -228,21 +228,32 @@ def _federated_call(route, function_name, args):
                 refused = "a" in response.results and unmap_arg(response.results["a"]) == "the reservation has ended"
                 if not refused:
                     return response
+    def send(request):
+        if ref.startswith("rfg_"):
+            return _token_backend().device_token_rpc(
+                ref, getattr(route, "deployment_id", None), request.SerializeToString()
+            )
+        return federated_backend().device_rpc(ref, request.SerializeToString())
+
     request = grpc_pb2.GenericRPCRequest(function_name=function_name, args=args)
     for retry in (function_name.endswith(":GET"), False):
         try:
-            if ref.startswith("rfg_"):
-                raw = _token_backend().device_token_rpc(
-                    ref, getattr(route, "deployment_id", None), request.SerializeToString()
-                )
-            else:
-                raw = federated_backend().device_rpc(ref, request.SerializeToString())
+            raw = send(request)
             break
         except AccountBackendError as exc:
             if retry and exc.code == "internal_error" and exc.provenance == "transport":
                 # An older lab drops ~0.1% of relayed results when a clock second
                 # ticks mid-call; a GET changes nothing, so it is sent once more.
                 continue
+            if exc.code == "response_too_large" and exc.provenance == "destination":
+                raw = _kept_reply(send, args)
+                if raw is not None:
+                    break
+                raise RuntimeError(
+                    "response_too_large [destination]: the reply is over the Global relay's "
+                    "768 KiB limit for one call and this lab does not page it; read fewer "
+                    "samples per call (about 98k complex64) or use a direct path"
+                ) from None
             if ref.startswith("rfg_") and str(exc) == "not_found":
                 raise RuntimeError(
                     "this RemoteRF Global does not accept device tokens yet; use the device reference"
@@ -658,6 +669,34 @@ def _rx_readahead(prefix, args, token):
     first = buffers.popleft()
     _rx_queues[token] = (stamp, buffers)
     return grpc_pb2.GenericRPCResponse(results={"rx": first})
+
+
+# A newer lab keeps a reply too large for the relay (up to 4 MiB) for its
+# caller, who fetches it in pages; an older lab refuses the first page unrun.
+_PAGE_FUNCTION = "Federation:page:CALL2"
+_MAX_KEPT_REPLY = 4 * 1024 * 1024 + 65536
+
+
+def _kept_reply(send, args):
+    from ..deployment.http import AccountBackendError
+    data, nonce = b"", ""
+    while True:
+        page_args = {"arg1": map_arg(len(data)), "arg2": map_arg(nonce)}
+        if "a" in args:
+            page_args["a"] = args["a"]
+        try:
+            raw = send(grpc_pb2.GenericRPCRequest(function_name=_PAGE_FUNCTION, args=page_args))
+        except AccountBackendError:
+            return None
+        reply = grpc_pb2.GenericRPCResponse.FromString(raw)
+        if not {"page", "size", "nonce"} <= set(reply.results):
+            return None
+        page, size, nonce = (unmap_arg(reply.results[key]) for key in ("page", "size", "nonce"))
+        if not isinstance(page, bytes) or not page or type(size) is not int or size > _MAX_KEPT_REPLY:
+            return None
+        data += page
+        if len(data) >= size:
+            return data if len(data) == size else None
 
 
 # Device tokens whose Server answered an rx in ci16: it decodes ci16 too (the
