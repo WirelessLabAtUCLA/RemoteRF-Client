@@ -1418,7 +1418,8 @@ _DRIVERS_DIR = Path(__file__).parent
 def _write_driver_files(schema: dict) -> Path:
     pkg_dir = _write_v2_driver_files(schema) if str(schema.get("schema_version")) == "2.0" else _write_v1_driver_files(schema)
     stale = f"remoterf.drivers.{pkg_dir.name}"
-    for name in [m for m in sys.modules if m == stale or m.startswith(stale + ".")]:
+    old = "remoteRF" + stale[len("remoterf"):]  # the `import remoteRF` alias keys
+    for name in [m for m in sys.modules if m in (stale, old) or m.startswith((stale + ".", old + "."))]:
         del sys.modules[name]
     return pkg_dir
 
