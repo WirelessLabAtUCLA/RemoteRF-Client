@@ -252,6 +252,9 @@ def _validate_client_modules(value) -> dict:
     out = {}
     for alias, module_path in value.items():
         alias = _require_identifier(alias, field="client_modules alias")
+        module_path = str(module_path or "").strip()
+        if module_path.startswith("remoteRF."):  # Servers still name the package as before 2.2.0
+            module_path = "remoterf." + module_path[len("remoteRF."):]
         module_path = _require_dotted_identifier(
             module_path,
             field=f"client_modules[{alias!r}]",
@@ -1685,7 +1688,13 @@ def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
         return False
 
     device_type = _schema_device_type(schema)
-    pkg_dir = _write_driver_files(schema)
+    try:
+        pkg_dir = _write_driver_files(schema)
+    except OSError as exc:
+        # A read-only install (system site-packages): the installed driver keeps working.
+        _verified.add(key)
+        print(f"Driver for '{device_type}' is out of date and could not be updated ({exc}).")
+        return False
     if _read_schema_hash(pkg_dir / f"{device_type}_remote.py") == current_hash:
         return False
     print(

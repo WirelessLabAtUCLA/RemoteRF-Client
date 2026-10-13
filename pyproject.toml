@@ -36,7 +36,8 @@ remoterf = "remoterf.remoterf_cli:main"
 [tool.setuptools]
 package-dir = { "" = "src" }
 # src/remoterf.py: see its docstring (upgrades from 2.0.14-2.1.x).
-py-modules = ["remoterf"]
+# src/_remoterf_alias.py: `import remoteRF` (setup.py adds its .pth).
+py-modules = ["remoterf", "_remoterf_alias"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

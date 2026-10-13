@@ -904,10 +904,12 @@ def describe() -> str:
         return f"relay (direct path unavailable: {_BROKEN}; fix: pip install --force-reinstall remoterf)"
     if not enabled():
         return "relay (direct path disabled: REMOTERF_DIRECT=0)"
+    # A Global ref's path has no owner; its calls fall back to Global's relay.
     partners = "; ".join(
         f"partner {_partner_owners[key]}: "
         + (path.describe() if path.ready else path.describe().replace("relay", "via HOME", 1))
-        for key, path in list(_partners.items()) if key in _partner_owners
+        if key in _partner_owners else f"Global: {path.describe()}"
+        for key, path in list(_partners.items())
     )
     path = _path
     if path is not None:

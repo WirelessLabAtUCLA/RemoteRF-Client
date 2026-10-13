@@ -27,6 +27,8 @@ source venv/bin/activate    # Activate virtual environment
 pip install remoterf        # Install remoterf
 ```
 
+The package was named `remoteRF` before 2.2.0. Old code that does `import remoteRF` or `from remoteRF.drivers... import ...` still runs, with a one-time warning; change it to `remoterf`.
+
 ## NI USRP-2901, Ettus B205-mini, B200-family, and USRP N210
 
 The packaged client natively includes the shared USRP schema for the qualified

@@ -137,3 +137,15 @@ def test_the_login_backend_is_built_once_when_a_path_thread_asks_too(monkeypatch
     for thread in threads:
         thread.join(5)
     assert len(built) == 1 and got == built * 2
+
+
+def test_describe_reports_a_global_path(fresh, monkeypatch):
+    monkeypatch.setattr(direct_path, "_from_stored_login", lambda: None)
+    monkeypatch.setattr(grpc_client, "_current_profile", lambda: None)
+    monkeypatch.setattr(direct_path, "_active_route", lambda profile: None)
+    path = direct_path.global_path(REF)
+    path.describe = lambda: "direct 192.0.2.7:4433 (48 calls)"
+    assert direct_path.describe() == "Global: direct 192.0.2.7:4433 (48 calls)"
+    path.state = "down"
+    path.describe = lambda: "relay (direct path down: timed out; retrying)"
+    assert direct_path.describe() == "Global: relay (direct path down: timed out; retrying)"

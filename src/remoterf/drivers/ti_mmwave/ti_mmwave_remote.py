@@ -21,12 +21,26 @@ _SCHEMA_HASH = "sha256:320a89d95075a472d7899ff2f98b9fdee05c0be96fa5651bf5c4f0e5d
 _CLIENT_MODULES = {'ti_mmwave': 'remoterf.drivers.support.ti_mmwave'}
 _CLIENT_OBJECTS = {}
 
+import os
+
 from importlib import import_module as _import_module
 
-from ...core.grpc_client import rpc_client
 from ...common.utils import map_arg, unmap_arg
+from .._virtual import (
+    is_virtual_token,
+    make_virtual_token,
+    virtual_call,
+    virtual_get,
+    virtual_set,
+)
 
 _NO_ARG = object()
+
+
+def _rpc_client(*, function_name, args):
+    from ...core.grpc_client import rpc_client
+
+    return rpc_client(function_name=function_name, args=args)
 
 
 for _alias, _module_path in _CLIENT_MODULES.items():
@@ -71,27 +85,34 @@ def _wrap_client_return(spec, self_obj, result):
 
 
 def _try_get(prop, token):
-    return unmap_arg(rpc_client(
+    if is_virtual_token(token):
+        return virtual_get(token, prop)
+    return unmap_arg(_rpc_client(
         function_name=f"{_PREFIX}:{prop}:GET",
         args={'a': map_arg(token)},
     ).results[prop])
 
 
 def _try_set(prop, value, token):
-    rpc_client(
+    if is_virtual_token(token):
+        virtual_set(token, prop, value)
+        return None
+    _rpc_client(
         function_name=f"{_PREFIX}:{prop}:SET",
         args={prop: map_arg(value), 'a': map_arg(token)},
     )
 
 
 def _try_call(prop, token, arg=_NO_ARG):
+    if is_virtual_token(token):
+        return virtual_call(token, prop, arg, has_arg=arg is not _NO_ARG)
     if arg is _NO_ARG:
-        resp = rpc_client(
+        resp = _rpc_client(
             function_name=f"{_PREFIX}:{prop}:CALL0",
             args={'a': map_arg(token)},
         )
     else:
-        resp = rpc_client(
+        resp = _rpc_client(
             function_name=f"{_PREFIX}:{prop}:CALL1",
             args={'a': map_arg(token), 'arg1': map_arg(arg)},
         )
@@ -100,12 +121,15 @@ def _try_call(prop, token, arg=_NO_ARG):
 
 
 def _try_calln(prop, token, kwargs):
+    if is_virtual_token(token):
+        filtered = {key: value for key, value in dict(kwargs).items() if value is not _NO_ARG}
+        return virtual_call(token, prop, filtered, has_arg=True)
     payload = {'a': map_arg(token)}
     for key, value in dict(kwargs).items():
         if value is _NO_ARG:
             continue
         payload[str(key)] = map_arg(value)
-    resp = rpc_client(
+    resp = _rpc_client(
         function_name=f"{_PREFIX}:{prop}:CALLN",
         args=payload,
     )
@@ -114,7 +138,15 @@ def _try_calln(prop, token, kwargs):
 
 class TiMmWave:
 
-    def __init__(self, token: str):
+    def __init__(self, token: str = None, *, virtual: bool = False):
+        self.virtual = bool(virtual)
+        if self.virtual:
+            self.token = make_virtual_token(token, device_type="ti_mmwave")
+            return
+        if token is None:
+            token = os.getenv("REMOTERF_TOKEN")
+        if not token:
+            raise ValueError("A reservation token is required; pass token= or set REMOTERF_TOKEN")
         self.token = token
         from ..dynamic_device import install_driver_if_stale
         install_driver_if_stale(token=token, current_hash=_SCHEMA_HASH)

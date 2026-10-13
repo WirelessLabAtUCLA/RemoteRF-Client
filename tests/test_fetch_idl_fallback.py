@@ -96,3 +96,22 @@ def test_a_v1_hash_that_differs_still_lets_v2_decide_and_reinstall(monkeypatch, 
     # A stale v1 driver: reinstalled from what v2 says, exactly as before.
     assert dynamic_device.install_driver_if_stale(token="tok5", current_hash="sha256:old") is True
     assert written == [v2]
+
+
+def test_a_read_only_install_keeps_its_driver(monkeypatch, capsys):
+    import remoterf.drivers.dynamic_v2 as dynamic_v2
+
+    def v1_only(token):
+        raise v2_errors.RemoteRFProtocolError("partner devices use the v1 device plane")
+
+    monkeypatch.setattr(dynamic_v2, "fetch_schema_v2", v1_only)
+    calls = _schema_rpc(monkeypatch, "sha256:new")
+
+    def read_only(schema):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(dynamic_device, "_write_driver_files", read_only)
+    assert dynamic_device.install_driver_if_stale(token="tok5", current_hash="sha256:old") is False
+    assert "could not be updated" in capsys.readouterr().out
+    dynamic_device.install_driver_if_stale(token="tok5", current_hash="sha256:old")
+    assert len(calls) == 2  # fetched once (v1, then the v2 probe's fallback), not per device

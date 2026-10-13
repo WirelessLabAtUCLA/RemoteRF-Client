@@ -14,19 +14,33 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Auto-generated from IDL schema — do not edit by hand.
-# device_type: rtl_sdr  driver_version: 0.1.1  schema_hash: sha256:1c84effc2c21be734398a87d24bb9da52ab5b7ea0def955c503da484b8d818c0
+# device_type: rtl_sdr  driver_version: 0.1.1  schema_hash: sha256:6603ec8e642c87073c35202980de9a3d9e4bb6eb88967686d3810c389fb4fb97
 
 _PREFIX = "Rtl_sdr"
-_SCHEMA_HASH = "sha256:1c84effc2c21be734398a87d24bb9da52ab5b7ea0def955c503da484b8d818c0"
+_SCHEMA_HASH = "sha256:6603ec8e642c87073c35202980de9a3d9e4bb6eb88967686d3810c389fb4fb97"
 _CLIENT_MODULES = {}
 _CLIENT_OBJECTS = {}
 
+import os
+
 from importlib import import_module as _import_module
 
-from ...core.grpc_client import rpc_client
 from ...common.utils import map_arg, unmap_arg
+from .._virtual import (
+    is_virtual_token,
+    make_virtual_token,
+    virtual_call,
+    virtual_get,
+    virtual_set,
+)
 
 _NO_ARG = object()
+
+
+def _rpc_client(*, function_name, args):
+    from ...core.grpc_client import rpc_client
+
+    return rpc_client(function_name=function_name, args=args)
 
 
 for _alias, _module_path in _CLIENT_MODULES.items():
@@ -71,27 +85,34 @@ def _wrap_client_return(spec, self_obj, result):
 
 
 def _try_get(prop, token):
-    return unmap_arg(rpc_client(
+    if is_virtual_token(token):
+        return virtual_get(token, prop)
+    return unmap_arg(_rpc_client(
         function_name=f"{_PREFIX}:{prop}:GET",
         args={'a': map_arg(token)},
     ).results[prop])
 
 
 def _try_set(prop, value, token):
-    rpc_client(
+    if is_virtual_token(token):
+        virtual_set(token, prop, value)
+        return None
+    _rpc_client(
         function_name=f"{_PREFIX}:{prop}:SET",
         args={prop: map_arg(value), 'a': map_arg(token)},
     )
 
 
 def _try_call(prop, token, arg=_NO_ARG):
+    if is_virtual_token(token):
+        return virtual_call(token, prop, arg, has_arg=arg is not _NO_ARG)
     if arg is _NO_ARG:
-        resp = rpc_client(
+        resp = _rpc_client(
             function_name=f"{_PREFIX}:{prop}:CALL0",
             args={'a': map_arg(token)},
         )
     else:
-        resp = rpc_client(
+        resp = _rpc_client(
             function_name=f"{_PREFIX}:{prop}:CALL1",
             args={'a': map_arg(token), 'arg1': map_arg(arg)},
         )
@@ -100,12 +121,15 @@ def _try_call(prop, token, arg=_NO_ARG):
 
 
 def _try_calln(prop, token, kwargs):
+    if is_virtual_token(token):
+        filtered = {key: value for key, value in dict(kwargs).items() if value is not _NO_ARG}
+        return virtual_call(token, prop, filtered, has_arg=True)
     payload = {'a': map_arg(token)}
     for key, value in dict(kwargs).items():
         if value is _NO_ARG:
             continue
         payload[str(key)] = map_arg(value)
-    resp = rpc_client(
+    resp = _rpc_client(
         function_name=f"{_PREFIX}:{prop}:CALLN",
         args=payload,
     )
@@ -114,7 +138,15 @@ def _try_calln(prop, token, kwargs):
 
 class RtlSdr:
 
-    def __init__(self, token: str):
+    def __init__(self, token: str = None, *, virtual: bool = False):
+        self.virtual = bool(virtual)
+        if self.virtual:
+            self.token = make_virtual_token(token, device_type="rtl_sdr")
+            return
+        if token is None:
+            token = os.getenv("REMOTERF_TOKEN")
+        if not token:
+            raise ValueError("A reservation token is required; pass token= or set REMOTERF_TOKEN")
         self.token = token
         from ..dynamic_device import install_driver_if_stale
         install_driver_if_stale(token=token, current_hash=_SCHEMA_HASH)
