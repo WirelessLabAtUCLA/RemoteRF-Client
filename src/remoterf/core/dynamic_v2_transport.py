@@ -27,6 +27,7 @@ from ..common.grpc import grpc_pb2, grpc_pb2_grpc
 from ..common.grpc.v2_codec import decode_value, encode_value
 from .v2_errors import (
     RemoteRFError,
+    RemoteRFPolicyError,
     RemoteRFProtocolError,
     RemoteRFReservationError,
     RemoteRFTransportError,
@@ -96,6 +97,8 @@ class _DevicePlaneStub:
                 args={"a": map_arg(self._token), "wire": map_arg(request.SerializeToString())},
             )
         except RuntimeError as exc:
+            if "response_too_large" in str(exc):
+                raise RemoteRFPolicyError(f"{self._label}{exc}") from exc
             # A refusal the HOME or the owner carried in "a": no live
             # reservation, a revoked agreement, a device no longer visible.
             raise RemoteRFReservationError(f"{self._label}{exc}") from exc

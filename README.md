@@ -120,6 +120,12 @@ not close the physical radio. `read_samples` and `read_bytes` are bounded to a
 4 MiB response. Call them repeatedly for longer captures. Native asynchronous
 callbacks are not transported remotely.
 
+Through the RemoteRF Global relay one reply is capped at 768 KiB. A lab on a
+current Server keeps a larger reply (up to 4 MiB) and the client fetches it in
+pages; an older lab refuses it with `response_too_large`, so keep reads there
+to about 98k complex64 samples (`read_samples(65536)` is safe). LAN and direct
+paths are not capped.
+
 When a Tailscale address differs from the IP or DNS identity in the server
 certificate, keep TLS verification enabled and set the expected identity:
 
