@@ -538,7 +538,7 @@ with patch.object(client_app, 'account', fake):
     )
     rendered = completed.stdout
     assert "Devices: None" in rendered
-    assert "Federated Permissions:" in rendered
+    assert "FEDERATED PERMISSIONS" in rendered
     assert "Destination" in rendered and "remote-readers" in rendered
     assert "Offline destination" in rendered and "destination unavailable" in rendered
     assert "destination-signed" in rendered

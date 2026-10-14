@@ -604,7 +604,7 @@ def test_resdev_names_the_device_and_shows_the_token_block(monkeypatch, pick, de
     account, prompts = _native_shell(monkeypatch, client_app, [pick, "1", "0", "y"])
     client_app.interactive_reserve_next_days_auto()
     assert prompts[-1].startswith("Reserve ") and prompts[-1].endswith(f" for {shown}?\nConfirm reservation? (y/n): ")
-    assert any(line.startswith(f"Available time slots for device {shown} (") for line in lines)
+    assert any(f"│ {shown}  " in line and "min blocks" in line for line in lines)
     assert any(line.startswith(f"Reservation successful on {where} for ") for line in lines)
     assert _row(lines, "Token", "Zm9vYmFy@ucla")
     assert _row(lines, "Device", "handle", handle) if handle else not any("Device handle" in line for line in lines)
@@ -618,7 +618,7 @@ def test_resdev_n_lists_numbered_devices(monkeypatch):
     lines = _shown(monkeypatch, client_app)
     account, _ = _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
     client_app.reserve()
-    assert "1. (online) Pluto SDR (OTA) [PlutoA]" in lines
+    assert _row(lines, "│", "1.", "Pluto", "SDR", "(OTA)", "[PlutoA]", "online", "│")
     assert _row(lines, "Device", "handle", "PlutoA@ucla")
     assert account.reserve_device.call_args.args[0] == 3
 

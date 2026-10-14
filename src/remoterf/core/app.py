@@ -219,17 +219,21 @@ def _print_native_reserved(device_id, label, when, token):
                     _UNROUTABLE.format(handle, "this lab has no saved name") if handle else _NO_HANDLE)
 
 
-def _print_connected(name, home, route):
-    """One line, same voice as the banner: what we reached and how."""
+def _connected_args(name, home, route):
     marker = '◆' if supports_unicode() else '*'
     title = home.get('display_name') or name
     via = 'LAN' if route['kind'] == 'lan' else route['kind']
-    printf(
+    return (
         f'{marker} ', Sty.DEFAULT,
         title, (Sty.BOLD, Sty.BLUE),
         f'  {name}' if title != name else '', Sty.GRAY,
         f'  via {via} {route["host"]}:{route["port"]}', Sty.CYAN,
     )
+
+
+def _print_connected(name, home, route):
+    """One line, same voice as the banner: what we reached and how."""
+    printf(*_connected_args(name, home, route))
 
 
 def _device_path_label():
@@ -263,12 +267,13 @@ def _open_direct_path():
 def status():
     """Where this shell is connected and which path its device calls take."""
     if current_route:
-        _print_connected(home_name, current_route.get('home') or {}, current_route)
+        rows = [_connected_args(home_name, current_route.get('home') or {}, current_route)]
     else:
-        printf('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, _home_name(), (Sty.BOLD, Sty.BLUE))
+        rows = [('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, _home_name(), (Sty.BOLD, Sty.BLUE))]
     label = _device_path_label()
     if label:
-        printf('  devices via ', Sty.GRAY, label, Sty.CYAN)
+        rows.append(('  devices via ', Sty.GRAY, label, Sty.CYAN))
+    _panel("Status", rows)
 
 
 def _remember_login():
@@ -447,24 +452,39 @@ def session_line():
     )
 
 
+def _panel(label, rows):
+    """serverrf's labelled frame around rows of printf (text, style, ...)
+    pairs, padded to the widest row; () is a blank row."""
+    uni = supports_unicode()
+    h, v = ("─", "│") if uni else ("-", "|")
+    tl, tr, bl, br = ("╭", "╮", "╰", "╯") if uni else ("+",) * 4
+    title = f"{h} {label.upper()} "
+    width = max(len(title) - 2, 24, *(sum(map(len, row[::2])) for row in rows))
+    printf(tl + title + h * (width + 2 - len(title)) + tr, Sty.DEFAULT)
+    for row in rows:
+        printf(f"{v} ", Sty.DEFAULT, *row, " " * (width - sum(map(len, row[::2]))) + f" {v}", Sty.DEFAULT)
+    printf(bl + h * (width + 2) + br, Sty.DEFAULT)
+
+
 def commands():
-    printf("Commands:", (Sty.BOLD, Sty.BLUE))
-    printf("'help' or 'h' ", Sty.MAGENTA, "   : ", Sty.GRAY, "Show this help message", Sty.DEFAULT)
-    printf("'clear' ", Sty.MAGENTA, "         : ", Sty.GRAY, "Clear terminal", Sty.DEFAULT)
-    printf("'getdev' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View devices", Sty.DEFAULT)
-    printf("'resdev' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Reserve a device", Sty.DEFAULT)
-    printf("'cancelres' ", Sty.MAGENTA, "     : ", Sty.GRAY, "Cancel a reservation", Sty.DEFAULT)
-    printf("'getres' ", Sty.MAGENTA, "        : ", Sty.GRAY, "View all reservations", Sty.DEFAULT)
-    printf("'myres' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View my reservations", Sty.DEFAULT)
-    if not account.is_https_home:
-        printf("'perms' ", Sty.MAGENTA, "         : ", Sty.GRAY, "View permissions", Sty.DEFAULT)
-    printf("'enroll' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Enroll with an enrollment code", Sty.DEFAULT)
-    printf("'logout' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Log out and forget the stored login", Sty.DEFAULT)
-    printf("'status' ", Sty.MAGENTA, "        : ", Sty.GRAY, "Connection and the path device calls use", Sty.DEFAULT)
-    printf("'direct on|off' ", Sty.MAGENTA, " : ", Sty.GRAY, "Use, or stop using, a direct device path", Sty.DEFAULT)
-    if account.is_https_home:
-        printf("'reset-password' ", Sty.MAGENTA, ": ", Sty.GRAY, "Set a new password with an emailed token", Sty.DEFAULT)
-    printf("'exit' or 'quit' ", Sty.MAGENTA, ": ", Sty.GRAY, "Exit", Sty.DEFAULT)
+    rows = [
+        ("'help' or 'h'", "Show this help message"),
+        ("'clear'", "Clear terminal"),
+        ("'getdev'", "View devices"),
+        ("'resdev'", "Reserve a device"),
+        ("'cancelres'", "Cancel a reservation"),
+        ("'getres'", "View all reservations"),
+        ("'myres'", "View my reservations"),
+        *([] if account.is_https_home else [("'perms'", "View permissions")]),
+        ("'enroll'", "Enroll with an enrollment code"),
+        ("'logout'", "Log out and forget the stored login"),
+        ("'status'", "Connection and the path device calls use"),
+        ("'direct on|off'", "Use, or stop using, a direct device path"),
+        *([("'reset-password'", "Set a new password with an emailed token")] if account.is_https_home else []),
+        ("'exit' or 'quit'", "Exit"),
+    ]
+    width = max(len(name) for name, _ in rows)
+    _panel("Commands", [(f"{name:<{width}}  ", Sty.MAGENTA, text, Sty.DEFAULT) for name, text in rows])
     # printf("'resdev -n' ", Sty.MAGENTA, "- naive reserve device", Sty.DEFAULT)
     # printf("'resdev s' ", Sty.MAGENTA, "- Reserve a Device (by single date)", Sty.DEFAULT)
     
@@ -539,8 +559,13 @@ def _render_destinations(entries):
         and not (dest["status"] == "blocked" and dest["provenance"] == "destination_signed" and dest["error_code"] == "principal_unknown")
     ]
     for dest in entries:
-        reason = "unavailable (transport, unsigned)" if dest["status"] == "unavailable" else f"blocked ({dest['provenance']}: {dest['error_code']})"
-        printf("Deployment ", Sty.GRAY, f"{dest['display_name']}", Sty.MAGENTA, f": {reason}", Sty.WARNING)
+        name = dest["display_name"]
+        # An older Global names a lab that didn't answer by its uuid only.
+        name = f"A lab ({name[:8]})" if name == dest["deployment_id"] else f"@{name}"
+        if dest["status"] == "unavailable":
+            printf(name, Sty.MAGENTA, " isn't responding right now; try again in a minute.", Sty.WARNING)
+        else:
+            printf(name, Sty.MAGENTA, f" turned the request away ({str(dest['error_code'] or 'blocked').replace('_', ' ')}).", Sty.WARNING)
     if any(dest["status"] != "ok" for dest in entries):
         print()
 
@@ -560,14 +585,15 @@ def _federated_devices():
     # Grouped by deployment; the opaque <deployment_uuid>:<id> reference is
     # never shown, `resdev` picks by index like the native shell.
     data["devices"].sort(key=lambda d: (d["deployment_name"], d["display_name"], d["local_device_id"]))
-    printf("Devices:", (Sty.BOLD, Sty.BLUE))
-    deployment = None
+    width = max(len(f"{dev['display_name']}{_handle_tag(dev)}") for dev in data["devices"])
+    rows, deployment = [], None
     for dev in data["devices"]:
         if dev["deployment_name"] != deployment:
             deployment = dev["deployment_name"]
-            printf(f"  @{deployment}", (Sty.BOLD, Sty.MAGENTA))
-        state = "online" if dev["online"] else "offline"
-        printf(f"    ({state}) ", Sty.GREEN if dev["online"] else Sty.GRAY, f"{dev['display_name']}{_handle_tag(dev)}", Sty.DEFAULT)
+            rows.append((f"@{deployment}", (Sty.BOLD, Sty.MAGENTA)))
+        rows.append((f"  {dev['display_name'] + _handle_tag(dev):<{width}}  ", Sty.DEFAULT,
+                     "online" if dev["online"] else "offline", Sty.GREEN if dev["online"] else Sty.GRAY))
+    _panel("Devices", rows)
     if data.get("incomplete"):
         printf(f"{data['omitted_count']} more deployment(s) were not queried.", Sty.WARNING)
     return data
@@ -586,28 +612,33 @@ def _federated_reservation_rows(*, mine_only):
     return rows
 
 
+def _reservation_panel(label, items, *, numbered=False):
+    """`items` are sorted (device label, start, end) rows."""
+    width = max(len(device) for device, _, _ in items)
+    index_width = len(str(len(items) - 1))
+    _panel(label, [
+        ((f"{i:>{index_width}}. ", Sty.CYAN) if numbered else ())
+        + (f"{device:<{width}}  ", Sty.MAGENTA, _format_reservation_range(start, end), Sty.CYAN)
+        for i, (device, start, end) in enumerate(items)
+    ])
+
+
 def _federated_reservations(*, mine_only):
     rows = _federated_reservation_rows(mine_only=mine_only)
     if not rows:
         printf("No reservations found.", Sty.BOLD)
         return rows
-    if mine_only:
-        printf("Current Reservations Held By ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
-    else:
-        printf("Reservations:", (Sty.BOLD, Sty.BLUE))
-    for r in rows:
-        printf("Device ID: ", Sty.GRAY, f"{r['device_label']}", Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(r["start"], r["end"]), Sty.CYAN)
+    _reservation_panel("My reservations" if mine_only else "Reservations",
+                       [(r["device_label"], r["start"], r["end"]) for r in rows])
     return rows
 
 
 def _federated_cancel():
     rows = _federated_reservation_rows(mine_only=True)
-    printf("Current Reservation(s) under ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
-    for i, r in enumerate(rows):
-        printf("Reservation ID: ", Sty.GRAY, f'{i}', Sty.CYAN, " Device ID: ", Sty.GRAY, f"{r['device_label']}", Sty.MAGENTA, " Time: ", Sty.GRAY, _format_reservation_range(r["start"], r["end"]), Sty.CYAN)
     if not rows:
         printf("No reservations found.", Sty.BOLD)
         return
+    _reservation_panel("My reservations", [(r["device_label"], r["start"], r["end"]) for r in rows], numbered=True)
     inpu = session.prompt(stylize(
         "Enter the reservation ID you would like to cancel ", Sty.BOLD,
         "(abort with non-number input)", Sty.CYAN,
@@ -689,20 +720,20 @@ def _federated_reserve():
     if not devs:
         printf("No devices available for your permission level.", Sty.WARNING)
         return
-    printf("Devices:", Sty.BOLD)
-    deployment = None
+    width = max(len(f"{dev['display_name']}{_handle_tag(dev)}") for dev in devs)
+    index_width = len(str(len(devs) - 1))
+    rows, deployment = [], None
     for idx, dev in enumerate(devs):
         if dev["deployment_name"] != deployment:
             deployment = dev["deployment_name"]
-            printf(f"  @{deployment}", (Sty.BOLD, Sty.MAGENTA))
+            rows.append((f"@{deployment}", (Sty.BOLD, Sty.MAGENTA)))
         dev["block_min"] = _auto_block_minutes(dev["max_reservation_time_sec"] or 0)
-        printf(
-            f"{idx}.", Sty.CYAN,
-            "  Name: ", Sty.DEFAULT,
-            f"{dev['display_name']}{_handle_tag(dev)}", Sty.GRAY,
-            " Duration: ", Sty.DEFAULT,
-            f"{dev['block_min']} min", Sty.GREEN,
-        )
+        rows.append((
+            f"  {idx:>{index_width}}. ", Sty.CYAN,
+            f"{dev['display_name'] + _handle_tag(dev):<{width}}  ", Sty.DEFAULT,
+            f"{dev['block_min']} min slots", Sty.GREEN,
+        ))
+    _panel("Devices", rows)
     sel = session.prompt(stylize(
         "Enter which device you want to reserve ", (Sty.BOLD, Sty.GREEN),
         "(enter the 0-based index): ", Sty.CYAN,
@@ -752,16 +783,10 @@ def reservations():
     if (entries == []):
         printf("No reservations found.", Sty.BOLD)
         return
-    
-    printf("Reservations:", (Sty.BOLD, Sty.BLUE))
 
-    # Sort the entries by device_id and then by start_time
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time']))
+    _reservation_panel("Reservations", [(f"Device {e['device_id']}", e['start_time'], e['end_time']) for e in sorted_entries])
 
-    # Format the sorted entries into strings
-    for entry in sorted_entries:
-        printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
-        
 def my_reservations():
     if account.is_https_home:
         _federated_reservations(mine_only=True)
@@ -781,20 +806,15 @@ def my_reservations():
             'start_time': _parse_reservation_time(parts[2]),  # Convert start_time to datetime
             'end_time': _parse_reservation_time(parts[3])
         }
-        entries.append(entry)
-        
+        if account.username == entry['username']:
+            entries.append(entry)
+
     if (entries == []):
         printf("No reservations found.", Sty.BOLD)
         return
-    
-    printf("Current Reservations Held By ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
 
-    # Sort the entries by device_id and then by start_time
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time']))
-    
-    for entry in sorted_entries:
-        if account.username == entry['username']:
-            printf("Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, ", Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
+    _reservation_panel("My reservations", [(f"Device {e['device_id']}", e['start_time'], e['end_time']) for e in sorted_entries])
 
 def cancel_my_reservation():
     if account.is_https_home:
@@ -824,17 +844,14 @@ def cancel_my_reservation():
         if account.username == entry['username']:
             entries.append(entry)
     
-    printf("Current Reservation(s) under ", (Sty.BOLD, Sty.BLUE), f'{account.username}:', Sty.MAGENTA)
-    
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time'])) # sort by device_id and start_time
     for i, entry in enumerate(sorted_entries):  # label all reservations with unique id
         entry['id'] = i
-        printf("Reservation ID: ", Sty.GRAY, f'{i}', Sty.CYAN, " Device ID: ", Sty.GRAY, f'{entry["device_id"]}', Sty.MAGENTA, " Time: ", Sty.GRAY, _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN)
-        # print(f"Reservation ID {i}, Device ID: {entry['device_id']}, Time: {_format_reservation_range(entry['start_time'], entry['end_time'])}")
-        
+
     if sorted_entries == []:
         printf("No reservations found.", Sty.BOLD)
-        return    
+        return
+    _reservation_panel("My reservations", [(f"Device {e['device_id']}", e['start_time'], e['end_time']) for e in sorted_entries], numbered=True)
         
     inpu = session.prompt(stylize(
         "Enter the reservation ID you would like to cancel ", Sty.BOLD,
@@ -916,11 +933,14 @@ def _pick_lab(rows):
             labs.append(row["lab"])
     if len(rows) <= LAB_PICKER_MIN_DEVICES or len(labs) < 2:
         return rows
-    printf("Labs:", (Sty.BOLD, Sty.BLUE))
+    width = max(len(lab) for lab in labs)
+    index_width = len(str(len(labs)))
+    lines = []
     for index, lab in enumerate(labs, 1):
         count = sum(1 for row in rows if row["lab"] == lab)
-        printf(f"{index}.", Sty.CYAN, f"  @{lab}", (Sty.BOLD, Sty.MAGENTA),
-               f"  ({count} device{'s' if count != 1 else ''})", Sty.GRAY)
+        lines.append((f"{index:>{index_width}}. ", Sty.CYAN, f"@{lab:<{width}}", (Sty.BOLD, Sty.MAGENTA),
+                      f"  {count} device{'s' if count != 1 else ''}", Sty.GRAY))
+    _panel("Labs", lines)
     pick = session.prompt(stylize("Which lab? (number, Enter for all): ", Sty.DEFAULT)).strip()
     if not pick:
         return rows
@@ -932,16 +952,18 @@ def _pick_lab(rows):
 
 
 def _print_native_devices(rows, *, numbered=False):
-    printf("Devices:", (Sty.BOLD, Sty.BLUE))
-    lab = None
+    width = max(len(row["name"]) for row in rows)
+    index_width = len(str(len(rows)))
+    lines, lab = [], None
     for index, row in enumerate(rows, 1):
         if row["lab"] != lab:
             lab = row["lab"]
-            printf(f"  @{lab}", (Sty.BOLD, Sty.MAGENTA))
-        prefix = (f"{index}. ", Sty.CYAN) if numbered else ()
+            lines.append((f"@{lab}", (Sty.BOLD, Sty.MAGENTA)))
         state = row["state"] or ""
-        printf(*prefix, ("    " if not numbered else "") + (f"({state}) " if state else ""),
-               Sty.GREEN if state.startswith("online") else Sty.GRAY, row["name"], Sty.DEFAULT)
+        lines.append((f"  {index:>{index_width}}. " if numbered else "  ", Sty.CYAN,
+                      f"{row['name']:<{width}}  ", Sty.DEFAULT,
+                      state, Sty.GREEN if state.startswith("online") else Sty.GRAY))
+    _panel("Devices", lines)
 
 
 def devices():
@@ -1007,7 +1029,7 @@ def _render_federation_permissions(entries):
 
     if not entries:
         return
-    printf("Federated Permissions:", (Sty.BOLD, Sty.BLUE))
+    rows = []
     friendly_errors = {
         "principal_disabled": "principal disabled",
         "group_lifetime_invalid": "destination group data is invalid",
@@ -1015,21 +1037,23 @@ def _render_federation_permissions(entries):
         "contract_selection_ambiguous": "contract selection is ambiguous",
     }
     for entry in entries:
-        print(f"  {entry['display_name']}")
-        print(
-            "    Contract: "
-            f"{entry['contract_id']} v{entry['contract_version']} ({entry['state']})"
-        )
+        if rows:
+            rows.append(())
+        rows.append((f"{entry['display_name']}", Sty.BOLD))
+        rows.append((
+            "  Contract: "
+            f"{entry['contract_id']} v{entry['contract_version']} ({entry['state']})", Sty.GRAY
+        ))
         status = entry["status"]
-        print(f"    Status: {status}")
+        rows.append((f"  Status: {status}", Sty.GRAY))
         if status == "ok":
             groups = ", ".join(g["group_name"] for g in entry["groups"])
-            print(f"    Groups: {groups or '(none)'}")
+            rows.append((f"  Groups: {groups or '(none)'}", Sty.GRAY))
             checked = datetime.datetime.fromtimestamp(
                 entry["retrieved_at"], tz=datetime.timezone.utc
             ).isoformat().replace("+00:00", "Z")
-            print(f"    Source: {entry['display_name']} (destination-signed)")
-            print(f"    Checked: {checked}")
+            rows.append((f"  Source: {entry['display_name']} (destination-signed)", Sty.GRAY))
+            rows.append((f"  Checked: {checked}", Sty.GRAY))
         elif status == "blocked":
             reason = friendly_errors.get(
                 entry["error_code"], entry["error_code"].replace("_", " ")
@@ -1039,11 +1063,12 @@ def _render_federation_permissions(entries):
                 if entry["provenance"] == "destination_signed"
                 else "local HOME policy"
             )
-            print(f"    Reason: {reason}")
-            print(f"    Source: {source}")
+            rows.append((f"  Reason: {reason}", Sty.GRAY))
+            rows.append((f"  Source: {source}", Sty.GRAY))
         else:
-            print("    Reason: destination unavailable")
-            print("    Source: unsigned transport status")
+            rows.append(("  Reason: destination unavailable", Sty.GRAY))
+            rows.append(("  Source: unsigned transport status", Sty.GRAY))
+    _panel("Federated permissions", rows)
 
 
 def perms():
@@ -1053,11 +1078,10 @@ def perms():
             "display_name": account.backend.capabilities["display_name"],
             "groups": data["groups"],
         }
-        print(local["display_name"])
-        print(
-            "  Groups: "
-            + (", ".join(g["group_name"] for g in local["groups"]) or "(none)")
-        )
+        _panel("Permissions", [
+            (local["display_name"], Sty.BOLD),
+            ("  Groups: ", Sty.GRAY, ", ".join(g["group_name"] for g in local["groups"]) or "(none)", Sty.MAGENTA),
+        ])
         _render_federation_permissions(data.get("federation", []))
         if data.get("incomplete"):
             print(
@@ -1102,7 +1126,10 @@ def perms():
             remote_permissions = []
             remote_permissions_incomplete = 0
 
+    rows = []
+
     def render_remote_permissions():
+        _panel("Permissions", rows)
         _render_federation_permissions(remote_permissions)
         if remote_permissions_incomplete:
             print(
@@ -1110,7 +1137,7 @@ def perms():
                 "destination(s) omitted"
             )
 
-    printf("Permission Level: ", (Sty.BOLD, Sty.BLUE), f"{perm_level}", Sty.MAGENTA)
+    rows.append(("Permission Level: ", (Sty.BOLD, Sty.BLUE), f"{perm_level}", Sty.MAGENTA))
 
     if perm_level == "Normal User":
         devices = details.get("devices", []) or []
@@ -1124,19 +1151,19 @@ def perms():
         if groups:
             # keep stable ordering
             groups = [str(g) for g in groups if str(g).strip() != ""]
-            printf("User Groups:", (Sty.BOLD, Sty.BLUE))
+            rows.append(("User Groups:", (Sty.BOLD, Sty.BLUE)))
             for g in groups:
-                printf("  - ", Sty.CYAN, f"{g}", Sty.MAGENTA)
+                rows.append(("  - ", Sty.CYAN, f"{g}", Sty.MAGENTA))
         else:
-            printf("User Groups: ", (Sty.BOLD, Sty.BLUE), "(none)", Sty.GRAY)
+            rows.append(("User Groups: ", (Sty.BOLD, Sty.BLUE), "(none)", Sty.GRAY))
 
         # ---- Devices ----
         if not devices:
-            printf("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA)
+            rows.append(("Devices: ", Sty.DEFAULT, "None", Sty.MAGENTA))
             render_remote_permissions()
             return
 
-        printf("Accessible Devices: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA)
+        rows.append(("Accessible Devices: ", (Sty.BOLD, Sty.BLUE), f"{devices}", Sty.MAGENTA))
 
         # Build per-device caps and group identical limits together
         buckets: dict[tuple[int, int, int], list[int]] = {}  # (max_r, max_t_sec, horizon_sec) -> [dev_ids]
@@ -1152,22 +1179,22 @@ def perms():
             buckets.setdefault((max_r, max_t, max_h), []).append(did)
 
         if not buckets:
-            print("Limits per device: (none)")
+            rows.append(("Limits per device: (none)", Sty.GRAY))
             render_remote_permissions()
             return
 
         # If everything shares the same limits, print once
         if len(buckets) == 1:
             (max_r, max_t, max_h), _devs = next(iter(buckets.items()))
-            printf("Permissions:", (Sty.BOLD, Sty.BLUE))
-            printf("  Max Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN)
-            printf("  Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN)
-            printf("  Days Ahead: ", Sty.GRAY, f"{max_h / 86400:g}" if max_h else "no limit", Sty.CYAN)
+            rows.append(("Permissions:", (Sty.BOLD, Sty.BLUE)))
+            rows.append(("  Max Reservations: ", Sty.GRAY, f"{max_r}", Sty.CYAN))
+            rows.append(("  Reservation Duration (min): ", Sty.GRAY, f"{max_t // 60}", Sty.CYAN))
+            rows.append(("  Days Ahead: ", Sty.GRAY, f"{max_h / 86400:g}" if max_h else "no limit", Sty.CYAN))
             render_remote_permissions()
             return
 
         # Otherwise print grouped limits
-        printf("Permissions per device (grouped):", (Sty.BOLD, Sty.BLUE))
+        rows.append(("Permissions per device (grouped):", (Sty.BOLD, Sty.BLUE)))
         for (max_r, max_t, max_h), devs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2], kv[1])):
             devs = sorted(devs)
 
@@ -1187,18 +1214,18 @@ def perms():
                 ranges.append(f"{start}-{prev}" if start != prev else f"{start}")
 
             dev_str = ",".join(ranges)
-            printf("  devices[", Sty.GRAY, f"{dev_str}", Sty.MAGENTA, "]: ", Sty.GRAY, f"max_reservations={max_r}, max_time_min={max_t // 60}, days_ahead={f'{max_h / 86400:g}' if max_h else 'no limit'}", Sty.CYAN)
+            rows.append(("  devices[", Sty.GRAY, f"{dev_str}", Sty.MAGENTA, "]: ", Sty.GRAY, f"max_reservations={max_r}, max_time_min={max_t // 60}, days_ahead={f'{max_h / 86400:g}' if max_h else 'no limit'}", Sty.CYAN))
 
         render_remote_permissions()
 
     elif perm_level == "Power User":
-        printf("Max Reservations: ", (Sty.BOLD, Sty.BLUE), f"{results[3]}", Sty.CYAN)
-        printf("Max Reservation Duration (min): ", (Sty.BOLD, Sty.BLUE), f"{int(results[4]/60)}", Sty.CYAN)
-        printf("Device IDs allowed Access to: ", (Sty.BOLD, Sty.BLUE), f"{results[5]}", Sty.MAGENTA)
+        rows.append(("Max Reservations: ", (Sty.BOLD, Sty.BLUE), f"{results[3]}", Sty.CYAN))
+        rows.append(("Max Reservation Duration (min): ", (Sty.BOLD, Sty.BLUE), f"{int(results[4]/60)}", Sty.CYAN))
+        rows.append(("Device IDs allowed Access to: ", (Sty.BOLD, Sty.BLUE), f"{results[5]}", Sty.MAGENTA))
         render_remote_permissions()
 
     elif perm_level == "Admin":
-        printf("No restrictions on reservation count or duration.", (Sty.BOLD, Sty.GREEN))
+        rows.append(("No restrictions on reservation count or duration.", (Sty.BOLD, Sty.GREEN)))
         render_remote_permissions()
 
     else:
@@ -1526,16 +1553,17 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     available_slots.sort(key=lambda x: (x[0], x[1][0]))
 
     print()
-    printf("Available time slots for device ", Sty.BOLD, f"{device_label}", Sty.MAGENTA, f" ({block_minutes} min blocks) over the next {num_days} days:", Sty.DEFAULT)
+    index_width = len(str(len(available_slots) - 1))
+    rows = [(f"{device_label}", Sty.MAGENTA, f"  {block_minutes} min blocks, next {num_days} days", Sty.GRAY)]
     last_day = None
     for idx, (day, slot) in enumerate(available_slots):
         slot_start_str = slot[0].strftime("%I:%M %p")
         slot_end_str = slot[1].strftime("%I:%M %p")
         if day != last_day:
-            print()
-            printf(f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')})", (Sty.BOLD, Sty.BLUE))
+            rows += [(), (f"{day.strftime('%Y-%m-%d')} ({day.strftime('%a')})", (Sty.BOLD, Sty.BLUE))]
             last_day = day
-        printf("  ", Sty.DEFAULT, f"{idx}.", Sty.CYAN, f" {slot_start_str} - {slot_end_str}", Sty.DEFAULT)
+        rows.append((f"  {idx:>{index_width}}. ", Sty.CYAN, f"{slot_start_str} - {slot_end_str}", Sty.DEFAULT))
+    _panel("Available slots", rows)
 
     pick_s = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN))).strip()
     try:
