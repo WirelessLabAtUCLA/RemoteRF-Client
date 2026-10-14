@@ -7,6 +7,11 @@ file paths are stale (`src/remoteRF/` is now `src/remoterf/`, `global_client/` i
 
 Audience: an engineer or coding agent starting with no prior context. Read sections 1–4 before writing code.
 
+Branches: all work goes on `feat/ai-mcp`, already created from `main` in RemoteRF-Client, RemoteRF-Server and
+remoterf-vps-global (pushed with upstream), and in wireless-lab-at-ucla.gitlab.io (local only: this Mac has no GitLab
+credentials, so the owner pushes that one). Merge to `main` only when a phase ships. In remoterf-vps-global, `main` was
+brought level with the deployed Global code on 2026-10-14 (`ad12f35`), so deploy images from `main` / `feat/ai-mcp` now.
+
 ---
 
 ## 1. Goal
