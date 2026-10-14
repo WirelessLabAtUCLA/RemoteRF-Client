@@ -83,10 +83,12 @@ def test_device_rpc_relays_serialized_frames_through_the_home(monkeypatch):
     with pytest.raises(AssertionError, match="no direct transport"):
         grpc_client.rpc_client(function_name="pluto:tx_lo:GET", args={"a": map_arg("Zm9vYmFy")})
 
-    # Destination refusals surface with provenance, as drivers expect RuntimeError.
+    # Destination refusals surface as a sentence (raw code with provenance in
+    # __cause__), as drivers expect RuntimeError.
     transport.request.side_effect = AccountBackendError("no_active_reservation", provenance="destination")
-    with pytest.raises(RuntimeError, match=r"no_active_reservation \[destination\]"):
+    with pytest.raises(RuntimeError, match="You don't have an active reservation") as raised:
         grpc_client.rpc_client(function_name="pluto:tx_lo:GET", args={"a": map_arg(REF)})
+    assert str(raised.value.__cause__) == "no_active_reservation [destination]"
     grpc_client.bind_federated_backend(None)
 
 
@@ -277,8 +279,9 @@ def test_a_relayed_get_is_resent_once_after_an_internal_transport_error(monkeypa
 
     assert unmap_arg(call("pluto:tx_lo:GET", tick, ok).results["tx_lo"]) == 5
     assert relay.device_rpc.call_count == 2
-    with pytest.raises(RuntimeError, match=r"internal_error \[transport\]"):
+    with pytest.raises(RuntimeError, match="hit an internal error") as raised:
         call("pluto:tx_lo:GET", tick, tick)
+    assert str(raised.value.__cause__) == "internal_error [transport]"
     assert relay.device_rpc.call_count == 2
     # Never a SET or CALL; never another error.
     for name, error in (("pluto:tx_lo:SET", tick), ("pluto:rx:CALL0", tick),

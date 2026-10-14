@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 
 from ..common.utils import map_arg, unmap_arg
+from .messages import explain
 
 _cache = None  # (key, monotonic at fetch, rows or None after a refusal, interval)
 NOT_LOGGED_IN = "Not logged in: run `remoterf` and log in (keep the login saved)."
@@ -64,7 +65,7 @@ def _global(backend):
             raise
         data, note = backend.devices(), "This Global home does not report availability yet; showing devices only."
     if data.get("incomplete") or any(d.get("status") == "unavailable" for d in data["destinations"]):
-        note = "\n".join(filter(None, [note, "Some labs did not answer; the list may be incomplete."]))
+        note = "\n".join(filter(None, [note, "Some deployments did not answer; the list may be incomplete."]))
     slugs, rows = {}, []
     for d in data["devices"]:
         key = (d.get("deployment_id"), d.get("deployment_name"))
@@ -90,7 +91,7 @@ def _lab(home, creds):
         return rows, data.get("interval"), None
     if "retry_after" in res:
         raise _Refused(int(unmap_arg(res["retry_after"])))
-    error = str(unmap_arg(res.get("ace", map_arg("Unexpected reply from the lab."))))
+    error = str(unmap_arg(res.get("ace", map_arg("Unexpected reply from the deployment."))))
     if error == "Invalid login credentials.":
         raise RuntimeError(STALE_LOGIN)
     if "No matching server function" not in error:
@@ -110,7 +111,7 @@ def _lab(home, creds):
         name, handle = _name_and_handle(local["name"])
         rows.append(_row(f"{handle}@{home}" if handle and home else None, name, None, home,
                          local["state"].startswith("online"), "unknown", None, None))
-    return rows, None, "This lab does not report availability yet; showing devices only."
+    return rows, None, "This deployment does not report availability yet; showing devices only."
 
 
 def _print(rows, footer=None):
@@ -145,7 +146,7 @@ def devices():
             try:
                 backend = federated_backend()
             except RuntimeError as exc:
-                print(exc)
+                print(explain(exc))
                 return []
             key, fetch = ("global", target["origin"]), lambda: _global(backend)
         else:
@@ -178,7 +179,7 @@ def devices():
             print(f"Asked too recently; try again in {exc.wait} s.")
             return []
     except RuntimeError as exc:
-        print(exc)
+        print(explain(exc))
         return []
     _cache = (key, time.monotonic(), rows, float(interval or 10))
     _print(rows, note)

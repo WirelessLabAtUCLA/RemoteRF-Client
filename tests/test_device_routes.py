@@ -2,6 +2,7 @@
 the deployment it names. Bare tokens and Global refs behave exactly as before."""
 
 import base64
+import datetime
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,8 @@ GLOBAL = "550e8400-e29b-41d4-a716-446655440000"
 DEST = "11111111-1111-4111-8111-111111111111"
 REF = f"{DEST}:12"
 RFG = "rfg_" + "A" * 43
+SLOT = (datetime.datetime(2026, 1, 1, 10), datetime.datetime(2026, 1, 1, 11))
+WHEN = ("2026-01-01", "from", "10:00", "AM", "to", "11:00", "AM")
 GET = "pluto:tx_lo:GET"
 
 
@@ -261,7 +264,7 @@ def test_a_lost_bridge_token_is_renewed_once(monkeypatch, routes):
 def test_a_new_reservation_is_never_continued_silently(monkeypatch, routes):
     _login(monkeypatch)
     _flaky_lab(routes, [(1, 7), (2, 8)])
-    with pytest.raises(RuntimeError, match="reservation changed; re-create the driver"):
+    with pytest.raises(RuntimeError, match="reservation changed; create the driver again"):
         grpc_client.rpc_client(function_name=GET, args={"a": map_arg("PlutoA@ucla")})
 
 
@@ -440,10 +443,10 @@ def test_a_lab_reservation_shows_the_token_and_the_handle(monkeypatch):
     account.install_reserved_driver.return_value = "pluto"
     monkeypatch.setattr(client_app, "account", account)
     monkeypatch.setattr(client_app, "home_name", "ucla")
-    client_app._native_reserve_slot(3, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+    client_app._native_reserve_slot(3, datetime.date(2026, 1, 1), SLOT, "10:00", "11:00",
                                     device_label="Pluto SDR (OTA) [PlutoA] (online)")
-    assert _row(lines, "PlutoA", "@ucla", "2026-01-01", "10:00-11:00")
-    assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Device", "handle", "PlutoA@ucla")
+    assert _row(lines, "PlutoA@ucla", *WHEN)
+    assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Handle", "PlutoA@ucla")
     assert any("logged in to ucla" in line for line in lines)
     assert _text(lines).endswith('from remoterf.drivers.adalm_pluto import adi '
                                  'sdr = adi.Pluto(token="Zm9vYmFy@ucla") sdr = adi.Pluto(token="PlutoA@ucla")')
@@ -463,7 +466,7 @@ def test_a_custom_device_shows_its_own_class_and_how_to_install_it(monkeypatch):
     monkeypatch.setattr(client_app, "home_name", "ucla")
     monkeypatch.setitem(sys.modules, "remoterf.drivers.bluetooth",
                         SimpleNamespace(__all__=["adi", "BluetoothModule", "helpers"]))
-    client_app._native_reserve_slot(10, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+    client_app._native_reserve_slot(10, datetime.date(2026, 1, 1), SLOT, "10:00", "11:00",
                                     device_label="BT Dongle [BT1] (online)")
     assert _text(lines).endswith(
         'Use either one as the token: from remoterf.drivers import ensure_driver '
@@ -473,7 +476,7 @@ def test_a_custom_device_shows_its_own_class_and_how_to_install_it(monkeypatch):
     # A package that will not import: the token is still shown, with the dynamic form's default class.
     lines.clear()
     monkeypatch.setitem(sys.modules, "remoterf.drivers.bluetooth", None)
-    client_app._native_reserve_slot(10, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+    client_app._native_reserve_slot(10, datetime.date(2026, 1, 1), SLOT, "10:00", "11:00",
                                     device_label="BT Dongle [BT1] (online)")
     assert _row(lines, "Token", "Zm9vYmFy@ucla")
     assert "from remoterf.drivers.bluetooth import Bluetooth dev = Bluetooth(token=" in _text(lines)
@@ -489,15 +492,15 @@ def test_an_untagged_device_is_reached_by_its_name(monkeypatch):
     account.install_reserved_driver.return_value = "usrp"
     monkeypatch.setattr(client_app, "account", account)
     monkeypatch.setattr(client_app, "home_name", "ucla")
-    client_app._native_reserve_slot(4, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+    client_app._native_reserve_slot(4, datetime.date(2026, 1, 1), SLOT, "10:00", "11:00",
                                     device_label="USRP B210 (online)")
-    assert _row(lines, "USRP_B210", "@ucla", "2026-01-01", "10:00-11:00")
-    assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Device", "handle", "USRP_B210@ucla")
+    assert _row(lines, "USRP_B210@ucla", *WHEN)
+    assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Handle", "USRP_B210@ucla")
     assert 'from remoterf.drivers.usrp import uhd sdr = uhd.usrp.MultiUSRP(token="Zm9vYmFy@ucla") sdr = uhd.usrp.MultiUSRP(token="USRP_B210@ucla")' in _text(lines)
     # A failed driver install: the token is still shown, just no usage lines.
     lines.clear()
     account.install_reserved_driver.return_value = None
-    client_app._native_reserve_slot(4, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+    client_app._native_reserve_slot(4, datetime.date(2026, 1, 1), SLOT, "10:00", "11:00",
                                     device_label="USRP B210 (online)")
     assert _row(lines, "Token", "Zm9vYmFy@ucla") and not any("sdr =" in line for line in lines)
 
@@ -512,16 +515,16 @@ def test_a_faulted_device_keeps_its_handle_and_a_partner_has_none(monkeypatch):
     account.install_reserved_driver.return_value = "pluto"
     monkeypatch.setattr(client_app, "account", account)
     monkeypatch.setattr(client_app, "home_name", "ucla")
-    client_app._native_reserve_slot(3, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+    client_app._native_reserve_slot(3, datetime.date(2026, 1, 1), SLOT, "10:00", "11:00",
                                     device_label="Pluto SDR [PlutoA] (offline: x (cable/port/board fault))")
-    assert _row(lines, "PlutoA", "@ucla", "2026-01-01", "10:00-11:00")
-    assert _row(lines, "Device", "handle", "PlutoA@ucla")
+    assert _row(lines, "PlutoA@ucla", *WHEN)
+    assert _row(lines, "Handle", "PlutoA@ucla")
     # A partner's bracketed name is not a handle of ours.
     lines.clear()
-    client_app._native_reserve_slot(1001, datetime.date(2026, 1, 1), (0, 1), "10:00", "11:00",
+    client_app._native_reserve_slot(1001, datetime.date(2026, 1, 1), SLOT, "10:00", "11:00",
                                     device_label="Pluto [B] @mit (online)")
-    assert _row(lines, "Pluto", "[B]", "@mit", "2026-01-01", "10:00-11:00")
-    assert not any("Device handle" in line for line in lines)
+    assert _row(lines, "Pluto_[B]@mit", *WHEN)
+    assert not any("Handle" in line for line in lines)
 
 
 def test_a_global_reservation_shows_the_token_and_the_handle(monkeypatch):
@@ -535,19 +538,21 @@ def test_a_global_reservation_shows_the_token_and_the_handle(monkeypatch):
     monkeypatch.setattr(client_app, "account", account)
     monkeypatch.setattr(homes, "discover", lambda host: {"deployment_id": DEST})
     day = datetime.date(2026, 1, 1)
-    client_app._federated_reserve_slot(REF, day, (0, 1), "10:00", "11:00", deployment_name="UCLA",
+    client_app._federated_reserve_slot(REF, day, SLOT, "10:00", "11:00", deployment_name="UCLA",
                                        device_name="Pluto SDR", device_handle="PlutoA")
-    assert _row(lines, "PlutoA", "@ucla", "2026-01-01", "10:00-11:00")
-    assert _row(lines, "Token", f"{RFG}@ucla") and _row(lines, "Device", "handle", "PlutoA@ucla")
+    assert _row(lines, "PlutoA@ucla", *WHEN)
+    assert _row(lines, "Token", f"{RFG}@ucla") and _row(lines, "Handle", "PlutoA@ucla")
+    assert any(line.startswith("│ Token   rfg_") for line in lines)  # lines up with "Handle  "
     assert any("logged in to RemoteRF Global" in line for line in lines)
     # A display name that is not the lab's slug: the bare token, which works
     # as is, and no handle (it needs @<slug> to route).
     lines.clear()
-    client_app._federated_reserve_slot(REF, day, (0, 1), "10:00", "11:00", deployment_name="UCLA Lab",
+    client_app._federated_reserve_slot(REF, day, SLOT, "10:00", "11:00", deployment_name="UCLA Lab",
                                        device_name="Pluto SDR", device_handle="PlutoA")
-    assert _row(lines, "Token", RFG) and not any("Device handle" in line for line in lines)
+    assert _row(lines, "PlutoA@UCLA", "Lab", *WHEN)
+    assert _row(lines, "Token", RFG) and not any("Handle" in line for line in lines)
     assert not any("has no handle" in line for line in lines)
-    assert "Its handle PlutoA can't be used from here: this lab's Global name is unknown" in _text(lines)
+    assert "Its handle PlutoA can't be used from here: this deployment's Global name is unknown" in _text(lines)
 
 
 def test_a_global_listing_shows_the_handle():
@@ -595,9 +600,9 @@ def _native_shell(monkeypatch, client_app, answers):
 
 
 @pytest.mark.parametrize("pick, device_id, shown, where, handle", [
-    ("0", 3, "Pluto SDR (OTA) [PlutoA]", "PlutoA @ucla", "PlutoA@ucla"),
+    ("0", 3, "PlutoA@ucla", "PlutoA@ucla", "PlutoA@ucla"),
     # A partner's device: the token is the HOME's, so @ucla; no handle.
-    ("2", 1001, "Pluto SDR @mit", "Pluto SDR @mit", None),
+    ("2", 1001, "Pluto_SDR@mit", "Pluto_SDR@mit", None),
 ])
 def test_resdev_names_the_device_and_shows_the_token_block(monkeypatch, pick, device_id, shown, where, handle):
     import remoterf.core.app as client_app
@@ -609,7 +614,7 @@ def test_resdev_names_the_device_and_shows_the_token_block(monkeypatch, pick, de
     assert any(f"│ {shown}  " in line and "min blocks" in line for line in lines)
     assert lines[next(i for i, line in enumerate(lines) if "RESERVED" in line) + 1].startswith(f"│ {where}  20")
     assert _row(lines, "Token", "Zm9vYmFy@ucla")
-    assert _row(lines, "Device", "handle", handle) if handle else not any("Device handle" in line for line in lines)
+    assert _row(lines, "Handle", handle) if handle else not any("Handle" in line for line in lines)
     assert account.reserve_device.call_args.args[0] == device_id
     account.install_reserved_driver.assert_called_once_with("Zm9vYmFy", device_id)
 
@@ -621,7 +626,7 @@ def test_resdev_n_lists_numbered_devices(monkeypatch):
     account, _ = _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
     client_app.reserve()
     assert _row(lines, "1.", "Pluto", "SDR", "(OTA)", "[PlutoA]", "online")
-    assert _row(lines, "Device", "handle", "PlutoA@ucla")
+    assert _row(lines, "Handle", "PlutoA@ucla") and _row(lines, "PlutoA@ucla", *WHEN)
     assert account.reserve_device.call_args.args[0] == 3
 
 
@@ -632,7 +637,7 @@ def test_resdev_n_names_the_lab_as_the_token_does(monkeypatch):
     _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
     monkeypatch.setattr(client_app, "current_route", {"home": {"display_name": "127.0.0.1:29496"}})
     client_app.reserve()
-    assert any(line.startswith("│ PlutoA @ucla  20") for line in lines)
+    assert any(line.startswith("│ PlutoA@ucla  20") for line in lines)
 
 
 def test_a_handle_is_the_last_bracketed_word():
@@ -655,8 +660,8 @@ def test_a_shell_without_a_home_shows_the_profiles_lab(monkeypatch):
     monkeypatch.setattr(client_app, "account", account)
     monkeypatch.setattr(client_app, "home_name", None)
     client_app._print_native_reserved(2, "SimSDR-2 [SimB] (online)", "today", "Zm9vYmFy")
-    assert _row(lines, "SimB", "@ucla", "today")
-    assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Device", "handle", "SimB@ucla")
+    assert _row(lines, "SimB@ucla", "today")
+    assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Handle", "SimB@ucla")
     # A profile with no lab name: the bare token, and the handle is not denied.
     env = Path.home() / ".config" / "remoterf-client" / ".env"
     env.write_text(env.read_text().replace("REMOTERF_PROFILE=ucla\n", ""))
@@ -689,7 +694,7 @@ def test_a_holder_change_after_a_refused_call_still_raises(monkeypatch, routes):
     with pytest.raises(RuntimeError, match="invalid token"):
         _call()
     live.add("bridge-2")  # reserved again: a new reservation
-    with pytest.raises(RuntimeError, match="reservation changed; re-create the driver"):
+    with pytest.raises(RuntimeError, match="reservation changed; create the driver again"):
         _call()
 
 
@@ -769,11 +774,11 @@ def test_known_backend_codes_read_as_sentences(monkeypatch):
 
     lines = _shown(monkeypatch, client_app)
     for exc, text in [
-        (AccountBackendError("route_unavailable", provenance="transport"), "That lab isn't responding right now; try again in a minute."),
-        (RuntimeError("route_unavailable [transport]"), "That lab isn't responding right now; try again in a minute."),
-        (AccountBackendError("principal_unknown"), "You're not enrolled at that lab yet."),
-        (AccountBackendError("contract_not_active"), "That lab isn't sharing with Global right now."),
-        (AccountBackendError("invalid_device_id", provenance="destination"), "invalid device id [destination]"),
+        (AccountBackendError("route_unavailable", provenance="transport"), "That deployment isn't responding right now; try again in a minute."),
+        (RuntimeError("route_unavailable [transport]"), "That deployment isn't responding right now; try again in a minute."),
+        (AccountBackendError("principal_unknown"), "You're not enrolled at that deployment yet."),
+        (AccountBackendError("contract_not_active"), "That deployment isn't sharing with Global right now."),
+        (AccountBackendError("invalid_device_id", provenance="destination"), "That device isn't in your list any more; run getdev again."),
         (AccountBackendError("Registration failed"), "Registration failed"),
     ]:
         lines.clear()
@@ -784,7 +789,29 @@ def test_known_backend_codes_read_as_sentences(monkeypatch):
     account, _ = _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
     account.reserve_device.side_effect = AccountBackendError("route_unavailable", provenance="transport")
     client_app.reserve()
-    assert lines[-1].endswith("That lab isn't responding right now; try again in a minute.")
+    assert lines[-1].endswith("That deployment isn't responding right now; try again in a minute.")
+
+
+def test_a_deployment_is_never_named_by_its_id(monkeypatch):
+    import remoterf.core.app as client_app
+
+    lines = _shown(monkeypatch, client_app)
+    uid = "0b5c1f7e-1111-4222-8333-444455556666"  # an older Global names it by its id only
+    dest = {"deployment_id": uid, "display_name": uid, "status": "unavailable", "provenance": "transport",
+            "error_code": None, "contract_id": "c-1", "contract_version": 2, "state": "active"}
+    # Didn't answer: no warning line, a gray "(offline)" row in the box instead.
+    assert client_app._render_destinations([dest, {**dest, "deployment_id": "u2", "display_name": "ucla"}]) == ["ucla", None]
+    assert lines == []
+    client_app._render_federation_permissions([dest])
+    assert "A deployment" in _text(lines) and not {uid, "c-1", "v2"} & set(_text(lines).split())
+    assert uid[:8] not in _text(lines)
+    account = Mock()
+    account.get_reservations.return_value = {"destinations": [dest], "reservations": [
+        {"device_id": f"{uid}:5", "deployment_id": uid, "mine": True, "start_time": 0, "end_time": 60}]}
+    account.get_devices.return_value = {"destinations": [], "devices": []}
+    monkeypatch.setattr(client_app, "account", account)
+    rows, offline = client_app._federated_reservation_rows(mine_only=True)
+    assert [r["device_label"] for r in rows] == ["unlisted device"] and offline == [None]
 
 
 @pytest.mark.parametrize("answers, expected", [

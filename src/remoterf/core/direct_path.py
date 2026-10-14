@@ -68,6 +68,7 @@ except Exception as _exc:  # noqa: BLE001 - e.g. conda swapped in a cryptography
 
 from ..common.grpc import grpc_pb2
 from ..common.utils import map_arg, unmap_arg
+from .messages import debug, log
 
 ALPN = "remoterf-direct/1"
 MAX_FRAME = 100 * 1024 * 1024  # the gRPC message ceiling
@@ -255,7 +256,8 @@ def _remember(scope: Optional[str], outcome: str) -> None:
 
 
 def _why(exc: BaseException) -> str:
-    return "timed out" if isinstance(exc, asyncio.TimeoutError) else f"{type(exc).__name__}: {exc}"
+    return "timed out" if isinstance(exc, asyncio.TimeoutError) else (
+        f"{type(exc).__name__}: {exc}" if debug() else str(exc) or type(exc).__name__)
 
 
 class _IceTransport:
@@ -387,7 +389,7 @@ class DirectPath:
             return "relay (direct path off)"
         if self.state == "unavailable":
             return f"relay ({self.reason})"
-        return f"relay (direct path down: {self.reason}; retrying)"
+        return f"relay (direct path down{': ' + self.reason if debug() else ''}; retrying)"
 
     def call(self, function_name: str, args) -> grpc_pb2.GenericRPCResponse:
         """Carry one device RPC; raises PathError when the path cannot, marking it down."""
@@ -848,10 +850,10 @@ def _global_offer(ref: str, deployment_id: Optional[str]) -> Callable[[dict], di
         except AccountBackendError as exc:
             # not_found: a Global without the route; the others: a lab without it.
             if exc.code in {"not_found", "action_unavailable", "direct_path_unavailable"}:
-                raise PathUnavailable(f"no direct path: {exc.code}") from None
+                raise PathUnavailable("no direct path" + (f": {exc.code}" if debug() else "")) from None
             raise PathError(str(exc)) from None
         if not (answer.get("server_name") and answer.get("ca_pem")):
-            raise PathUnavailable("the lab's Server predates direct paths for Global users")
+            raise PathUnavailable("the deployment's Server predates direct paths for Global users")
         return answer
 
     return send
@@ -901,12 +903,17 @@ def current(token: Optional[str] = None) -> Optional[DirectPath]:
 def describe() -> str:
     """What device calls use right now, for the shell."""
     if _BROKEN is not None:
-        return f"relay (direct path unavailable: {_BROKEN}; fix: pip install --force-reinstall remoterf)"
+        log.debug("direct path unavailable: %s", _BROKEN)
+        return f"relay (direct path unavailable{': ' + _BROKEN if debug() else ''}; fix: pip install --force-reinstall remoterf)"
     if not enabled():
         return "relay (direct path disabled: REMOTERF_DIRECT=0)"
+    from .grpc_client import _deployment_ids
+
+    # Owners are deployment ids: shown by the name this client resolved, never the id.
+    names = {ident: name for name, ident in _deployment_ids.items()}
     # A Global ref's path has no owner; its calls fall back to Global's relay.
     partners = "; ".join(
-        f"partner {_partner_owners[key]}: "
+        f"partner {names.get(_partner_owners[key], 'deployment')}: "
         + (path.describe() if path.ready else path.describe().replace("relay", "via HOME", 1))
         if key in _partner_owners else f"Global: {path.describe()}"
         for key, path in list(_partners.items())

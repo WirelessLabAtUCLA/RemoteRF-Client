@@ -622,7 +622,10 @@ class BrokenQuicStackTests(unittest.TestCase):
             (Path(tmp) / "OpenSSL" / "__init__.py").write_text("raise AttributeError(\"module 'lib' has no attribute 'GEN_EMAIL'\")\n")
             probe = ("from remoterf.core import direct_path, grpc_client; "
                      "print(direct_path.enabled(), direct_path.current(), direct_path.describe())")
-            result = subprocess.run([sys.executable, "-c", probe], env={**os.environ, "PYTHONPATH": tmp, "HOME": tmp},
+            result = subprocess.run([sys.executable, "-c", probe], env={**os.environ, "HOME": tmp, "REMOTERF_DEBUG": "0",
+                                                                          "PYTHONPATH": os.pathsep.join(filter(None, [tmp, os.environ.get("PYTHONPATH")]))},
                                     capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
-        self.assertTrue(result.stdout.startswith("False None relay (direct path unavailable: AttributeError"), result.stderr[-2000:])
+        # The exception itself only with REMOTERF_DEBUG=1.
+        self.assertEqual(result.stdout, "False None relay (direct path unavailable; fix: pip install --force-reinstall remoterf)\n",
+                         result.stderr[-2000:])
 
