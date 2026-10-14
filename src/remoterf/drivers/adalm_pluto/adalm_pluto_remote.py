@@ -14,10 +14,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Auto-generated from IDL schema — do not edit by hand.
-# device_type: adalm_pluto  driver_version: 0.0.3  schema_hash: sha256:35b66a1e4383a344046be27ff80d40aff3ebd147e7aa5dd0513303fd3c0cfab4
+# device_type: adalm_pluto  driver_version: 0.0.4  schema_hash: sha256:9cbbbbc0cd76fc7897dd702adc0c4a0aa9b5042484c6cb38d0057ca217cb92ce
 
 _PREFIX = "Adalm_pluto"
-_SCHEMA_HASH = "sha256:35b66a1e4383a344046be27ff80d40aff3ebd147e7aa5dd0513303fd3c0cfab4"
+_SCHEMA_HASH = "sha256:9cbbbbc0cd76fc7897dd702adc0c4a0aa9b5042484c6cb38d0057ca217cb92ce"
 _CLIENT_MODULES = {}
 _CLIENT_OBJECTS = {}
 
