@@ -20,6 +20,7 @@ from ..common.utils import *
 import getpass
 import os
 import re
+import textwrap
 import datetime
 import functools
 import time
@@ -86,6 +87,7 @@ def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.
 
 # ponytail: bounds mirror Global's policy (6-128 chars); not advertised by discovery.
 PASSWORD_MIN, PASSWORD_MAX = 6, 128
+_PASSWORD_HINT = f"Password must be {PASSWORD_MIN}-{PASSWORD_MAX} characters."
 
 def _ask(label, *, hidden=False):
     """One styled account field: indented bold label. Secrets go through
@@ -103,8 +105,6 @@ def _home_name():
 
 
 def _password_confirmation(*, enforce_policy=False):
-    if enforce_policy:
-        printf(f"  Password must be {PASSWORD_MIN}-{PASSWORD_MAX} characters.", Sty.GRAY)
     while True:
         password = _ask("Password (Hidden)", hidden=True)
         if enforce_policy and not PASSWORD_MIN <= len(password) <= PASSWORD_MAX:
@@ -126,6 +126,7 @@ current_route = None
 
 # What each generated driver package exposes, for the usage lines after a reservation.
 DRIVER_CALLS = {"pluto": "adi.Pluto", "adalm_pluto": "adi.Pluto", "usrp": "uhd.usrp.MultiUSRP"}
+DRIVER_IMPORTS = {"pluto": "adalm_pluto import adi", "adalm_pluto": "adalm_pluto import adi", "usrp": "usrp import uhd"}
 _HANDLE_TAG = re.compile(r"^(?P<name>.*) \[(?P<handle>\S+)\]$")  # handles have no whitespace
 _NO_HANDLE = "This device has no handle"
 _UNROUTABLE = "Its handle {} can't be used from here: {}"
@@ -160,37 +161,48 @@ def _name_and_handle(name):
 
 def _print_reserved(where, when, token, handle, logged_in_to, install, no_handle=_NO_HANDLE):
     """The token and, when the device has one, its handle (both @<deployment>).
-    Printed before the driver install, which can fail or stall; the usage
-    lines follow it, once the device type is known. `no_handle`: why no
-    handle is shown."""
-    printf("Reservation successful on ", (Sty.BOLD, Sty.GREEN), where, Sty.MAGENTA, " for ", Sty.DEFAULT, f"{when}.", Sty.CYAN)
-    printf("", Sty.DEFAULT)
+    Boxed before the driver install, which can fail or stall; the usage box
+    follows it, once the device type is known. `no_handle`: why no handle is
+    shown."""
     width = len("Device handle") if handle else len("Token")
-    printf(f"  {'Token':<{width}}  ", Sty.BOLD, token, (Sty.BOLD, Sty.GREEN))
+    rows = [(where, (Sty.BOLD, Sty.MAGENTA), f"  {when}", Sty.CYAN), (),
+            (f"{'Token':<{width}}  ", Sty.BOLD, token, (Sty.BOLD, Sty.GREEN))]
     if handle:
-        printf("  Device handle  ", Sty.BOLD, handle, (Sty.BOLD, Sty.GREEN))
-    printf("", Sty.DEFAULT)
+        rows.append(("Device handle  ", Sty.BOLD, handle, (Sty.BOLD, Sty.GREEN)))
+    rows.append(())
     if handle:
-        printf("  Token   works anywhere, no login needed. Keep it safe: it can't be shown again.", Sty.DEFAULT)
-        printf(f"  Handle  works while you're logged in to {logged_in_to} and this reservation is active.", Sty.DEFAULT)
+        rows += [("Token   works anywhere, no login needed.", Sty.DEFAULT),
+                 ("        Keep it safe: it can't be shown again.", Sty.DEFAULT),
+                 (f"Handle  works while you're logged in to {logged_in_to}", Sty.DEFAULT),
+                 ("        and this reservation is active.", Sty.DEFAULT)]
     else:
-        printf("  Works anywhere, no login needed. Keep it safe: it can't be shown again.", Sty.DEFAULT)
-        printf(f"  ({no_handle}. Lost the token? Cancel and reserve again.)", Sty.DEFAULT)
-    printf("", Sty.DEFAULT)
-    device_type = install()
-    call = DRIVER_CALLS.get(device_type)
-    if call:
-        printf("Use either one as the token:" if handle else "Use it as the token:", Sty.DEFAULT)
-        for text in (token, handle) if handle else (token,):
-            printf(f'  sdr = {call}(token="{text}")', Sty.CYAN)
-    elif device_type and (cls := _client_class(device_type)):
+        rows += [("Works anywhere, no login needed.", Sty.DEFAULT),
+                 ("Keep it safe: it can't be shown again.", Sty.DEFAULT), (),
+                 *[(line, Sty.GRAY) for line in textwrap.wrap(f"{no_handle}. Lost the token? Cancel and reserve again.", 64)]]
+    _panel("Reserved", rows)
+    _print_usage(install(), token, handle)
+
+
+def _print_usage(device_type, token, handle=None):
+    """The import and constructor lines for the installed driver. A type
+    without a fixed form gets the dynamic-driver one."""
+    if not device_type:
+        return
+    tokens = (token, handle) if handle else (token,)
+    if call := DRIVER_CALLS.get(device_type):
+        rows = [f"  from remoterf.drivers.{DRIVER_IMPORTS[device_type]}", *(f'  sdr = {call}(token="{text}")' for text in tokens)]
+    else:
+        from ..drivers.dynamic_device import _default_class_name
+
+        cls = _client_class(device_type) or _default_class_name(device_type)
         # A lab's own driver (bluetooth, gps, ...): its class, from its IDL.
-        printf("Use either one as the token:" if handle else "Use it as the token:", Sty.DEFAULT)
-        printf("  from remoterf.drivers import ensure_driver", Sty.CYAN)
-        printf(f'  ensure_driver(token="{token}")  # installs it on any other machine', Sty.CYAN)
-        printf(f"  from remoterf.drivers.{device_type} import {cls}", Sty.CYAN)
-        for text in (token, handle) if handle else (token,):
-            printf(f'  dev = {cls}(token="{text}")', Sty.CYAN)
+        rows = ["  from remoterf.drivers import ensure_driver",
+                "  # installs the driver on any other machine",
+                f'  ensure_driver(token="{token}")',
+                f"  from remoterf.drivers.{device_type} import {cls}",
+                *(f'  dev = {cls}(token="{text}")' for text in tokens)]
+    _panel("Usage", [("Use either one as the token:" if handle else "Use it as the token:", Sty.DEFAULT),
+                     *((row, Sty.CYAN) for row in rows)])
 
 
 def _client_class(device_type):
@@ -301,7 +313,8 @@ def _account_command(command):
     if command in ('r', 'register'):
         if not policy['enabled']:
             raise AccountBackendError('Registration is unavailable at this home')
-        printf(f"Register at {_home_name()}", (Sty.BOLD, Sty.BLUE))
+        _panel("Register", [("Register at ", Sty.DEFAULT, _home_name(), (Sty.BOLD, Sty.BLUE)),
+                            *([(_PASSWORD_HINT, Sty.GRAY)] if account.is_https_home else [])])
         account.enrollment_code = _consume_enrollment_code(policy)
         try:
             account.username = _ask('Username') if policy['username_required'] else ''
@@ -311,7 +324,7 @@ def _account_command(command):
                 raise AccountBackendError('Registration failed')
             if account.is_https_home:
                 from ..deployment import homes
-                printf(f"Log in from anywhere as {account.username}@{homes.GLOBAL_ACCOUNTS}", Sty.GRAY)
+                _note(f"Log in from anywhere as {account.username}@{homes.GLOBAL_ACCOUNTS}", Sty.GRAY)
         except BaseException:
             # The code was fine; only the details failed. Keep it for the retry.
             pending_enrollment_code = account.enrollment_code or None
@@ -334,26 +347,25 @@ def _account_command(command):
             # The home activated the account without email (provider down or
             # out of quota); there is no token coming. Straight on to login.
             return False
-        printf("Verify your email", (Sty.BOLD, Sty.BLUE))
-        printf("  Enter the 6-digit code from the verification email.", Sty.GRAY)
+        _panel("Verify email", [("Enter the 6-digit code from the verification email.", Sty.DEFAULT)])
         account.backend.verify(account.username or account.email, _ask('Verification code').strip())
-        printf('Email verified. You can now log in.', (Sty.BOLD, Sty.GREEN))
+        _note('Email verified. You can now log in.', (Sty.BOLD, Sty.GREEN))
         return False
     if command in ('forgot-password', 'reset-password'):
         if not account.is_https_home:
             raise AccountBackendError('Contact the local administrator to reset a password')
         if command == 'forgot-password':
-            printf("Forgot password", (Sty.BOLD, Sty.BLUE))
+            _note("Forgot password", (Sty.BOLD, Sty.BLUE))
             account.backend.forgot(_ask('Email'))
-            printf('If eligible, check your email for a password reset token.', Sty.DEFAULT)
+            _note('If eligible, check your email for a password reset token.', Sty.DEFAULT)
         else:
-            printf("Reset password", (Sty.BOLD, Sty.BLUE))
+            _panel("Reset password", [("Set a new password with the emailed reset token.", Sty.DEFAULT), (_PASSWORD_HINT, Sty.GRAY)])
             token = _ask('Password reset token', hidden=True)
             account.backend.reset(token, _password_confirmation(enforce_policy=True))
-            printf('Password reset. Log in again.', (Sty.BOLD, Sty.GREEN))
+            _note('Password reset. Log in again.', (Sty.BOLD, Sty.GREEN))
         return False
     if command in ('l', 'login'):
-        printf(f"Login to {_home_name()}", (Sty.BOLD, Sty.BLUE))
+        _note(f"Login to {_home_name()}", (Sty.BOLD, Sty.BLUE))
         global pending_username
         from ..deployment import homes
         typed = pending_username or _ask('Username or Email' if account.is_https_home else 'Username')
@@ -425,7 +437,7 @@ def welcome(*, show_banner: bool = True, initial=(), route=None):
             if _account_command(command):
                 return True
         except (AccountBackendError, ValidationError) as exc:
-            printf(f'Account error: {exc}', Sty.WARNING)
+            _error(exc)
             queue.clear()
         except (KeyboardInterrupt, EOFError):
             return False
@@ -464,6 +476,50 @@ def _panel(label, rows):
     for row in rows:
         printf(f"{v} ", Sty.DEFAULT, *row, " " * (width - sum(map(len, row[::2]))) + f" {v}", Sty.DEFAULT)
     printf(bl + h * (width + 2) + br, Sty.DEFAULT)
+
+
+_LAB_DOWN = "That lab isn't responding right now; try again in a minute."
+_FRIENDLY_ERRORS = {
+    "route_unavailable": _LAB_DOWN,
+    "transport": _LAB_DOWN,
+    "principal_unknown": "You're not enrolled at that lab yet.",
+    "contract_not_active": "That lab isn't sharing with Global right now.",
+}
+
+
+def _note(*args):
+    """One line in the banner's voice: a marker, then printf (text, style) pairs."""
+    printf('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, *args)
+
+
+def _error(error, provenance=None):
+    """A one-line failure. A known backend code reads as a sentence; any other
+    bare code is shown with spaces."""
+    text = str(error)
+    if (code := text.partition(" [")[0]) in _FRIENDLY_ERRORS:  # 'route_unavailable [transport]'
+        return _note(_FRIENDLY_ERRORS[code], Sty.WARNING)
+    provenance = provenance or getattr(error, "provenance", None)
+    text = text if " " in text else text.replace("_", " ")
+    _note(f"{text} [{provenance}]" if provenance else text, Sty.WARNING)
+
+
+def _confirm(question):
+    """serverrf's yes/no prompt: `(y/N)`, Enter is no, y/yes/n/no accepted."""
+    while True:
+        try:
+            answer = session.prompt(stylize("  ", Sty.DEFAULT, f"{question} ", Sty.BOLD, "(y/N): ", (Sty.BOLD, Sty.GREEN))).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if answer in ("", "n", "no"):
+            return False
+        if answer in ("y", "yes"):
+            return True
+        print("  Please answer y or n.")
+
+
+def _offline_rows(count):
+    """The gray footer of a reserve picker that left offline devices out."""
+    return [(), (f"{count} offline device{'s' * (count != 1)} not shown", Sty.GRAY)] if count else []
 
 
 def commands():
@@ -633,6 +689,15 @@ def _federated_reservations(*, mine_only):
     return rows
 
 
+def _confirm_cancel(index, device, start, end):
+    _panel("Cancel reservation", [
+        ("Reservation  ", Sty.GRAY, f"{index}", Sty.CYAN),
+        ("Device       ", Sty.GRAY, device, Sty.MAGENTA),
+        ("Time         ", Sty.GRAY, _format_reservation_range(start, end), Sty.CYAN),
+    ])
+    return _confirm("Cancel this reservation?")
+
+
 def _federated_cancel():
     rows = _federated_reservation_rows(mine_only=True)
     if not rows:
@@ -652,20 +717,11 @@ def _federated_cancel():
         print("Invalid ID.")
         return
     r = rows[id]
-    if session.prompt(stylize(
-        "Cancel reservation ID ", Sty.DEFAULT,
-        f'{id}', Sty.CYAN,
-        " Device ID: ", Sty.DEFAULT,
-        f"{r['device_label']}", Sty.MAGENTA,
-        " Time: ", Sty.GRAY,
-        _format_reservation_range(r["start"], r["end"]), Sty.CYAN,
-        "?", Sty.CYAN,
-        " (y/n): ", (Sty.BOLD, Sty.GREEN),
-    )) != 'y':
+    if not _confirm_cancel(id, r["device_label"], r["start"], r["end"]):
         printf("Aborting. User canceled action.", Sty.WARNING)
         return
     account.cancel_reservation(r["reservation_id"])
-    printf("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
+    _note("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
 
 
 def _federated_reservations_for_range(start_day, end_day):
@@ -700,9 +756,9 @@ def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, 
     install = lambda: account.install_reserved_driver(token, device_id)
     if not token.startswith("rfg_"):
         # An older Global: the HOME reference goes where a token goes.
-        printf("Reservation successful on device ", (Sty.BOLD, Sty.GREEN), f"{str(device_id).rsplit(':', 1)[-1]}", Sty.MAGENTA, " for ", Sty.DEFAULT, f"{when}.", Sty.CYAN)
-        printf("Your Token -> ", Sty.BOLD, token, (Sty.BOLD, Sty.GREEN))
-        install()
+        _panel("Reserved", [(f"Device {str(device_id).rsplit(':', 1)[-1]}", (Sty.BOLD, Sty.MAGENTA), f"  {when}", Sty.CYAN), (),
+                            ("Token  ", Sty.BOLD, token, (Sty.BOLD, Sty.GREEN))])
+        _print_usage(install(), token)
         return
     slug = _global_slug(device_id, deployment_name)
     name = device_handle or device_name or str(device_id).rsplit(":", 1)[-1]
@@ -716,9 +772,13 @@ def _federated_reserve():
     """Same flow as the native `resdev` picker, sourced from the HOME's device rows."""
     data = account.get_devices()
     _render_destinations(data["destinations"])
-    devs = sorted(data["devices"], key=lambda d: (d["deployment_name"], d["display_name"], d["local_device_id"]))
-    if not devs:
+    listed = sorted(data["devices"], key=lambda d: (d["deployment_name"], d["display_name"], d["local_device_id"]))
+    if not listed:
         printf("No devices available for your permission level.", Sty.WARNING)
+        return
+    devs = [dev for dev in listed if dev["online"]]
+    if not devs:
+        printf("No devices are online right now.", Sty.WARNING)
         return
     width = max(len(f"{dev['display_name']}{_handle_tag(dev)}") for dev in devs)
     index_width = len(str(len(devs) - 1))
@@ -733,7 +793,7 @@ def _federated_reserve():
             f"{dev['display_name'] + _handle_tag(dev):<{width}}  ", Sty.DEFAULT,
             f"{dev['block_min']} min slots", Sty.GREEN,
         ))
-    _panel("Devices", rows)
+    _panel("Devices", rows + _offline_rows(len(listed) - len(devs)))
     sel = session.prompt(stylize(
         "Enter which device you want to reserve ", (Sty.BOLD, Sty.GREEN),
         "(enter the 0-based index): ", Sty.CYAN,
@@ -765,7 +825,7 @@ def reservations():
         return
     data = account.get_reservations()
     if 'ace' in data.results:
-        print(f"Error: {unmap_arg(data.results['ace'])}")
+        _error(unmap_arg(data.results['ace']))
         return
     entries = []
 
@@ -793,7 +853,7 @@ def my_reservations():
         return
     data = account.get_reservations()
     if 'ace' in data.results:
-        print(f"Error: {unmap_arg(data.results['ace'])}")
+        _error(unmap_arg(data.results['ace']))
         return
     entries = []
 
@@ -825,7 +885,7 @@ def cancel_my_reservation():
     ## remove said reservation
     data = account.get_reservations()
     if 'ace' in data.results:
-        print(f"Error: {unmap_arg(data.results['ace'])}")
+        _error(unmap_arg(data.results['ace']))
         return
     
     entries:list = []
@@ -869,32 +929,35 @@ def cancel_my_reservation():
         for entry in sorted_entries:
             if entry['id'] == id:
                 db_id = entry['internal_id']
-                if session.prompt(stylize(
-                    "Cancel reservation ID ", Sty.DEFAULT,
-                    f'{id}', Sty.CYAN,
-                    " Device ID: ", Sty.DEFAULT,
-                    f'{entry["device_id"]}', Sty.MAGENTA,
-                    " Time: ", Sty.GRAY,
-                    _format_reservation_range(entry["start_time"], entry["end_time"]), Sty.CYAN,
-                    "?", Sty.CYAN,
-                    " (y/n): ", (Sty.BOLD, Sty.GREEN),
-                )) == 'y':
+                if _confirm_cancel(id, f'Device {entry["device_id"]}', entry["start_time"], entry["end_time"]):
                     response = account.cancel_reservation(db_id)
                     if 'ace' in response.results:
-                        print(f"Error: {unmap_arg(response.results['ace'])}")
+                        _error(unmap_arg(response.results['ace']))
                     elif 'UC' in response.results:
-                        printf("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
+                        _note("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
                 else:
                     printf("Aborting. User canceled action.", Sty.WARNING)
                 return
             
-        print(f"Error: No reservation found with ID {id}.")
+        _error(f"No reservation found with ID {id}.")
     else:
         print("Aborting. A non integer key was given.")
 
 _PARTNER_LABEL = re.compile(r"^(?P<name>.*) @(?P<lab>.+?) \((?P<state>[^)]*)\)$")
 # The state always starts with online/offline; a PoE fault after it can hold brackets.
 _LOCAL_LABEL = re.compile(r"^(?P<name>.*?) \((?P<state>(?:online|offline)\b.*)\)$")
+
+
+def _label_name(label):
+    """'Pluto SDR [PlutoA] (online)' -> 'Pluto SDR [PlutoA]'; a partner's
+    'Pluto SDR @mit (online)' -> 'Pluto SDR @mit'."""
+    match = _LOCAL_LABEL.match(label)
+    return match["name"] if match else label
+
+
+def _label_online(label):
+    match = _LOCAL_LABEL.match(label)
+    return bool(match) and match["state"].startswith("online")
 
 
 def _native_device_rows():
@@ -951,7 +1014,7 @@ def _pick_lab(rows):
     return [row for row in rows if row["lab"] == chosen]
 
 
-def _print_native_devices(rows, *, numbered=False):
+def _print_native_devices(rows, *, numbered=False, offline=0):
     width = max(len(row["name"]) for row in rows)
     index_width = len(str(len(rows)))
     lines, lab = [], None
@@ -963,7 +1026,7 @@ def _print_native_devices(rows, *, numbered=False):
         lines.append((f"  {index:>{index_width}}. " if numbered else "  ", Sty.CYAN,
                       f"{row['name']:<{width}}  ", Sty.DEFAULT,
                       state, Sty.GREEN if state.startswith("online") else Sty.GRAY))
-    _panel("Devices", lines)
+    _panel("Devices", lines + _offline_rows(offline))
 
 
 def devices():
@@ -973,7 +1036,7 @@ def devices():
     try:
         rows = _native_device_rows()
     except RuntimeError as exc:
-        print(f"Error: {exc}")
+        _error(exc)
         return
     if not rows:
         printf("No devices available for your permission level.", Sty.WARNING)
@@ -1000,12 +1063,16 @@ def reserve():
         rows = _pick_lab(rows)
         if rows is None:
             return
-        _print_native_devices(rows, numbered=True)
+        online = [row for row in rows if row["state"].startswith("online")]
+        if not online:
+            printf("No devices are online right now.", Sty.WARNING)
+            return
+        _print_native_devices(online, numbered=True, offline=len(rows) - len(online))
         pick = session.prompt(stylize("Enter the number of the device to reserve: ", Sty.DEFAULT)).strip()
-        if not pick.isdigit() or not 1 <= int(pick) <= len(rows):
+        if not pick.isdigit() or not 1 <= int(pick) <= len(online):
             printf("Pick a number from the list.", Sty.WARNING)
             return
-        row = rows[int(pick) - 1]
+        row = online[int(pick) - 1]
         start, end = get_datetime("Reserve Start Time"), get_datetime("Reserve End Time")
         token = account.reserve_device(row["id"], start, end)
         if token != '':
@@ -1018,7 +1085,7 @@ def reserve():
                             lambda: account.install_reserved_driver(token, row["id"]),
                             _UNROUTABLE.format(handle, "this lab has no saved name") if handle else _NO_HANDLE)
     except Exception as e:
-        printf(f"Error: {e}", Sty.BRIGHT_RED)
+        _error(e)
 
 import ast
 import json
@@ -1090,7 +1157,7 @@ def perms():
             )
         return
     if 'ace' in data.results:
-        print(f"Error: {unmap_arg(data.results['ace'])}")
+        _error(unmap_arg(data.results['ace']))
         return
 
     results = ast.literal_eval(unmap_arg(data.results['UC']))[0]
@@ -1229,7 +1296,7 @@ def perms():
         render_remote_permissions()
 
     else:
-        printf(f"Error: Unknown permission level {perm_level}", Sty.BRIGHT_RED)
+        _error(f"Unknown permission level {perm_level}")
 
         
 def enroll(code=None):
@@ -1247,32 +1314,23 @@ def enroll(code=None):
     if account.is_https_home:
         code = typed  # Global enrols at the lab the invite names, so it needs the whole invite
     elif host and home_name and homes.home_name_for(host) != home_name:
-        printf(f"That code is for {host}, not {home_name}. Register there with: remoterf -r", Sty.WARNING)
+        _error(f"That code is for {host}, not {home_name}. Register there with: remoterf -r")
         return False
     account.enrollment_code = code
     data = account.set_enroll()
 
     if account.is_https_home:
         if data.get("status") != "enrolled":
-            print("Error: enrollment_not_confirmed")
+            _error("enrollment_not_confirmed")
             return False
-    elif 'ace' in data.results:
+    elif 'ace' in data.results or 'UE' in data.results:
         provenance = (
             unmap_arg(data.results['federation_provenance'])
             if 'federation_provenance' in data.results else None
         )
-        label = f" [{provenance}]" if provenance else ""
-        print(f"Error{label}: {unmap_arg(data.results['ace'])}")
+        _error(unmap_arg(data.results['ace' if 'ace' in data.results else 'UE']), provenance)
         return False
-    elif 'UE' in data.results:
-        provenance = (
-            unmap_arg(data.results['federation_provenance'])
-            if 'federation_provenance' in data.results else None
-        )
-        label = f" [{provenance}]" if provenance else ""
-        print(f"Error{label}: {unmap_arg(data.results['UE'])}")
-        return False
-    printf("Enrollment successful.", Sty.BG_GREEN)
+    _note("Enrollment successful.", (Sty.BOLD, Sty.GREEN))
     return True
 
 # New block scheduling
@@ -1280,7 +1338,7 @@ def enroll(code=None):
 def fetch_all_reservations():
     data = account.get_reservations()
     if 'ace' in data.results:
-        print(f"Error: {unmap_arg(data.results['ace'])}")
+        _error(unmap_arg(data.results['ace']))
         return []
     entries = []
 
@@ -1318,7 +1376,7 @@ def interactive_reserve_next_days(block_minutes=60):
         # --- 1) Fetch and display all devices ---
         data = account.get_devices()
         if 'ace' in data.results:
-            print(f"Error: {unmap_arg(data.results['ace'])}")
+            _error(unmap_arg(data.results['ace']))
             return
         
         print("Devices:")
@@ -1440,19 +1498,7 @@ def interactive_reserve_next_days(block_minutes=60):
         slot_start_str = chosen_slot[0].strftime('%I:%M %p')
         slot_end_str   = chosen_slot[1].strftime('%I:%M %p')
         
-        confirmation = session.prompt(stylize(
-            "Reservation successful on ", Sty.DEFAULT,
-            f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
-            " from ", Sty.DEFAULT,
-            f"{slot_start_str}", Sty.CYAN,
-            " to ", Sty.DEFAULT,
-            f"{slot_end_str}", Sty.CYAN,
-            " on device ", Sty.DEFAULT,
-            f"{chosen_device_id}", Sty.MAGENTA,
-            ". Confirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
-        )).strip().lower()
-        
-        if confirmation != 'y':
+        if not _confirm_reserve(f"Device {chosen_device_id}", chosen_day, slot_start_str, slot_end_str):
             printf("Reservation cancelled.", Sty.WARNING)
             return
         
@@ -1465,7 +1511,7 @@ def interactive_reserve_next_days(block_minutes=60):
                                    f"{chosen_day.strftime('%Y-%m-%d')} {slot_start_str}-{slot_end_str}", token)
 
     except Exception as e:
-        print(f"Error: {e}")
+        _error(e)
         
 def _auto_block_minutes(max_t_sec: int) -> int:
     try:
@@ -1490,6 +1536,12 @@ def _auto_block_minutes(max_t_sec: int) -> int:
         else:
             break
     return best
+
+def _confirm_reserve(device, day, start, end):
+    _panel("Reserve", [(f"{device}", Sty.MAGENTA),
+                       (f"{day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE), f"  {start} - {end}", Sty.CYAN)])
+    return _confirm("Confirm reservation?")
+
 
 def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, reservations_for_range, do_reserve, *, device_label=None, max_days=None):
     """Shared `resdev` slot picker: days -> free slots -> pick -> confirm -> reserve.
@@ -1579,19 +1631,7 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     slot_start_str = chosen_slot[0].strftime("%I:%M %p")
     slot_end_str = chosen_slot[1].strftime("%I:%M %p")
 
-    confirmation = session.prompt(stylize(
-        "Reserve ", Sty.DEFAULT,
-        f"{chosen_day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE),
-        " from ", Sty.DEFAULT,
-        f"{slot_start_str}", Sty.CYAN,
-        " to ", Sty.DEFAULT,
-        f"{slot_end_str}", Sty.CYAN,
-        " for ", Sty.DEFAULT,
-        f"{chosen_device_name}", Sty.GRAY,
-        "?\nConfirm reservation? (y/n): ", (Sty.BOLD, Sty.GREEN),
-    )).strip().lower()
-
-    if confirmation != "y":
+    if not _confirm_reserve(device_label, chosen_day, slot_start_str, slot_end_str):
         printf("Reservation cancelled.", Sty.WARNING)
         return
 
@@ -1617,7 +1657,7 @@ def interactive_reserve_next_days_auto():
         # ---------------------------
         perms_resp = account.get_perms()
         if "ace" in perms_resp.results:
-            print(f"Error: {unmap_arg(perms_resp.results['ace'])}")
+            _error(unmap_arg(perms_resp.results['ace']))
             return
 
         uc_raw = unmap_arg(perms_resp.results.get("UC", map_arg("[]")))
@@ -1673,7 +1713,7 @@ def interactive_reserve_next_days_auto():
 
         dev_resp = account.get_devices()
         if "ace" in dev_resp.results:
-            print(f"Error: {unmap_arg(dev_resp.results['ace'])}")
+            _error(unmap_arg(dev_resp.results['ace']))
             return
 
         sorted_device_ids = sorted(dev_resp.results.keys(), key=int)  # strings
@@ -1688,14 +1728,21 @@ def interactive_reserve_next_days_auto():
             printf("No devices available for your permission level.", Sty.WARNING)
             return
 
-        printf("Devices:", Sty.BOLD)
+        listed = len(sorted_device_ids)
+        sorted_device_ids = [d for d in sorted_device_ids if _label_online(str(unmap_arg(dev_resp.results[d])))]
+        if not sorted_device_ids:
+            printf("No devices are online right now.", Sty.WARNING)
+            return
+
+        names = [_label_name(str(unmap_arg(dev_resp.results[d]))) for d in sorted_device_ids]
+        name_width = max(map(len, names))
+        index_width = len(str(len(names) - 1))
+        rows = []
         block_by_dev: dict[str, int] = {}
         max_by_dev: dict[str, int] = {}
         days_by_dev: dict[str, int] = {}
 
         for idx, dev_id in enumerate(sorted_device_ids):
-            dev_name = unmap_arg(dev_resp.results[dev_id])
-
             max_t_sec = 0
             if perm_level == "Normal User":
                 c = _cap_for(int(dev_id))
@@ -1719,15 +1766,10 @@ def interactive_reserve_next_days_auto():
             # else:
             #     print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}   (blocks={block_min} min)")
 
-            printf(
-                f"{idx}.", Sty.CYAN,
-                "  Name: ", Sty.DEFAULT,
-                f"{dev_name}", Sty.GRAY,
-                " Duration: ", Sty.DEFAULT,
-                f"{block_min} min", Sty.GREEN,
-            )
+            rows.append((f"{idx:>{index_width}}. ", Sty.CYAN, f"{names[idx]:<{name_width}}  ", Sty.DEFAULT,
+                         f"{block_min} min slots", Sty.GREEN))
 
-
+        _panel("Devices", rows + _offline_rows(listed - len(names)))
         sel = session.prompt(stylize(
             "Enter which device you want to reserve ", (Sty.BOLD, Sty.GREEN),
             "(enter the 0-based index): ", Sty.CYAN,
@@ -1744,9 +1786,7 @@ def interactive_reserve_next_days_auto():
         chosen_device_key = sorted_device_ids[sel_i]
         chosen_device_id = str(chosen_device_key)
         chosen_device_name = str(unmap_arg(dev_resp.results[chosen_device_key]))
-        # 'Pluto SDR [PlutoA] (online)' -> 'Pluto SDR [PlutoA]', 'Pluto SDR @mit (online)' -> 'Pluto SDR @mit'
-        shown = _LOCAL_LABEL.match(chosen_device_name)
-        shown = shown["name"] if shown else chosen_device_name
+        shown = _label_name(chosen_device_name)
         block_minutes = int(block_by_dev.get(chosen_device_id, 30))
 
         if block_minutes < 10:
@@ -1762,7 +1802,7 @@ def interactive_reserve_next_days_auto():
                                device_label=shown, max_days=days_by_dev.get(chosen_device_id) or None)
 
     except Exception as e:
-        print(f"Error: {e}")
+        _error(e)
 
 
 def run(backend=None, *, register=False, enrollment_code=None, server_label=None,
@@ -1802,7 +1842,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
         where = homes.GLOBAL_ACCOUNTS if account.is_https_home else (home_name or 'remoterf')
         while True:
             try:
-                inpu = session.prompt(stylize(f'{account.username}@{where}: ', Sty.BOLD))
+                inpu = session.prompt(stylize(f'{account.username}@{where}> ', Sty.BOLD))
                 if inpu in ('register', 'verify', 'login', 'forgot-password', 'reset-password'):
                     authenticated = _account_command(inpu)
                     if inpu == 'reset-password' and not welcome(show_banner=False):
@@ -1811,7 +1851,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                     if not account.is_https_home:
                         raise AccountBackendError('Local passwords do not use refresh sessions')
                     account.backend.refresh()
-                    print('Home session refreshed.')
+                    _note('Home session refreshed.', (Sty.BOLD, Sty.GREEN))
                 elif inpu == 'logout':
                     account.logout()
                     if home_name and not account.is_https_home:
@@ -1819,7 +1859,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                         homes.forget_login(home_name)
                     account.password = None
                     account.username = None
-                    printf('Logged out.', (Sty.BOLD, Sty.GREEN))
+                    _note('Logged out.', (Sty.BOLD, Sty.GREEN))
                     break
                 elif inpu == "clear":
                     clear()
@@ -1869,11 +1909,8 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                     handle_admin_command(inpu)
                 elif inpu.strip():
                     print(f"Unknown command: {inpu}")
-            except AccountBackendError as exc:
-                label = f" [{exc.provenance}]" if exc.provenance else ""
-                print(f'Account error{label}: {exc}')
-            except ValidationError as exc:
-                print(f'Account error: {exc}')
+            except (AccountBackendError, ValidationError) as exc:
+                _error(exc)
             except KeyboardInterrupt:
                 break
             except EOFError:

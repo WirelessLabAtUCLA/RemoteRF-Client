@@ -20,6 +20,12 @@ from ..common.utils import *
 
 import datetime
 
+
+def _note(text, style=Sty.DEFAULT):
+    """One line in the shell's voice: the banner's marker, then the text."""
+    printf('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, str(text), style)
+
+
 def _busy(label):
     """A spinner while the home asks its labs: a slow lab is a wait, not a hang."""
     from ..remoterf_cli import _working
@@ -62,14 +68,14 @@ class RemoteRFAccount:
             result = self.backend.register(self.username, self.email, self.password) or {}
             self.password = None
             self.needs_verification = result.get('status') != 'active'
-            print(result.get('message') or 'Registration received.')
+            _note(result.get('message') or 'Registration received.')
             return True
         response = self._call(function_name="ACC:create_user", args={"un":map_arg(self.username), "pw":map_arg(self.password), "em":map_arg(self.email), "ec":map_arg(self.enrollment_code)})
         if 'UC' in response.results:
-            print(f'User {unmap_arg(response.results["UC"])} successfully created.')
+            _note(f'Account {unmap_arg(response.results["UC"])} created.', Sty.GREEN)
             return True
         elif 'UE' in response.results:
-            print(f'Error: {unmap_arg(response.results["UE"])}')
+            _note(unmap_arg(response.results["UE"]), Sty.WARNING)
             return False
     
     def login_user(self, *, remember=False):
@@ -77,7 +83,7 @@ class RemoteRFAccount:
             try:
                 result = self.backend.login(self.username, self.password)
                 self.username = result['username']
-                print(f'User {self.username} successful login.')
+                _note(f'Signed in as {self.username}.', Sty.GREEN)
                 return True
             finally:
                 self.password = None
@@ -87,14 +93,14 @@ class RemoteRFAccount:
             args["remember"] = map_arg(True)
         response = self._call(function_name="ACC:login", args=args)
         if 'UC' in response.results:
-            print(f'User {unmap_arg(response.results["UC"])} successful login.')
+            _note(f'Signed in as {unmap_arg(response.results["UC"])}.', Sty.GREEN)
             if 'token' in response.results:
                 # From here on the token is the credential; the password is gone.
                 self.session_token = unmap_arg(response.results['token'])
                 self.password = self.session_token
             return True
         elif 'UE' in response.results:
-            print(f'Error: {unmap_arg(response.results["UE"])}')
+            _note(unmap_arg(response.results["UE"]), Sty.WARNING)
             return False
     
     def reserve_device(self, device_id, start_time:datetime, end_time:datetime):
@@ -124,7 +130,7 @@ class RemoteRFAccount:
                 return install_driver(device_id=device_id).name
             return install_driver(token=handle, device_id=device_id).name
         except Exception as e:
-            print(f"Warning: could not install driver for device {device_id}: {e}")
+            print(f"{'◆' if supports_unicode() else '*'} Could not install the driver for device {device_id}: {e}")
             
     def get_reservations(self):
         with _busy("Asking the labs for reservations…"):

@@ -631,4 +631,4 @@ def test_reserve_shows_the_token_even_when_the_driver_fetch_fails(monkeypatch, c
 
     assert account.reserve_device(0, now, now + datetime.timedelta(hours=1)) == "reservation-token"
     account.install_reserved_driver("reservation-token", 0)
-    assert "could not install driver" in capsys.readouterr().out
+    assert "Could not install the driver" in capsys.readouterr().out
