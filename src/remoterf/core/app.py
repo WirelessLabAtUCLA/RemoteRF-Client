@@ -1210,13 +1210,16 @@ def enroll(code=None):
     # Codes are handed out as <lab>/<code>; the lab part only says where to
     # register. Here we are already logged in somewhere, so strip it -- and
     # say so if it names a different lab than this one.
+    typed = code
     try:
         from remoterf.deployment import homes
 
         host, code = homes.parse_code(code)
     except Exception:  # noqa: BLE001 - not in that form; send as typed
         host = None
-    if host and home_name and homes.home_name_for(host) != home_name:
+    if account.is_https_home:
+        code = typed  # Global enrols at the lab the invite names, so it needs the whole invite
+    elif host and home_name and homes.home_name_for(host) != home_name:
         printf(f"That code is for {host}, not {home_name}. Register there with: remoterf -r", Sty.WARNING)
         return False
     account.enrollment_code = code
