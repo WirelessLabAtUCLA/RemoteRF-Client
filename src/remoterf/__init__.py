@@ -12,3 +12,11 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
+def devices():
+    """Print the devices your saved login can use (handles to paste into
+    ``Pluto(token=...)``) with who-has-it-now availability; returns the rows."""
+    from .core.availability import devices as _devices
+
+    return _devices()

@@ -329,6 +329,25 @@ If converting a existing `non-remoterf` compatible script:
 
 Nothing else needs changing! 
 
+#### List devices and availability
+
+With a saved login (lab or Global), list the devices you can use, each with the handle to paste into `token=`, and whether it is free right now:
+
+```python
+import remoterf
+
+rows = remoterf.devices()   # prints a table and returns it as a list of dicts
+```
+
+```
+DEVICE (token=)  TYPE   ONLINE   NOW                 NEXT
+Pluto_01@lab     pluto  online   free                14:30
+Pluto_02@lab     pluto  online   in use until 13:45  -
+Pluto_03@lab     pluto  offline  yours until 15:00   -
+```
+
+Each account may ask once every 10 seconds; a repeat call within that reprints the last table with the remaining wait.
+
 ## Closing
 
 This is fundamentally a experimental platform, and there will be many unknown bugs and issues. Some devices do not have universal support for all its functions at the moment, I am working on that aspect. 

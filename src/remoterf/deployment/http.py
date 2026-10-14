@@ -21,9 +21,10 @@ FRAMED_CONTENT_TYPE = "application/x-remoterf-framed"
 
 
 class AccountBackendError(RuntimeError):
-    def __init__(self, code, *, provenance=None):
+    def __init__(self, code, *, provenance=None, retry_after=None):
         self.code = code
         self.provenance = provenance
+        self.retry_after = retry_after
         super().__init__(code)
 
 
@@ -120,7 +121,10 @@ class JsonTransport:
                     )
                     if provenance not in {None, "home", "transport", "destination"}:
                         provenance = None
-                    raise AccountBackendError(code, provenance=provenance)
+                    wait = error.get("retry_after") if isinstance(error, dict) else None
+                    if type(wait) is not int or not 1 <= wait <= 3600:
+                        wait = None
+                    raise AccountBackendError(code, provenance=provenance, retry_after=wait)
                 if type(value) is not dict:
                     raise AccountBackendError("Invalid account response")
                 return value

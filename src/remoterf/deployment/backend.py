@@ -325,6 +325,19 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             raise AccountBackendError("Invalid home device response")
         return value
 
+    def availability(self):
+        """Devices plus now/until/next state (Global >= the availability
+        route; an older one answers code not_found)."""
+        self._operation("ACC:get_dev")
+        value = self.transport.request(
+            "GET", self.base + "/availability", access=self._access(),
+            overall_timeout=DEVICE_AGGREGATION_TIMEOUT_SECONDS + 3,
+            max_response_bytes=MAX_DEVICE_LIST_HTTP_RESPONSE_BYTES,
+        )
+        if type(value.get("devices")) is not list or type(value.get("destinations")) is not list:
+            raise AccountBackendError("Invalid home device response")
+        return value
+
     def reservations(self):
         self._operation("ACC:get_res")
         value = self.transport.request(
