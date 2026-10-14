@@ -567,7 +567,7 @@ def _federated_devices():
             deployment = dev["deployment_name"]
             printf(f"  @{deployment}", (Sty.BOLD, Sty.MAGENTA))
         state = "online" if dev["online"] else "offline"
-        printf("    Device Name: ", Sty.GRAY, f"{dev['display_name']}{_handle_tag(dev)}", Sty.DEFAULT, f" ({dev['device_type'] or 'unknown'}, {state})", Sty.GRAY)
+        printf(f"    ({state}) ", Sty.GREEN if dev["online"] else Sty.GRAY, f"{dev['display_name']}{_handle_tag(dev)}", Sty.DEFAULT)
     if data.get("incomplete"):
         printf(f"{data['omitted_count']} more deployment(s) were not queried.", Sty.WARNING)
     return data
@@ -939,8 +939,9 @@ def _print_native_devices(rows, *, numbered=False):
             lab = row["lab"]
             printf(f"  @{lab}", (Sty.BOLD, Sty.MAGENTA))
         prefix = (f"{index}. ", Sty.CYAN) if numbered else ()
-        printf(*prefix, "    Device Name: " if not numbered else "  Device Name: ", Sty.GRAY,
-               row["name"], Sty.DEFAULT, f" ({row['state']})" if row["state"] else "", Sty.GRAY)
+        state = row["state"] or ""
+        printf(*prefix, ("    " if not numbered else "") + (f"({state}) " if state else ""),
+               Sty.GREEN if state.startswith("online") else Sty.GRAY, row["name"], Sty.DEFAULT)
 
 
 def devices():

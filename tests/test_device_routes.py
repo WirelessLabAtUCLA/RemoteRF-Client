@@ -618,7 +618,7 @@ def test_resdev_n_lists_numbered_devices(monkeypatch):
     lines = _shown(monkeypatch, client_app)
     account, _ = _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
     client_app.reserve()
-    assert "1.   Device Name: Pluto SDR (OTA) [PlutoA] (online)" in lines
+    assert "1. (online) Pluto SDR (OTA) [PlutoA]" in lines
     assert _row(lines, "Device", "handle", "PlutoA@ucla")
     assert account.reserve_device.call_args.args[0] == 3
 
