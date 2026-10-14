@@ -84,7 +84,6 @@ class RemoteRFAccount:
             try:
                 result = self.backend.login(self.username, self.password)
                 self.username = result['username']
-                _note(f'Signed in as {self.username}.', Sty.GREEN)
                 return True
             finally:
                 self.password = None
@@ -94,7 +93,6 @@ class RemoteRFAccount:
             args["remember"] = map_arg(True)
         response = self._call(function_name="ACC:login", args=args)
         if 'UC' in response.results:
-            _note(f'Signed in as {unmap_arg(response.results["UC"])}.', Sty.GREEN)
             if 'token' in response.results:
                 # From here on the token is the credential; the password is gone.
                 self.session_token = unmap_arg(response.results['token'])

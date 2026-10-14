@@ -1887,6 +1887,8 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                 inpu = session.prompt(stylize(f'{account.username}@{where}> ', Sty.BOLD))
                 if inpu in ('register', 'verify', 'login', 'forgot-password', 'reset-password'):
                     authenticated = _account_command(inpu)
+                    if inpu == 'login' and authenticated:
+                        session_line()
                     if inpu == 'reset-password' and not welcome(show_banner=False):
                         break
                 elif inpu == 'refresh':
