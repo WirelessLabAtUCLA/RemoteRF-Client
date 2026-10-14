@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "remoterf"
-version = "2.7.0"
+version = "2.8.0"
 description = "A python API to remotely access signal centric hardware. Client-side only! Courtesy of Wireless Lab @ UCLA & Prof. Ian Roberts."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -30,6 +30,10 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
+[project.optional-dependencies]
+# `remoterf mcp`: the local MCP server for AI assistants.
+mcp = ["mcp>=2.3,<3"]
+
 [project.scripts]
 remoterf = "remoterf.remoterf_cli:main"
 
@@ -43,4 +47,4 @@ py-modules = ["remoterf", "_remoterf_alias"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.crt", "*.key", "*.pem", "*.txt", "*.pyi", "*.proto"]
+"*" = ["*.crt", "*.key", "*.pem", "*.txt", "*.pyi", "*.proto", "*.md", "*.json"]

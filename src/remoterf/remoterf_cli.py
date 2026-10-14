@@ -165,6 +165,21 @@ def print_help() -> None:
     print()
     printf("    --account-transport https-json", Sty.CYAN, "  Select an HTTPS home on a custom port", Sty.DEFAULT)
     print()
+    printf("Scripts and AI agents (no prompts; --json prints JSON on stdout):", (Sty.BOLD, Sty.MAGENTA))
+    printf("  remoterf auth login --user NAME --password-stdin", Sty.CYAN, "  [--home global|LAB] [--accept-tos]", Sty.DEFAULT)
+    printf("  remoterf auth status | logout | apps", Sty.CYAN, "  Saved login; apps: connected AI apps [--revoke ID]", Sty.DEFAULT)
+    printf("  remoterf devices [--lab L] [--all]", Sty.CYAN, "   Devices and their state", Sty.DEFAULT)
+    printf("  remoterf slots HANDLE [--days N]", Sty.CYAN, "     Free slots on a device", Sty.DEFAULT)
+    printf("  remoterf reservations", Sty.CYAN, "                Your reservations", Sty.DEFAULT)
+    printf("  remoterf reserve HANDLE --start T --end T --confirm", Sty.CYAN, "  [--reveal-token]", Sty.DEFAULT)
+    printf("  remoterf cancel RESERVATION_ID --confirm", Sty.CYAN)
+    printf("  remoterf api HANDLE | example HANDLE --recipe R", Sty.CYAN, "  Device API, example script", Sty.DEFAULT)
+    printf("  remoterf guide [TOPIC]", Sty.CYAN, "               The guide for AI agents", Sty.DEFAULT)
+    printf("  remoterf skill install", Sty.CYAN, "               Install the guide for Claude, Codex, Gemini", Sty.DEFAULT)
+    printf("  remoterf mcp [--allow-reserve] | mcp install", Sty.CYAN, "  Local MCP server", Sty.DEFAULT)
+    printf("  remoterf doctor", Sty.CYAN, "                      Check this install", Sty.DEFAULT)
+    printf("  Exit codes: 0 ok, 2 usage, 3 login, 4 not found, 5 conflict, 6 permission, 7 unreachable, 130 interrupted", Sty.GRAY)
+    print()
     printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf --register", Sty.GREEN, "                           then: ucla.global.remoterf.net/QEHN7", Sty.GRAY)
     printf("  remoterf --register global", Sty.GREEN)
@@ -503,6 +518,18 @@ def main() -> int:
 
     if argv[0] in ("homes", "--homes"):
         return _print_homes()
+
+    if argv[0] in ("auth", "devices", "slots", "reservations", "reserve", "cancel", "doctor"):
+        from remoterf.agent_cli import main as agent_main
+        return agent_main(argv)
+
+    if argv[0] in ("guide", "api", "example", "skill"):
+        from remoterf.agent_docs import main as docs_main
+        return docs_main(argv)
+
+    if argv[0] == "mcp":
+        from remoterf.mcp_server import main as mcp_main
+        return mcp_main(argv)
 
     if argv[0] in ("--version", "-version", "-v"):
         from remoterf.version import main as version_main

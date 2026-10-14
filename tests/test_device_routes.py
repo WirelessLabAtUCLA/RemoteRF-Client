@@ -446,7 +446,7 @@ def test_a_lab_reservation_shows_the_token_and_the_handle(monkeypatch):
     assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Device", "handle", "PlutoA@ucla")
     assert any("logged in to ucla" in line for line in lines)
     assert _text(lines).endswith('from remoterf.drivers.adalm_pluto import adi '
-                                 'sdr = adi.Pluto(token="Zm9vYmFy@ucla") sdr = adi.Pluto(token="PlutoA@ucla")')
+                                 "sdr = adi.Pluto(token='Zm9vYmFy@ucla') sdr = adi.Pluto(token='PlutoA@ucla')")
     account.install_reserved_driver.assert_called_once_with("Zm9vYmFy", 3)
 
 
@@ -467,9 +467,9 @@ def test_a_custom_device_shows_its_own_class_and_how_to_install_it(monkeypatch):
                                     device_label="BT Dongle [BT1] (online)")
     assert _text(lines).endswith(
         'Use either one as the token: from remoterf.drivers import ensure_driver '
-        '# installs the driver on any other machine ensure_driver(token="Zm9vYmFy@ucla") '
+        "# installs the driver on any other machine ensure_driver(token='Zm9vYmFy@ucla') "
         'from remoterf.drivers.bluetooth import BluetoothModule '
-        'dev = BluetoothModule(token="Zm9vYmFy@ucla") dev = BluetoothModule(token="BT1@ucla")')
+        "dev = BluetoothModule(token='Zm9vYmFy@ucla') dev = BluetoothModule(token='BT1@ucla')")
     # A package that will not import: the token is still shown, with the dynamic form's default class.
     lines.clear()
     monkeypatch.setitem(sys.modules, "remoterf.drivers.bluetooth", None)
@@ -493,7 +493,7 @@ def test_an_untagged_device_is_reached_by_its_name(monkeypatch):
                                     device_label="USRP B210 (online)")
     assert _row(lines, "USRP_B210", "@ucla", "2026-01-01", "10:00-11:00")
     assert _row(lines, "Token", "Zm9vYmFy@ucla") and _row(lines, "Device", "handle", "USRP_B210@ucla")
-    assert 'from remoterf.drivers.usrp import uhd sdr = uhd.usrp.MultiUSRP(token="Zm9vYmFy@ucla") sdr = uhd.usrp.MultiUSRP(token="USRP_B210@ucla")' in _text(lines)
+    assert "from remoterf.drivers.usrp import uhd sdr = uhd.usrp.MultiUSRP(token='Zm9vYmFy@ucla') sdr = uhd.usrp.MultiUSRP(token='USRP_B210@ucla')" in _text(lines)
     # A failed driver install: the token is still shown, just no usage lines.
     lines.clear()
     account.install_reserved_driver.return_value = None
@@ -809,4 +809,4 @@ def test_every_bundled_driver_shows_imports_that_work(monkeypatch, device_type):
     assert imports
     for statement in imports:
         exec(statement, {})
-    assert '(token="tok@ucla")' in _text(lines) and '(token="H@ucla")' in _text(lines)
+    assert "(token='tok@ucla')" in _text(lines) and "(token='H@ucla')" in _text(lines)

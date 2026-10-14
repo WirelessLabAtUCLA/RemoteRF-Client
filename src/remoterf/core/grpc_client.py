@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import logging
 import os
 import re
 import sys
@@ -56,6 +57,20 @@ _active_connection: Optional[_ActiveConnection] = None
 addr = ""
 channel: Optional[grpc.Channel] = None
 stub: Optional[grpc_pb2_grpc.GenericRPCStub] = None
+log = logging.getLogger("remoterf")
+_quiet = threading.local()
+OPS_LAB_TIMEOUT = 60  # seconds, for a lab call made inside quiet()
+
+
+@contextmanager
+def quiet():
+    """Inside it, a lab's reply text is only logged, never printed (ops, CLI, MCP)."""
+    was = getattr(_quiet, "on", False)
+    _quiet.on = True
+    try:
+        yield
+    finally:
+        _quiet.on = was
 
 
 def _legacy_environment_profile() -> Optional[DirectConnectionProfile]:
@@ -774,18 +789,24 @@ def _send(function_name, args, connection, token=None):
     # TODO: Handle Errors
     
     # print(f"Calling function: {function_name}")
-    return (connection or get_active_connection()).stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
+    stub = (connection or get_active_connection()).stub
+    request = grpc_pb2.GenericRPCRequest(function_name=function_name, args=args)
+    if getattr(_quiet, "on", False):  # ops: a stalled lab must not hold the CLI or MCP server forever
+        return stub.Call(request, timeout=OPS_LAB_TIMEOUT)
+    return stub.Call(request)
 
 
 def _finish(response):
     if 'a' in response.results:
         raise RuntimeError(unmap_arg(response.results['a']))
         
-    if 'UE' in response.results:
-        print(f"UserError: {unmap_arg(response.results['UE'])}")
-
-    if 'Message' in response.results:
-        print(f"{unmap_arg(response.results['Message'])}")
+    for key, text in (('UE', 'UserError: {}'), ('Message', '{}')):
+        if key in response.results:
+            text = text.format(unmap_arg(response.results[key]))
+            if getattr(_quiet, "on", False):
+                log.info(text)  # INFO: never Python's last-resort stderr handler
+            else:
+                print(text)
             
     
     return response

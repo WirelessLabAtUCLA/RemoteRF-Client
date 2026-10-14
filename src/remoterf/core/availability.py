@@ -17,20 +17,12 @@
 what is free right now. Homes allow one call per account per interval; within
 it this process reprints its last answer instead of asking again."""
 
-import json
 import time
 from datetime import datetime
 
-from ..common.utils import map_arg, unmap_arg
+from ..ops import NOT_LOGGED_IN, RemoteRFOpsError
 
 _cache = None  # (key, monotonic at fetch, rows or None after a refusal, interval)
-NOT_LOGGED_IN = "Not logged in: run `remoterf` and log in (keep the login saved)."
-STALE_LOGIN = "Saved login is no longer valid: run `remoterf` and log in again."
-
-
-class _Refused(Exception):
-    def __init__(self, wait):
-        self.wait = wait
 
 
 def _when(ts):
@@ -50,67 +42,22 @@ def _row(handle, name, dtype, lab, online, state, until, nxt):
             "until": _when(until), "next": _when(nxt)}
 
 
+def _rows(devices, interval, notes, incomplete):
+    return ([_row(d["handle"], d["name"], d["type"], d["lab"], d["online"], d["state"], d["until_ts"], d["next_ts"])
+             for d in devices], interval, "\n".join(notes) or None)
+
+
 def _global(backend):
     from .app import _global_slug
-    from ..deployment.http import AccountBackendError
+    from ..ops import _global_devices
 
-    note = None
-    try:
-        data = backend.availability()
-    except AccountBackendError as exc:
-        if exc.retry_after:
-            raise _Refused(exc.retry_after) from None
-        if exc.code != "not_found":
-            raise
-        data, note = backend.devices(), "This Global home does not report availability yet; showing devices only."
-    if data.get("incomplete") or any(d.get("status") == "unavailable" for d in data["destinations"]):
-        note = "\n".join(filter(None, [note, "Some labs did not answer; the list may be incomplete."]))
-    slugs, rows = {}, []
-    for d in data["devices"]:
-        key = (d.get("deployment_id"), d.get("deployment_name"))
-        if key not in slugs:
-            slugs[key] = _global_slug(d.get("device_id", ""), d.get("deployment_name"))
-        slug = slugs[key]
-        handle = f"{d['handle']}@{slug}" if d.get("handle") and slug else None
-        rows.append(_row(handle, d.get("display_name"), d.get("device_type"), d.get("deployment_name"),
-                         d.get("online"), d.get("state"), d.get("until"), d.get("next")))
-    return rows, data.get("interval"), note
+    return _rows(*_global_devices(backend, _global_slug))
 
 
 def _lab(home, creds):
-    from .grpc_client import rpc_client
+    from ..ops import _lab_devices
 
-    args = {"un": map_arg(creds[0]), "pw": map_arg(creds[1])}
-    res = rpc_client(function_name="ACC:availability", args=args).results
-    if "UC" in res:
-        data = json.loads(unmap_arg(res["UC"]))
-        rows = [_row(f"{d['handle']}@{home}" if d.get("handle") and home else None, d.get("display_name"),
-                     d.get("device_type"), home, d.get("online"), d.get("state"), d.get("until"), d.get("next"))
-                for d in data["devices"]]
-        return rows, data.get("interval"), None
-    if "retry_after" in res:
-        raise _Refused(int(unmap_arg(res["retry_after"])))
-    error = str(unmap_arg(res.get("ace", map_arg("Unexpected reply from the lab."))))
-    if error == "Invalid login credentials.":
-        raise RuntimeError(STALE_LOGIN)
-    if "No matching server function" not in error:
-        raise RuntimeError(error)
-    # A lab older than ACC:availability: its device list, no availability.
-    from .app import _LOCAL_LABEL, _PARTNER_LABEL, _name_and_handle
-
-    res = rpc_client(function_name="ACC:get_dev", args=args).results
-    if "ace" in res:
-        raise RuntimeError(str(unmap_arg(res["ace"])))
-    rows = []
-    for key in sorted(res, key=lambda k: int(k) if str(k).isdigit() else 0):
-        label = str(unmap_arg(res[key]))
-        local = _LOCAL_LABEL.match(label)
-        if _PARTNER_LABEL.match(label) or not local:
-            continue  # partner devices have no handles yet
-        name, handle = _name_and_handle(local["name"])
-        rows.append(_row(f"{handle}@{home}" if handle and home else None, name, None, home,
-                         local["state"].startswith("online"), "unknown", None, None))
-    return rows, None, "This lab does not report availability yet; showing devices only."
+    return _rows(*_lab_devices(home, creds))
 
 
 def _print(rows, footer=None):
@@ -168,14 +115,16 @@ def devices():
                 return _cache[2]
         try:
             rows, interval, note = fetch()
-        except _Refused as exc:
+        except RemoteRFOpsError as exc:
+            if not exc.retry_after:
+                raise RuntimeError(exc.message) from None
             # Remember the refusal so calls inside the wait stay local.
             old = _cache[2] if _cache and _cache[0] == key else None
-            _cache = (key, time.monotonic(), old, float(exc.wait))
+            _cache = (key, time.monotonic(), old, float(exc.retry_after))
             if old is not None:
-                _print(old, f"(cached; refresh in {exc.wait} s)")
+                _print(old, f"(cached; refresh in {exc.retry_after} s)")
                 return old
-            print(f"Asked too recently; try again in {exc.wait} s.")
+            print(f"Asked too recently; try again in {exc.retry_after} s.")
             return []
     except RuntimeError as exc:
         print(exc)

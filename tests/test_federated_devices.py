@@ -146,6 +146,7 @@ def test_concurrent_access_refreshes_once():
 
     backend, transport = _backend("ACC:refresh_session")
     backend.credentials = {"access_token": "old", "refresh_token": "r1", "access_expires_at": 0, "subject_id": HOME}
+    backend.store.load.return_value = backend.credentials
     spent = []
 
     def refresh(method, path, **kwargs):
@@ -163,6 +164,21 @@ def test_concurrent_access_refreshes_once():
     for thread in threads:
         thread.join(5)
     assert spent == ["r1"] and got == ["new", "new"]  # a replayed refresh token would end the session
+
+
+def test_refresh_never_posts_a_token_another_process_spent():
+    backend, transport = _backend("ACC:refresh_session")
+    backend.credentials = {"access_token": "old", "refresh_token": "r1", "access_expires_at": 0, "subject_id": HOME}
+    backend.store.load.return_value = {
+        "deployment_id": HOME, "subject_id": HOME, "username": "jdoe", "access_token": "fresh", "refresh_token": "r2",
+        "token_type": "Bearer", "access_expires_at": 10**12, "refresh_expires_at": 10**12}
+    transport.request.reset_mock()
+    assert backend._access() == "fresh" and not transport.request.called
+    backend.credentials["access_expires_at"] = 0
+    backend.store.load.return_value = None  # logged out elsewhere
+    with pytest.raises(AccountBackendError, match="Log in first"):
+        backend._access()
+    assert not transport.request.called and backend.credentials is None
 
 
 def test_https_keeps_an_idle_connection_for_a_minute(monkeypatch):

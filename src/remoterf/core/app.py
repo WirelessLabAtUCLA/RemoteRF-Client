@@ -30,13 +30,18 @@ from pathlib import Path
 from prompt_toolkit import PromptSession
 
 from ..deployment.http import AccountBackendError
+from ..ops import (
+    DRIVER_CALLS, DRIVER_IMPORTS, FRIENDLY as _FRIENDLY_ERRORS, SERVER_TIME_FORMAT, _LOCAL_LABEL, _PARTNER_LABEL,
+    _global_slug, _label_name, _label_online, _name_and_handle, _parse_reservation_time, build_slots,
+    driver_usage, is_slot_conflicting, native_limits, native_reservations, native_rows,
+    slot_minutes as _auto_block_minutes,
+)
 from remoterf_federation_core import local_capabilities, ValidationError
 
 account = RemoteRFAccount()
 session = None
 
 DEFAULT_TOS_URL = "https://remoterf.net/tos"
-SERVER_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _clear_terminal() -> None:
@@ -67,10 +72,6 @@ def _tos_url() -> str:
             if url:
                 return url
     return DEFAULT_TOS_URL
-
-
-def _parse_reservation_time(value: str) -> datetime.datetime:
-    return datetime.datetime.strptime(value, SERVER_TIME_FORMAT)
 
 
 def _format_clock_12h(value: datetime.datetime) -> str:
@@ -124,10 +125,6 @@ home_name = None
 # The route it was reached over (None on a bare direct profile or an HTTPS home).
 current_route = None
 
-# What each generated driver package exposes, for the usage lines after a reservation.
-DRIVER_CALLS = {"pluto": "adi.Pluto", "adalm_pluto": "adi.Pluto", "usrp": "uhd.usrp.MultiUSRP"}
-DRIVER_IMPORTS = {"pluto": "adalm_pluto import adi", "adalm_pluto": "adalm_pluto import adi", "usrp": "usrp import uhd"}
-_HANDLE_TAG = re.compile(r"^(?P<name>.*) \[(?P<handle>\S+)\]$")  # handles have no whitespace
 _NO_HANDLE = "This device has no handle"
 _UNROUTABLE = "Its handle {} can't be used from here: {}"
 
@@ -144,19 +141,6 @@ def _routable(token):
     """The token as a driver takes it: @<this lab>, so it is never sent elsewhere."""
     lab = _token_lab()
     return f"{token}@{lab}" if lab else f"{token}"
-
-
-def _name_and_handle(name):
-    """A listed device name -> (name, handle). The handle is the name keyed,
-    'Pluto SDR' -> 'Pluto_SDR' (None when the lab can't address it), unless a
-    1.2.0 lab tags it: 'Pluto SDR [PlutoA]'."""
-    m = _HANDLE_TAG.match(name)
-    if m:
-        return m["name"], m["handle"]
-    h = _key(name)
-    # The lab's is_device_handle (core 0.19.0; this client pins 0.16.0).
-    ok = h and not h.startswith(("rfg_", "bridge-")) and not any(c in "@:" or c.isspace() or not c.isprintable() for c in h)
-    return name, h if ok else None
 
 
 def _print_reserved(where, when, token, handle, logged_in_to, install, no_handle=_NO_HANDLE):
@@ -189,18 +173,15 @@ def _print_usage(device_type, token, handle=None):
     if not device_type:
         return
     tokens = (token, handle) if handle else (token,)
-    if call := DRIVER_CALLS.get(device_type):
-        rows = [f"  from remoterf.drivers.{DRIVER_IMPORTS[device_type]}", *(f'  sdr = {call}(token="{text}")' for text in tokens)]
-    else:
-        from ..drivers.dynamic_device import _default_class_name
-
-        cls = _client_class(device_type) or _default_class_name(device_type)
-        # A lab's own driver (bluetooth, gps, ...): its class, from its IDL.
-        rows = ["  from remoterf.drivers import ensure_driver",
-                "  # installs the driver on any other machine",
-                f'  ensure_driver(token="{token}")',
-                f"  from remoterf.drivers.{device_type} import {cls}",
-                *(f'  dev = {cls}(token="{text}")' for text in tokens)]
+    fixed = device_type in DRIVER_CALLS
+    # A lab's own driver (bluetooth, gps, ...): its class, from its IDL.
+    usage = driver_usage(device_type, None if fixed else _client_class(device_type))
+    if not usage["import_line"]:
+        return
+    rows = [*([] if fixed else ["  from remoterf.drivers import ensure_driver",
+                                "  # installs the driver on any other machine",
+                                f"  ensure_driver(token={token!r})"]),
+            f"  {usage['import_line']}", *(f"  {usage['constructor_template'].format(token=text)}" for text in tokens)]
     _panel("Usage", [("Use either one as the token:" if handle else "Use it as the token:", Sty.DEFAULT),
                      *((row, Sty.CYAN) for row in rows)])
 
@@ -478,15 +459,6 @@ def _panel(label, rows):
     printf(bl + h * (width + 2) + br, Sty.DEFAULT)
 
 
-_LAB_DOWN = "That lab isn't responding right now; try again in a minute."
-_FRIENDLY_ERRORS = {
-    "route_unavailable": _LAB_DOWN,
-    "transport": _LAB_DOWN,
-    "principal_unknown": "You're not enrolled at that lab yet.",
-    "contract_not_active": "That lab isn't sharing with Global right now.",
-}
-
-
 def _note(*args):
     """One line in the banner's voice: a marker, then printf (text, style) pairs."""
     printf('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, *args)
@@ -734,21 +706,6 @@ def _federated_reservations_for_range(start_day, end_day):
     return res_dict
 
 
-def _global_slug(device_id, deployment_name):
-    """The lab's name when it is its own Global slug (checked by discovery),
-    else None: then the bare token, which works as is."""
-    from .grpc_client import _deployment_id
-    from ..deployment.homes import NAME_RE
-
-    name = str(deployment_name or "").lower()
-    try:
-        if NAME_RE.match(name) and _deployment_id(name) == str(device_id).split(":")[0]:
-            return name
-    except RuntimeError:
-        pass
-    return None
-
-
 def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, slot_end_str,
                             deployment_name=None, device_name=None, device_handle=None):
     token = account.reserve_device(device_id, chosen_slot[0], chosen_slot[1])
@@ -827,19 +784,8 @@ def reservations():
     if 'ace' in data.results:
         _error(unmap_arg(data.results['ace']))
         return
-    entries = []
+    entries = native_reservations(data.results)
 
-    for key, value in data.results.items():
-        parts = unmap_arg(value).split(',')
-        # Create a dictionary for each entry with named fields
-        entry = {
-            'username': parts[0],
-            'device_id': int(parts[1]),  # Convert device_id to integer for proper numerical sorting
-            'start_time': _parse_reservation_time(parts[2]),  # Convert start_time to datetime
-            'end_time': _parse_reservation_time(parts[3])
-        }
-        entries.append(entry)
-        
     if (entries == []):
         printf("No reservations found.", Sty.BOLD)
         return
@@ -855,19 +801,7 @@ def my_reservations():
     if 'ace' in data.results:
         _error(unmap_arg(data.results['ace']))
         return
-    entries = []
-
-    for key, value in data.results.items():
-        parts = unmap_arg(value).split(',')
-        # Create a dictionary for each entry with named fields
-        entry = {
-            'username': parts[0],
-            'device_id': int(parts[1]),  # Convert device_id to integer for proper numerical sorting
-            'start_time': _parse_reservation_time(parts[2]),  # Convert start_time to datetime
-            'end_time': _parse_reservation_time(parts[3])
-        }
-        if account.username == entry['username']:
-            entries.append(entry)
+    entries = [e for e in native_reservations(data.results) if account.username == e['username']]
 
     if (entries == []):
         printf("No reservations found.", Sty.BOLD)
@@ -888,21 +822,7 @@ def cancel_my_reservation():
         _error(unmap_arg(data.results['ace']))
         return
     
-    entries:list = []
-
-    for key, value in data.results.items():
-        parts = unmap_arg(value).split(',')
-        # Create a dictionary for each entry with named fields
-        entry = {
-            'id': -1,
-            'internal_id': key,
-            'username': parts[0],
-            'device_id': int(parts[1]),  # Convert device_id to integer for proper numerical sorting
-            'start_time': _parse_reservation_time(parts[2]),  # Convert start_time to datetime
-            'end_time': _parse_reservation_time(parts[3])
-        }
-        if account.username == entry['username']:
-            entries.append(entry)
+    entries:list = [e for e in native_reservations(data.results) if account.username == e['username']]
     
     sorted_entries = sorted(entries, key=lambda x: (x['device_id'], x['start_time'])) # sort by device_id and start_time
     for i, entry in enumerate(sorted_entries):  # label all reservations with unique id
@@ -928,7 +848,7 @@ def cancel_my_reservation():
         # grab the reservation
         for entry in sorted_entries:
             if entry['id'] == id:
-                db_id = entry['internal_id']
+                db_id = entry['key']
                 if _confirm_cancel(id, f'Device {entry["device_id"]}', entry["start_time"], entry["end_time"]):
                     response = account.cancel_reservation(db_id)
                     if 'ace' in response.results:
@@ -943,23 +863,6 @@ def cancel_my_reservation():
     else:
         print("Aborting. A non integer key was given.")
 
-_PARTNER_LABEL = re.compile(r"^(?P<name>.*) @(?P<lab>.+?) \((?P<state>[^)]*)\)$")
-# The state always starts with online/offline; a PoE fault after it can hold brackets.
-_LOCAL_LABEL = re.compile(r"^(?P<name>.*?) \((?P<state>(?:online|offline)\b.*)\)$")
-
-
-def _label_name(label):
-    """'Pluto SDR [PlutoA] (online)' -> 'Pluto SDR [PlutoA]'; a partner's
-    'Pluto SDR @mit (online)' -> 'Pluto SDR @mit'."""
-    match = _LOCAL_LABEL.match(label)
-    return match["name"] if match else label
-
-
-def _label_online(label):
-    match = _LOCAL_LABEL.match(label)
-    return bool(match) and match["state"].startswith("online")
-
-
 def _native_device_rows():
     """The home's devices plus any a partner lab shares with us, grouped by
     lab (home first). The server's ids stay internal; the shell numbers them."""
@@ -967,20 +870,7 @@ def _native_device_rows():
     if 'ace' in data.results:
         raise RuntimeError(unmap_arg(data.results['ace']))
     home = (current_route.get('home') or {}).get('display_name') if current_route else None
-    home = home or home_name or _home_name()
-    rows = []
-    for key in sorted(data.results, key=int):
-        label = str(unmap_arg(data.results[key]))
-        partner = _PARTNER_LABEL.match(label)
-        local = _LOCAL_LABEL.match(label)
-        if partner:
-            rows.append({"id": int(key), "name": partner["name"], "lab": partner["lab"], "state": partner["state"], "away": True})
-        elif local:
-            rows.append({"id": int(key), "name": local["name"], "lab": home, "state": local["state"], "away": False})
-        else:
-            rows.append({"id": int(key), "name": label, "lab": home, "state": "", "away": False})
-    rows.sort(key=lambda r: (r["away"], r["lab"], r["name"], r["id"]))
-    return rows
+    return native_rows(data.results, home or home_name or _home_name())
 
 
 LAB_PICKER_MIN_DEVICES = 10
@@ -1340,19 +1230,7 @@ def fetch_all_reservations():
     if 'ace' in data.results:
         _error(unmap_arg(data.results['ace']))
         return []
-    entries = []
-
-    for key, value in data.results.items():
-        parts = unmap_arg(value).split(',')
-        # Convert both start and end times to datetime objects.
-        entry = {
-            'username': parts[0],
-            'device_id': int(parts[1]),  # Stored as an int
-            'start_time': _parse_reservation_time(parts[2]),
-            'end_time': _parse_reservation_time(parts[3])
-        }
-        entries.append(entry)
-    return entries
+    return native_reservations(data.results)
 
 def fetch_reservations_for_range(start_day: datetime.date, end_day: datetime.date):
     all_res = fetch_all_reservations()  # This calls the network only once.
@@ -1363,13 +1241,6 @@ def fetch_reservations_for_range(start_day: datetime.date, end_day: datetime.dat
             key = (str(res['device_id']), res_day)
             res_dict.setdefault(key, []).append((res['start_time'], res['end_time']))
     return res_dict
-
-def is_slot_conflicting(slot: tuple, reservations: list):
-    slot_start, slot_end = slot
-    for res_start, res_end in reservations:
-        if slot_start < res_end and slot_end > res_start:
-            return True
-    return False
 
 def interactive_reserve_next_days(block_minutes=60):
     try:
@@ -1420,46 +1291,10 @@ def interactive_reserve_next_days(block_minutes=60):
         # We only need one call to fetch reservations for the range:
         reservations_range = fetch_reservations_for_range(today, end_day)
         
-        # We'll keep a list of (day, (slot_start, slot_end)) for which the device is free
-        available_slots = []
-        
         now = datetime.datetime.now()
-        
-        # Helper to build time slots of length 'block_minutes' starting at 00:00 up to 24:00
-        def build_time_slots(date: datetime.date, block_size: int):
-            slots = []
-            start_of_day = datetime.datetime.combine(date, datetime.time(0, 0))
-            minutes_in_day = 24 * 60  # 1440
-            current_offset = 0
-            while current_offset < minutes_in_day:
-                slot_start = start_of_day + datetime.timedelta(minutes=current_offset)
-                slot_end   = slot_start + datetime.timedelta(minutes=block_size)
-                # Stop if slot_end bleeds into the next calendar day
-                if slot_end.date() != date and slot_end.time() != datetime.time.min:
-                    break
-                slots.append((slot_start, slot_end))
-                current_offset += block_size
-            return slots
-        
-        # Build free slots for each day in [today, end_day]
-        for i in range(num_days):
-            day = today + datetime.timedelta(days=i)
-            all_slots = build_time_slots(day, block_minutes)
-            
-            # The reservations for the chosen device on this day:
-            key = (str(chosen_device_id), day)
-            day_reservations = reservations_range.get(key, [])
-            
-            for slot in all_slots:
-                slot_start, slot_end = slot
-                # Skip if it's for "today" and the slot ends in the past
-                if day == today and slot_end <= now:
-                    continue
-                
-                # Check for conflict
-                if not is_slot_conflicting(slot, day_reservations):
-                    available_slots.append((day, slot))
-        
+        taken = [iv for (dev, _), ivs in reservations_range.items() if dev == str(chosen_device_id) for iv in ivs]
+        available_slots = [(slot[0].date(), slot) for slot in build_slots(today, block_minutes, taken, now=now, days=num_days)]
+
         if not available_slots:
             printf("No available time slots for device ", Sty.BOLD, f"{chosen_device_id}", Sty.MAGENTA, f" in the next {num_days} days.", Sty.DEFAULT)
             return
@@ -1513,30 +1348,6 @@ def interactive_reserve_next_days(block_minutes=60):
     except Exception as e:
         _error(e)
         
-def _auto_block_minutes(max_t_sec: int) -> int:
-    try:
-        max_t_sec = int(max_t_sec)
-    except Exception:
-        return 30
-
-    if max_t_sec <= 0:
-        return 30
-
-    max_min = max_t_sec // 60
-    if max_min < 10:
-        # Can't make a valid reservation at all (server min = 10 minutes).
-        return max_min
-
-    # Pick the largest "nice" block <= max_min
-    candidates = [10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720]
-    best = 10
-    for c in candidates:
-        if c <= max_min:
-            best = c
-        else:
-            break
-    return best
-
 def _confirm_reserve(device, day, start, end):
     _panel("Reserve", [(f"{device}", Sty.MAGENTA),
                        (f"{day.strftime('%Y-%m-%d')}", (Sty.BOLD, Sty.BLUE), f"  {start} - {end}", Sty.CYAN)])
@@ -1567,42 +1378,13 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     end_day = today + datetime.timedelta(days=num_days - 1)
 
     reservations_range = reservations_for_range(today, end_day)
-    available_slots = []
     now = datetime.datetime.now()
-
-    def build_time_slots(date: datetime.date, block_size: int):
-        slots = []
-        start_of_day = datetime.datetime.combine(date, datetime.time(0, 0))
-        minutes_in_day = 24 * 60
-        current_offset = 0
-        while current_offset < minutes_in_day:
-            slot_start = start_of_day + datetime.timedelta(minutes=current_offset)
-            slot_end = slot_start + datetime.timedelta(minutes=block_size)
-            if slot_end.date() != date and slot_end.time() != datetime.time.min:
-                break
-            slots.append((slot_start, slot_end))
-            current_offset += block_size
-        return slots
-
-    for i in range(num_days):
-        day = today + datetime.timedelta(days=i)
-        all_slots = build_time_slots(day, block_minutes)
-
-        key = (str(chosen_device_id), day)
-        day_reservations = reservations_range.get(key, [])
-
-        for slot in all_slots:
-            slot_start, slot_end = slot
-            if day == today and slot_end <= now:
-                continue
-            if not is_slot_conflicting(slot, day_reservations):
-                available_slots.append((day, slot))
+    taken = [iv for (dev, _), ivs in reservations_range.items() if dev == str(chosen_device_id) for iv in ivs]
+    available_slots = [(slot[0].date(), slot) for slot in build_slots(today, block_minutes, taken, now=now, days=num_days)]
 
     if not available_slots:
         printf("No available ", Sty.DEFAULT, f"{block_minutes}-minute", Sty.CYAN, " slots for device ", Sty.DEFAULT, f"{device_label}", Sty.MAGENTA, f" in the next {num_days} days.", Sty.DEFAULT)
         return
-
-    available_slots.sort(key=lambda x: (x[0], x[1][0]))
 
     print()
     index_width = len(str(len(available_slots) - 1))
@@ -1650,8 +1432,6 @@ def _native_reserve_slot(chosen_device_id, chosen_day, chosen_slot, slot_start_s
 
 def interactive_reserve_next_days_auto():
     try:
-        import ast, json, datetime
-
         # ---------------------------
         # 1) Fetch perms + per-device caps
         # ---------------------------
@@ -1659,57 +1439,7 @@ def interactive_reserve_next_days_auto():
         if "ace" in perms_resp.results:
             _error(unmap_arg(perms_resp.results['ace']))
             return
-
-        uc_raw = unmap_arg(perms_resp.results.get("UC", map_arg("[]")))
-        try:
-            perm_row = ast.literal_eval(uc_raw)[0]  # your server returns a list-of-rows
-        except Exception:
-            perm_row = []
-
-        perm_level = perm_row[0] if perm_row else ""
-
-        details = {}
-        if perm_level == "Normal User":
-            details_raw = unmap_arg(perms_resp.results.get("details", map_arg("{}")))
-            try:
-                details = json.loads(details_raw) if details_raw else {}
-            except Exception:
-                details = {}
-
-        caps = details.get("caps", {}) or {}
-
-        def _cap_for(dev_id: int) -> dict:
-            # tolerate server sending str keys, or int keys
-            return caps.get(str(dev_id)) or caps.get(dev_id) or {}
-
-        # Allowed devices filter from perms:
-        allowed_dev_ids: set[int] | None = None
-
-        if perm_level == "Normal User":
-            # server already computes allowed devices list for Normal User
-            devs = details.get("devices", []) or []
-            try:
-                allowed_dev_ids = {int(d) for d in devs}
-            except Exception:
-                allowed_dev_ids = set()
-
-        elif perm_level == "Power User":
-            # results[5] is the allowed device list (string encoded) in your system
-            try:
-                allowed_dev_ids = {int(x) for x in str_to_list(perm_row[5])}
-            except Exception:
-                allowed_dev_ids = None
-
-        elif perm_level == "Admin":
-            allowed_dev_ids = None  # no filter
-
-        # For Power User, one max duration applies to all allowed devices
-        power_user_max_t_sec = None
-        if perm_level == "Power User":
-            try:
-                power_user_max_t_sec = int(perm_row[4])
-            except Exception:
-                power_user_max_t_sec = None
+        allowed_dev_ids, limits = native_limits(perms_resp.results)
 
         dev_resp = account.get_devices()
         if "ace" in dev_resp.results:
@@ -1743,20 +1473,7 @@ def interactive_reserve_next_days_auto():
         days_by_dev: dict[str, int] = {}
 
         for idx, dev_id in enumerate(sorted_device_ids):
-            max_t_sec = 0
-            if perm_level == "Normal User":
-                c = _cap_for(int(dev_id))
-                try:
-                    max_t_sec = int(c.get("max_reservation_time_sec", 0) or 0)
-                    days_by_dev[str(dev_id)] = -(-int(c.get("max_horizon_sec", 0) or 0) // 86400)
-                except Exception:
-                    max_t_sec = 0
-            elif perm_level == "Power User" and power_user_max_t_sec is not None:
-                max_t_sec = int(power_user_max_t_sec)
-            elif perm_level == "Admin":
-                # Admin has no cap; keep UX sane
-                max_t_sec = 60 * 60  # 60 min max display; only affects block sizing display
-
+            max_t_sec, days_by_dev[str(dev_id)] = limits(int(dev_id))
             block_min = _auto_block_minutes(max_t_sec)
             block_by_dev[str(dev_id)] = int(block_min)
             max_by_dev[str(dev_id)] = int(max_t_sec)

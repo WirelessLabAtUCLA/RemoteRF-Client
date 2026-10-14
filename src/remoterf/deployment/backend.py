@@ -194,6 +194,16 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
         with self._refresh_lock:
             if not self.credentials:
                 raise AccountBackendError("Log in first")
+            # Another process sharing the store may have rotated this pair (its
+            # refresh token is spent) or logged out: never post a spent token.
+            stored = self.store.load()
+            if not stored:
+                self.credentials = None
+                raise AccountBackendError("Log in first")
+            if stored["refresh_token"] != self.credentials["refresh_token"]:
+                self.credentials = self._validate_session(stored)
+                if self.credentials["access_expires_at"] > self.clock() + 5:
+                    return self.credentials
             old = self.credentials
             try:
                 pair = self._validate_session(
@@ -458,6 +468,24 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             )
         self.credentials = None
         self.store.clear()
+
+    def connected_apps(self):
+        """AI apps (OAuth clients) this account has granted access."""
+        value = self.transport.request(
+            "GET", self.base + "/connected-apps", access=self._access()
+        )
+        if type(value.get("apps")) is not list:
+            raise AccountBackendError("Invalid home connected-apps response")
+        return value
+
+    def revoke_app(self, client_id):
+        value = self.transport.request(
+            "POST", self.base + "/connected-apps/revoke",
+            data={"client_id": client_id}, access=self._access(),
+        )
+        if value.get("revoked") is not True:
+            raise AccountBackendError("Invalid home connected-apps response")
+        return value
 
     def forgot(self, email):
         self._operation("ACC:forgot_password")
