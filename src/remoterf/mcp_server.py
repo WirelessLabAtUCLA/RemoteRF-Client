@@ -314,6 +314,8 @@ def main(argv) -> int:
     except ImportError:
         print('The MCP server needs the mcp extra: pip install "remoterf[mcp]"', file=sys.stderr)
         return 2
+    # The AI app shows stderr as the server's log: one line per HTTP request is noise there.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         build_server(allow_reserve=args.allow_reserve or _config_allows_reserve()).run("stdio")
     except KeyboardInterrupt:
