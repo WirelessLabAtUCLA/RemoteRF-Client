@@ -23,6 +23,8 @@ from contextlib import redirect_stdout
 from datetime import datetime
 
 from . import ops
+from .core.messages import explain
+from .deployment.http import AccountBackendError
 from .ops import RemoteRFOpsError
 
 COMMANDS = ("auth", "devices", "slots", "reservations", "reserve", "cancel", "doctor")
@@ -34,7 +36,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _clean(value):
-    """Server and lab text, safe for a terminal."""
+    """Server and deployment text, safe for a terminal."""
     return "".join(c for c in str(value) if c.isprintable())
 
 
@@ -73,7 +75,7 @@ def _login_global(user, password):
 
 
 def _login_lab(home, user, password):
-    """`remoterf -l LAB` then login: the lab selected, its session token stored."""
+    """`remoterf -l NAME` then login: the deployment selected, its session token stored."""
     from .core.grpc_acc import RemoteRFAccount
     from .deployment import homes
     from .deployment.backend import LegacyGrpcAccountBackend
@@ -85,12 +87,13 @@ def _login_lab(home, user, password):
             home = homes.register_home(f"{home}.{homes.GLOBAL_DOMAIN}")[0]
         backend = LegacyGrpcAccountBackend()
     except (RuntimeError, ValueError) as exc:
-        raise RemoteRFOpsError("lab_unreachable", f"Could not connect to {home}: {exc}") from exc
+        raise RemoteRFOpsError("deployment_unreachable", f"Could not connect to {home}: {explain(exc, where=home)}") from exc
     account = RemoteRFAccount(user, password, backend=backend, quiet=True)
     if not account.login_user(remember=True):
-        raise RemoteRFOpsError("invalid_credentials", "Login failed: check the username and password.")
+        raise RemoteRFOpsError("invalid_credentials")
     if not account.session_token:
-        raise RemoteRFOpsError("lab_error", f"{home} issues no session token, so this login can't be saved; use `remoterf -l {home}`.")
+        raise RemoteRFOpsError("deployment_error",
+                               f"{home} issues no session token, so this login can't be saved; use `remoterf -l {home}`.")
     homes.remember_login(home, account.username, account.session_token)
 
 
@@ -158,14 +161,20 @@ def _apps(a):
     if s.home_kind != "global":
         raise RemoteRFOpsError("invalid_argument", "Connected apps belong to a Global account (remoterf auth login --home global).")
     backend = s.account.backend
-    return backend.revoke_app(a.revoke) if a.revoke else backend.connected_apps()
+    try:
+        return backend.revoke_app(a.revoke) if a.revoke else backend.connected_apps()
+    except AccountBackendError as exc:
+        if exc.code != "not_found":
+            raise
+        raise RemoteRFOpsError("not_found", "Connected apps arrive with the RemoteRF Global connector, "
+                                            "which isn't available yet.") from None
 
 
 # ── devices and reservations ─────────────────────────────────────────
 
 def _reserve(a):
     if not a.confirm:
-        raise RemoteRFOpsError("usage", "Reserving changes the lab's schedule: re-run with --confirm.")
+        raise RemoteRFOpsError("usage", "Reserving changes the deployment's schedule: re-run with --confirm.")
     return ops.reserve(ops.saved_session(), a.handle, a.start, a.end, reveal_token=a.reveal_token)
 
 
@@ -200,14 +209,14 @@ def _doctor(a):
 
             profile = resolve_active_profile()
             if profile:
-                out.update(home=profile.home, home_kind="lab", endpoint=profile.grpc_endpoint,
+                out.update(home=profile.home, home_kind="deployment", endpoint=profile.grpc_endpoint,
                            logged_in=bool(profile.home and homes.recall_login(profile.home)))
         if out["endpoint"]:
             from .remoterf_cli import _connected_server
 
             out["reachable"] = _connected_server(3.0) is not None
     except Exception as exc:  # noqa: BLE001 - doctor reports, it never fails
-        out["problems"].append(str(exc))
+        out["problems"].append(explain(exc))
     if not out["endpoint"]:
         out["problems"].append("No home selected: run `remoterf auth login`.")
     else:
@@ -234,11 +243,11 @@ def _table(out, rows):
 
 
 def _show_whoami(r, out):
-    print(_clean(f"{r['account']} ({r['home_kind']}); labs: {', '.join(r['labs']) or '-'}"), file=out)
+    print(_clean(f"{r['account']} ({r['home_kind']}); deployments: {', '.join(r['deployments']) or '-'}"), file=out)
 
 
 def _show_devices(r, out):
-    _table(out, [[d["handle"] or d["name"], d["state"] if d["online"] else "offline", d["type"] or "-", d["lab"] or "-",
+    _table(out, [[d["handle"] or d["name"], d["state"] if d["online"] else "offline", d["type"] or "-", d["deployment"] or "-",
                   f"until {_local(d['until_ts'])}" if d["until_ts"] else ""] for d in r["devices"]])
 
 
@@ -247,14 +256,20 @@ def _show_slots(r, out):
     _table(out, [[_local(s["start_ts"]), "-", _local(s["end_ts"])] for s in r["slots"]])
 
 
+def _ref(x):
+    """A Global reservation id '<deployment id>:10' as '10@ucla', which `remoterf cancel` takes."""
+    _, colon, num = str(x["reservation_id"]).rpartition(":")
+    return f"{num}@{x['handle'].rpartition('@')[2]}" if colon and x.get("handle") else x["reservation_id"]
+
+
 def _show_reservations(r, out):
-    _table(out, [[x["reservation_id"], x["handle"] or x["device"], _local(x["start_ts"]), "-", _local(x["end_ts"])]
+    _table(out, [[_ref(x), x["handle"] or x["device"], _local(x["start_ts"]), "-", _local(x["end_ts"])]
                  for x in r["reservations"]])
 
 
 def _show_reserved(r, out):
     print(_clean(f"Reserved {r['handle']} {_local(r['start_ts'])} - {_local(r['end_ts'])} "
-                 f"(reservation {r['reservation_id'] or 'unknown'})."), file=out)
+                 f"(reservation {_ref(r) or 'unknown'})."), file=out)
     print(_clean(f'Use token="{r["use_as_token"]}"' + (f', or the raw token {r["token"]}' if r.get("token") else "")), file=out)
 
 
@@ -289,21 +304,21 @@ def _parser():
 
     auth = sub.add_parser("auth", help="the saved login").add_subparsers(dest="action", required=True)
     p = command(auth, "login", _login, _show_whoami, "log in without prompts and keep the login saved")
-    p.add_argument("--home", help="global, or a lab name (default: the account's lab, else the last home used)")
-    p.add_argument("--user", required=True, help="NAME, or NAME@lab")
+    p.add_argument("--home", help="global, or a deployment name (default: the account's deployment, else the last home used)")
+    p.add_argument("--user", required=True, help="NAME, or NAME@deployment")
     p.add_argument("--password-stdin", action="store_true", required=True, help="read the password from stdin")
     p.add_argument("--accept-tos", action="store_true", help="agree to the RemoteRF Terms of Service")
     command(auth, "status", lambda a: ops.whoami(ops.saved_session()), _show_whoami, "who the saved login is")
     command(auth, "logout", _logout, lambda r, out: print("Logged out.", file=out), "end and forget the saved login")
-    p = command(auth, "apps", _apps, _show_apps, "AI apps connected to this Global account")
+    p = command(auth, "apps", _apps, _show_apps, "apps connected through the RemoteRF Global connector (not available yet)")
     p.add_argument("--revoke", metavar="CLIENT_ID", help="disconnect one app")
-    p = command(sub, "devices", lambda a: ops.list_devices(ops.saved_session(), lab=a.lab, online_only=not a.all),
+    p = command(sub, "devices", lambda a: ops.list_devices(ops.saved_session(), deployment=a.deployment, online_only=not a.all),
                 _show_devices, "devices and their state now")
-    p.add_argument("--lab", help="only this lab's devices")
+    p.add_argument("--deployment", help="only this deployment's devices")
     p.add_argument("--all", action="store_true", help="include offline devices")
     p = command(sub, "slots", lambda a: ops.find_slots(ops.saved_session(), a.handle, days=a.days),
                 _show_slots, "free slots on a device, aligned like resdev")
-    p.add_argument("handle", help="Name@lab, for example Pluto_00@ucla")
+    p.add_argument("handle", help="Name@deployment, for example Pluto_00@ucla")
     p.add_argument("--days", type=int, default=1)
     command(sub, "reservations", lambda a: ops.list_reservations(ops.saved_session()), _show_reservations, "your reservations")
     p = command(sub, "reserve", _reserve, _show_reserved, "reserve a device (needs --confirm)")
@@ -312,9 +327,9 @@ def _parser():
     p.add_argument("--end", required=True)
     p.add_argument("--confirm", action="store_true", help="really reserve")
     p.add_argument("--reveal-token", action="store_true", help="include the raw reservation token")
-    p = command(sub, "cancel", _cancel, lambda r, out: print(_clean(f"Cancelled reservation {r['reservation_id']}."), file=out),
+    p = command(sub, "cancel", _cancel, lambda r, out: print("Cancelled.", file=out),
                 "cancel a reservation (needs --confirm)")
-    p.add_argument("reservation_id")
+    p.add_argument("reservation_id", help="as `remoterf reservations` shows it, or a JSON reservation_id")
     p.add_argument("--confirm", action="store_true", help="really cancel")
     command(sub, "doctor", _doctor, _show_doctor, "check this install, its home and its login")
     return parser

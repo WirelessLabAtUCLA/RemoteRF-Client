@@ -25,6 +25,7 @@ import numpy as np
 
 from ..common.grpc import grpc_pb2, grpc_pb2_grpc
 from ..common.grpc.v2_codec import decode_value, encode_value
+from .messages import explain
 from .v2_errors import (
     RemoteRFError,
     RemoteRFPolicyError,
@@ -97,7 +98,9 @@ class _DevicePlaneStub:
                 args={"a": map_arg(self._token), "wire": map_arg(request.SerializeToString())},
             )
         except RuntimeError as exc:
-            if "response_too_large" in str(exc):
+            if isinstance(exc, grpc.RpcError):
+                raise
+            if "response_too_large" in str(exc.__cause__ or exc):
                 raise RemoteRFPolicyError(f"{self._label}{exc}") from exc
             # A refusal the HOME or the owner carried in "a": no live
             # reservation, a revoked agreement, a device no longer visible.
@@ -224,7 +227,7 @@ class DynamicV2Transport:
             return fn(request, timeout=timeout or self.control_timeout_sec)
         except grpc.RpcError as exc:
             raise RemoteRFTransportError(
-                f"Dynamic v2 RPC failed: {exc.code().name}: {exc.details()}",
+                explain(exc),
                 details={"grpc_code": exc.code().name},
                 retryable=exc.code() in {
                     grpc.StatusCode.UNAVAILABLE,
@@ -394,7 +397,7 @@ class DynamicV2Transport:
                 "requires_new_session": True,
             }
             raise RemoteRFTransportError(
-                f"sample stream failed: {exc.code().name}: {exc.details()}",
+                explain(exc),
                 details=dict(self._stream_failure_details),
                 retryable=exc.code() in {
                     grpc.StatusCode.UNAVAILABLE,

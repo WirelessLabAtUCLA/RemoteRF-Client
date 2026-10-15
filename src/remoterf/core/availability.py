@@ -21,6 +21,7 @@ import time
 from datetime import datetime
 
 from ..ops import NOT_LOGGED_IN, RemoteRFOpsError
+from .messages import explain
 
 _cache = None  # (key, monotonic at fetch, rows or None after a refusal, interval)
 
@@ -43,7 +44,7 @@ def _row(handle, name, dtype, lab, online, state, until, nxt):
 
 
 def _rows(devices, interval, notes, incomplete):
-    return ([_row(d["handle"], d["name"], d["type"], d["lab"], d["online"], d["state"], d["until_ts"], d["next_ts"])
+    return ([_row(d["handle"], d["name"], d["type"], d["deployment"], d["online"], d["state"], d["until_ts"], d["next_ts"])
              for d in devices], interval, "\n".join(notes) or None)
 
 
@@ -51,13 +52,13 @@ def _global(backend):
     from .app import _global_slug
     from ..ops import _global_devices
 
-    return _rows(*_global_devices(backend, _global_slug))
+    return _rows(*_global_devices(backend, _global_slug, destination_notes=False))
 
 
 def _lab(home, creds):
     from ..ops import _lab_devices
 
-    return _rows(*_lab_devices(home, creds))
+    return _rows(*_lab_devices(home, creds, shell=True))
 
 
 def _print(rows, footer=None):
@@ -92,7 +93,7 @@ def devices():
             try:
                 backend = federated_backend()
             except RuntimeError as exc:
-                print(exc)
+                print(explain(exc))
                 return []
             key, fetch = ("global", target["origin"]), lambda: _global(backend)
         else:
@@ -127,7 +128,7 @@ def devices():
             print(f"Asked too recently; try again in {exc.retry_after} s.")
             return []
     except RuntimeError as exc:
-        print(exc)
+        print(explain(exc))
         return []
     _cache = (key, time.monotonic(), rows, float(interval or 10))
     _print(rows, note)

@@ -11,12 +11,13 @@ import pytest
 
 from remoterf import agent_cli, ops, remoterf_cli
 from remoterf.deployment import homes, state
+from remoterf.deployment.http import AccountBackendError
 from remoterf.ops import RemoteRFOpsError
 
 DEP = "11111111-1111-4111-8111-111111111111"
-WHO = {"account": "jdoe@ucla", "home": "ucla", "home_kind": "lab", "labs": ["ucla"],
+WHO = {"account": "jdoe@ucla", "home": "ucla", "home_kind": "deployment", "deployments": ["ucla"],
        "client_version": "2.8.0", "reserve_enabled": True}
-SESSION = SimpleNamespace(home="ucla", home_kind="lab", account=None)
+SESSION = SimpleNamespace(home="ucla", home_kind="deployment", account=None)
 
 
 def run(capsys, *argv):
@@ -41,11 +42,11 @@ def test_devices_json_is_the_only_stdout(capsys, monkeypatch, session):
         return {"devices": [{"handle": "Pluto_00@ucla"}], "notes": ["a note"], "incomplete": False}
 
     monkeypatch.setattr(ops, "list_devices", list_devices)
-    code, out, err = run(capsys, "devices", "--all", "--lab", "ucla", "--json")
+    code, out, err = run(capsys, "devices", "--all", "--deployment", "ucla", "--json")
     assert code == 0
     assert json.loads(out) == {"devices": [{"handle": "Pluto_00@ucla"}], "notes": ["a note"], "incomplete": False}
     assert out.count("\n") == 1 and "stray library print" in err
-    assert seen == {"s": SESSION, "lab": "ucla", "online_only": False}
+    assert seen == {"s": SESSION, "deployment": "ucla", "online_only": False}
 
 
 def test_not_logged_in_is_exit_3_with_the_error_object(capsys, monkeypatch):
@@ -83,6 +84,16 @@ def test_reserve_and_cancel_with_confirm(capsys, monkeypatch, session):
     code, out, _ = run(capsys, "cancel", "7", "--confirm", "--json")
     assert code == 0 and json.loads(out) == {"cancelled": True, "reservation_id": "7"}
     assert seen == [("Pluto_00@ucla", "2026-10-15T14:00:00Z", "2026-10-15T15:00:00Z", True), "7"]
+
+
+def test_human_output_shows_global_reservations_without_ids(capsys, monkeypatch, session):
+    row = {"reservation_id": f"{DEP}:10", "handle": "Pluto_00@ucla", "device": "Pluto 00", "start_ts": 0, "end_ts": 0}
+    monkeypatch.setattr(ops, "list_reservations", lambda s: {"reservations": [row], "notes": []})
+    monkeypatch.setattr(ops, "cancel", lambda s, rid: {"cancelled": True, "reservation_id": f"{DEP}:10"})
+    code, out, _ = run(capsys, "reservations")
+    assert code == 0 and out.startswith("10@ucla  Pluto_00@ucla") and DEP not in out
+    code, out, _ = run(capsys, "cancel", "10@ucla", "--confirm")
+    assert code == 0 and out == "Cancelled.\n"
 
 
 def test_lab_errors_keep_their_exit_codes(capsys, monkeypatch, session):
@@ -194,6 +205,13 @@ def test_apps_list_and_revoke_are_global_only(capsys, monkeypatch):
     assert run(capsys, "auth", "apps", "--json")[1] == '{"apps": []}\n'
     code, out, _ = run(capsys, "auth", "apps", "--revoke", "client-1", "--json")
     assert code == 0 and json.loads(out) == {"revoked": True} and calls == ["client-1"]
+
+    def not_yet():
+        raise AccountBackendError("not_found")
+
+    backend.connected_apps = not_yet  # a Global without the connector
+    code, out, err = run(capsys, "auth", "apps")
+    assert (code, out) == (4, "") and "arrive with the RemoteRF Global connector" in err
     monkeypatch.setattr(ops, "saved_session", lambda: SESSION)
     assert run(capsys, "auth", "apps", "--json")[0] == 2
 
@@ -208,7 +226,7 @@ def test_doctor_reports_without_secrets(capsys, monkeypatch, isolated_home):
     code, out, err = run(capsys, "doctor", "--json")
     report = json.loads(out)
     assert code == 0
-    assert report["home"] == "ucla" and report["home_kind"] == "lab" and report["logged_in"] and report["reachable"]
+    assert report["home"] == "ucla" and report["home_kind"] == "deployment" and report["logged_in"] and report["reachable"]
     assert {"version", "python", "mcp_installed", "problems"} <= set(report)
     assert "SECRET-TOKEN" not in out + err
 

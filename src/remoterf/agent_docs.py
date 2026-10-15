@@ -253,7 +253,7 @@ def main(argv) -> int:
         else:
             print(_clean(f"remoterf: {exc.message}"), file=sys.stderr)
         if exc.exit_code == 3:
-            print(f"remoterf: `{args.cmd}` asks the device's lab for its driver, so it needs a saved login.",
+            print(f"remoterf: `{args.cmd}` asks the device's deployment for its driver, so it needs a saved login.",
                   file=sys.stderr)
         return exc.exit_code
     except (ValueError, OSError) as exc:

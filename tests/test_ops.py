@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import grpc
 import pytest
 
 from remoterf import ops
@@ -49,7 +50,7 @@ class Lab:
 
     def reserve_device(self, device_id, start, end):
         if self.refusal:
-            raise Exception(self.refusal)
+            raise RuntimeError(self.refusal)
         self.res["9"] = f"jdoe,{device_id},{start:%Y-%m-%d %H:%M:%S},{end:%Y-%m-%d %H:%M:%S}"
         return "Zm9vYmFy"
 
@@ -106,7 +107,7 @@ def lab(monkeypatch):
              "online": False, "state": "busy", "until": int(DAY.timestamp()), "next": None}]})})
 
     monkeypatch.setattr(grpc_client, "rpc_client", rpc)
-    return ops.Session(Lab(), "ucla", "lab")
+    return ops.Session(Lab(), "ucla", "deployment")
 
 
 @pytest.fixture
@@ -124,22 +125,22 @@ def test_lab_devices_carry_handles_state_and_limits(lab):
     out = ops.list_devices(lab)
     assert [d["handle"] for d in out["devices"]] == ["Pluto_A@ucla"]
     pluto = out["devices"][0]
-    assert (pluto["state"], pluto["slot_minutes"], pluto["max_days_ahead"], pluto["lab"]) == ("free", 60, 2, "ucla")
+    assert (pluto["state"], pluto["slot_minutes"], pluto["max_days_ahead"], pluto["deployment"]) == ("free", 60, 2, "ucla")
     assert pluto["next_ts"] == int(DAY.timestamp()) + 3600 and pluto["next"].endswith("Z") and pluto["until"] is None
     every = ops.list_devices(lab, online_only=False)["devices"]
     assert [(d["handle"], d["slot_minutes"], d["max_days_ahead"]) for d in every] == [
         ("Pluto_A@ucla", 60, 2), ("USRP_B210@ucla", 30, None)]
     assert all("_id" not in d for d in every)
     assert [d["handle"] for d in ops.list_devices(lab, online_only=False, type="USRP")["devices"]] == ["USRP_B210@ucla"]
-    assert ops.list_devices(lab, lab="mit")["devices"] == []
+    assert ops.list_devices(lab, deployment="mit")["devices"] == []
 
 
 def test_global_devices_and_whoami(home):
     out = ops.list_devices(home)
     assert [(d["handle"], d["state"], d["slot_minutes"]) for d in out["devices"]] == [("Pluto_01@ucla", "busy", 30)]
-    assert out["incomplete"] and "may be incomplete" in out["notes"][0]
+    assert out["incomplete"] and out["notes"] == ["@mit is offline; the list may be incomplete."]
     me = ops.whoami(home)
-    assert (me["account"], me["home_kind"], me["labs"]) == ("jdoe@global", "global", ["ucla"])
+    assert (me["account"], me["home_kind"], me["deployments"]) == ("jdoe@global", "global", ["ucla"])
 
 
 def test_lab_slots_align_and_skip_the_past_and_taken(lab):
@@ -214,7 +215,7 @@ def test_global_reserve_and_reservations(home):
     assert (out["reservation_id"], out["token"], out["use_as_token"]) == (f"{DEP}:10", "rfg_abc@ucla", "Pluto_01@ucla")
     assert out["start"] == "2026-03-02T15:00:00Z"
     rows = ops.list_reservations(home)["reservations"]
-    assert [(r["handle"], r["device"], r["lab"], r["start"], r["mine"]) for r in rows] == [
+    assert [(r["handle"], r["device"], r["deployment"], r["start"], r["mine"]) for r in rows] == [
         ("Pluto_01@ucla", "Pluto 01", "ucla", "2026-03-02T13:00:00Z", True)]
 
 
@@ -234,6 +235,20 @@ def test_errors_are_typed_and_mapped(lab, home, monkeypatch):
     lab.account.refusal = "Device already reserved at this time. Please select another time or device."
     err = _code(ops.reserve, lab, "Pluto_A@ucla", "2026-03-02T15:00:00Z", "2026-03-02T16:00:00Z")
     assert (err.code, err.exit_code, err.message) == ("slot_unavailable", 5, lab.account.refusal)
+    lab.account.refusal = "Partner refused: reservation_conflict"
+    err = _code(ops.reserve, lab, "Pluto_A@ucla", "2026-03-02T15:00:00Z", "2026-03-02T16:00:00Z")
+    assert (err.code, err.exit_code, err.message) == (
+        "reservation_conflict", 5, "ucla turned the reservation down: someone else has Pluto_A@ucla at that time. Pick another slot.")
+
+    def unreachable(*args):  # as rpc_client raises a gRPC failure
+        down = SimpleNamespace(code=lambda: grpc.StatusCode.UNAVAILABLE, details=lambda: "connect failed")
+        raise grpc_client.RemoteRFRpcError("down", down)
+
+    with monkeypatch.context() as m:
+        m.setattr(lab.account, "reserve_device", unreachable)
+        err = _code(ops.reserve, lab, "Pluto_A@ucla", "2026-03-02T15:00:00Z", "2026-03-02T16:00:00Z")
+    assert (err.code, err.exit_code, err.retryable) == ("deployment_unreachable", 7, True)
+    assert err.message == "Can't reach that deployment right now; check your connection and try again."
     assert _code(ops.find_slots, lab, "Nope@ucla").exit_code == 4
     assert _code(ops.device_api, lab, "Pluto_A@mit").code == "unknown_handle"
     assert _code(ops.cancel, lab, "12").code == "not_found"
@@ -245,10 +260,47 @@ def test_errors_are_typed_and_mapped(lab, home, monkeypatch):
                                        "retryable": True, "retry_after": 7}} and err.exit_code == 5
     home.account.backend.error = AccountBackendError("route_unavailable", provenance="transport")
     err = _code(ops.list_devices, home)
-    assert (err.message, err.retryable, err.exit_code) == (ops.FRIENDLY["route_unavailable"], True, 7)
+    assert (err.message, err.retryable, err.exit_code) == (
+        "That deployment isn't responding right now; try again in a minute.", True, 7)
+
+    def refuse(code):
+        def reserve(*args):
+            raise AccountBackendError(code, provenance="destination")
+        return reserve
+
+    monkeypatch.setattr(home.account.backend, "reserve", refuse("reservation_too_long"))
+    err = _code(ops.reserve, home, "Pluto_01@ucla", "2026-03-02T15:00:00Z", "2026-03-02T17:00:00Z")
+    assert (err.code, err.exit_code, err.message) == (
+        "reservation_too_long", 2, "ucla turned the reservation down: Pluto_01@ucla can be reserved for at most 30 minutes at a time.")
+    monkeypatch.setattr(home.account.backend, "reserve", refuse("reservation_limit"))
+    err = _code(ops.reserve, home, "Pluto_01@ucla", "2026-03-02T15:00:00Z", "2026-03-02T15:30:00Z")
+    assert (err.code, err.exit_code) == ("reservation_limit", 6) and "as many reservations there as you're allowed" in err.message
 
     monkeypatch.setattr(grpc_client, "rpc_client", lambda **kw: _r({"ace": "Invalid login credentials."}))
     assert _code(ops.list_devices, lab).code == "session_expired"
+
+
+def test_any_transport_failure_is_unreachable(lab, home):
+    for text in ("Partner unreachable", "Partner unreachable: invalid_transport_response"):  # as a lab HOME relays them
+        lab.account.refusal = text
+        err = _code(ops.reserve, lab, "Pluto_A@ucla", "2026-03-02T15:00:00Z", "2026-03-02T16:00:00Z")
+        assert (err.code, err.exit_code, err.retryable, err.message) == (
+            "deployment_unreachable", 7, True, "ucla isn't responding right now; try again in a minute.")
+    home.account.backend.error = AccountBackendError("invalid_signed_result", provenance="transport")
+    err = _code(ops.list_devices, home)
+    assert (err.code, err.exit_code, err.retryable) == ("deployment_unreachable", 7, True)
+
+
+def test_hints_name_cli_commands_not_shell_ones():
+    assert ops.RemoteRFOpsError("reservation_limit").message.endswith("Cancel one (remoterf cancel) or wait for one to end.")
+    assert "run remoterf reservations again" in ops.RemoteRFOpsError("invalid_reservation_id").message
+
+
+def test_global_cancel_takes_the_clis_reference(home, monkeypatch):
+    seen = []
+    monkeypatch.setattr(home.account.backend, "cancel", seen.append)
+    ops.cancel(home, "10@UCLA"), ops.cancel(home, f"{DEP}:11")
+    assert seen == [f"{DEP}:10", f"{DEP}:11"]
 
 
 def test_saved_session_without_a_login(monkeypatch):
@@ -258,7 +310,7 @@ def test_saved_session_without_a_login(monkeypatch):
     monkeypatch.setattr(direct_path, "_credentials", lambda: ("jdoe", "tok"))
     monkeypatch.setattr(grpc_client, "_active_home_name", lambda: "ucla")
     s = ops.saved_session()
-    assert (s.home, s.home_kind, s.account.username, s.account.quiet) == ("ucla", "lab", "jdoe", True)
+    assert (s.home, s.home_kind, s.account.username, s.account.quiet) == ("ucla", "deployment", "jdoe", True)
 
     monkeypatch.setattr(state, "load_target", lambda: {"origin": "https://global.example.org", "transport": "https-json",
                                                        "deployment_id": DEP})
@@ -284,9 +336,15 @@ def test_relay_and_lookup_failures_keep_their_codes(lab, home, monkeypatch):
     def relay_down(**kwargs):
         raise RuntimeError("route_unavailable [destination]")
 
-    monkeypatch.setattr("remoterf.drivers.dynamic_device.fetch_idl", relay_down)
-    err = _code(ops.device_api, lab, "Pluto_A@ucla")
-    assert (err.code, err.exit_code, err.retryable) == ("route_unavailable", 7, True)
+    def explained_relay_down(**kwargs):  # as rpc_client raises it
+        with grpc_client._explained({}):
+            relay_down()
+
+    for fetch in (relay_down, explained_relay_down):
+        monkeypatch.setattr("remoterf.drivers.dynamic_device.fetch_idl", fetch)
+        err = _code(ops.device_api, lab, "Pluto_A@ucla")
+        assert (err.code, err.exit_code, err.retryable) == ("route_unavailable", 7, True)
+        assert err.message == "That deployment isn't responding right now; try again in a minute."
 
     assert _code(ops.find_slots, home, "Pluto_01@nope").code == "unknown_handle"
 
@@ -294,7 +352,8 @@ def test_relay_and_lookup_failures_keep_their_codes(lab, home, monkeypatch):
         raise RuntimeError(f"can't reach {name}")
 
     monkeypatch.setattr(grpc_client, "_deployment_id", discovery_down)
-    assert _code(ops.find_slots, home, "Pluto_01@ucla").code == "lab_unreachable"
+    err = _code(ops.find_slots, home, "Pluto_01@ucla")
+    assert (err.code, err.message) == ("deployment_unreachable", "ucla isn't responding right now; try again in a minute.")
 
 
 def test_a_duplicate_name_resolves_to_the_labs_owner(lab, monkeypatch):
@@ -336,6 +395,8 @@ def test_device_api_reads_the_idl_without_a_reservation(lab, monkeypatch):
         "adi.Pluto", "from remoterf.drivers.adalm_pluto import adi", "sdr = adi.Pluto(token='Pluto_A@ucla')")
     assert [(m["name"], m["kind"]) for m in out["methods"]] == [("rx_lo", "getter"), ("rx_lo", "setter"), ("rx", "call")]
     assert ops.driver_usage("gps")["import_line"] == "from remoterf.drivers.gps import Gps"
+    assert ops.driver_usage("GPS")["constructor_template"] == "dev = GPS(token={token!r})"  # any name the installer takes
+    assert ops.driver_usage("class")["import_line"] is None
 
 
 def test_device_api_keeps_lab_text_out_of_code(lab, monkeypatch):
@@ -366,4 +427,4 @@ def test_nothing_reaches_stdout(lab, home, monkeypatch, capsys):
     assert grpc_acc.RemoteRFAccount("jdoe", "pw", quiet=True).login_user() is False
     assert capsys.readouterr().out == ""
     grpc_client._finish(reply)  # the shell still shows it
-    assert "UserError: Invalid login credentials." in capsys.readouterr().out
+    assert "Invalid login credentials." in capsys.readouterr().out

@@ -24,28 +24,31 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 
+import grpc
+
 from .common.utils import map_arg, str_to_list, unmap_arg
 from .core.grpc_client import _key
+from .core.messages import explain
 from .deployment.http import AccountBackendError
 
-_LAB_DOWN = "That lab isn't responding right now; try again in a minute."
-FRIENDLY = {
-    "route_unavailable": _LAB_DOWN,
-    "transport": _LAB_DOWN,
-    "principal_unknown": "You're not enrolled at that lab yet.",
-    "contract_not_active": "That lab isn't sharing with Global right now.",
-}
 EXIT_CODES = {
-    **dict.fromkeys(("usage", "invalid_argument"), 2),
+    **dict.fromkeys(("usage", "invalid_argument", "reservation_too_long", "reservation_too_short",
+                     "reservation_too_far_ahead", "reservation_in_past"), 2),
     **dict.fromkeys(("not_logged_in", "invalid_credentials", "session_expired"), 3),
     **dict.fromkeys(("not_found", "unknown_handle"), 4),
-    **dict.fromkeys(("conflict", "slot_unavailable", "rate_limited", "offline"), 5),
-    **dict.fromkeys(("permission_denied", "principal_unknown", "contract_not_active", "reserve_disabled"), 6),
-    **dict.fromkeys(("route_unavailable", "transport", "lab_unreachable"), 7),
+    **dict.fromkeys(("conflict", "slot_unavailable", "reservation_conflict", "rate_limited", "offline"), 5),
+    **dict.fromkeys(("permission_denied", "principal_unknown", "contract_not_active", "reserve_disabled",
+                     "reservation_refused", "reservation_limit", "lab_reservation_limit", "device_not_permitted"), 6),
+    **dict.fromkeys(("route_unavailable", "transport", "deployment_unreachable"), 7),
 }
-_RETRYABLE = {"rate_limited", "route_unavailable", "transport", "lab_unreachable"}
+_RETRYABLE = {"rate_limited", "route_unavailable", "transport", "deployment_unreachable"}
+# A wire code, also as a lab HOME relays it ('Partner refused: <code>') or the Global relay sends it
+# ('route_unavailable [destination]: ...').
+_WIRE = re.compile(r"(?:(?:Partner refused|Partner unreachable|Federation error): )?([a-z_]{1,64})(?: \[\w+\])?(?::.*)?", re.S)
 # Global's answers to a login it no longer honours.
 _AUTH_FAILED = {"invalid_access_token", "invalid_refresh_token", "refresh_token_reused", "invalid_token", "unauthorized"}
+# explain()'s hints name shell commands; these surfaces use the CLI's (the MCP tools match them).
+_SHELL_HINTS = {"(cancelres)": "(remoterf cancel)", "run getdev": "run remoterf devices", "run myres": "run remoterf reservations"}
 NOT_LOGGED_IN = "Not logged in: run `remoterf` and log in (keep the login saved)."
 STALE_LOGIN = "Saved login is no longer valid: run `remoterf` and log in again."
 
@@ -53,7 +56,10 @@ STALE_LOGIN = "Saved login is no longer valid: run `remoterf` and log in again."
 class RemoteRFOpsError(Exception):
     def __init__(self, code, message=None, *, retryable=None, retry_after=None):
         self.code = code
-        self.message = message or FRIENDLY.get(code) or code.replace("_", " ")
+        message = message or explain(code)
+        for shell, cli in _SHELL_HINTS.items():
+            message = message.replace(shell, cli)
+        self.message = message
         self.retry_after = retry_after
         self.retryable = (code in _RETRYABLE or bool(retry_after)) if retryable is None else retryable
         super().__init__(self.message)
@@ -71,33 +77,44 @@ def _rate_limited(wait):
     return RemoteRFOpsError("rate_limited", f"Asked too recently; try again in {wait} s.", retry_after=int(wait))
 
 
-def _lab_error(text):
-    """A lab's refusal text as a typed error; the text stays data in `message`."""
+def _wire_code(text):
+    """The code in a failure's text when the exit codes know it, else None.
+    'Partner unreachable' with any other code, or none, is a deployment that didn't answer."""
+    m = _WIRE.fullmatch(str(text))
+    if m and m[1] in EXIT_CODES:
+        return m[1]
+    return "deployment_unreachable" if str(text).startswith("Partner unreachable") else None
+
+
+def _deployment_error(text, **facts):
+    """A deployment's refusal text as a typed error; `message` says it in plain English."""
     if text == "Invalid login credentials.":
         return RemoteRFOpsError("session_expired", STALE_LOGIN)
     if text.startswith("Device already reserved"):
-        return RemoteRFOpsError("slot_unavailable", text)
+        return RemoteRFOpsError("slot_unavailable", explain(text))
     if text.startswith("Invalid reservation ID"):
-        return RemoteRFOpsError("not_found", text)
-    return RemoteRFOpsError("lab_error", text)
+        return RemoteRFOpsError("not_found", explain(text))
+    return RemoteRFOpsError(_wire_code(text) or "deployment_error", explain(text, **facts))
 
 
-def _backend_error(exc):
+def _backend_error(exc, **facts):
     code = str(exc.code)
     if exc.retry_after:
         return _rate_limited(exc.retry_after)
     if re.fullmatch("[a-z_]{1,64}", code):
-        return RemoteRFOpsError(code)
+        # The relay's other transport failures (invalid_signed_result, ...): the deployment didn't answer.
+        down = exc.provenance == "transport" and code not in EXIT_CODES and code != "response_too_large"
+        return RemoteRFOpsError("deployment_unreachable" if down else code, explain(exc, **facts))
     if code == "Log in first":
         return RemoteRFOpsError("not_logged_in", NOT_LOGGED_IN)
-    return RemoteRFOpsError("transport" if "connection failed" in code or "deadline exceeded" in code else "error", code)
+    return RemoteRFOpsError("transport" if "connection failed" in code or "deadline exceeded" in code else "error",
+                            explain(exc, **facts))
 
 
 def _op(fn):
     """A public call: nothing reaches stdout, and every failure is a RemoteRFOpsError."""
     @functools.wraps(fn)
     def call(*args, **kwargs):
-        import grpc
         from .core.grpc_client import quiet
 
         with quiet():
@@ -108,20 +125,18 @@ def _op(fn):
             except AccountBackendError as exc:
                 raise _backend_error(exc) from exc
             except grpc.RpcError as exc:
-                raise RemoteRFOpsError("lab_unreachable", _LAB_DOWN) from exc
+                raise RemoteRFOpsError("deployment_unreachable", explain(exc)) from exc
             except (RuntimeError, ValueError, OSError) as exc:
-                # A Global relay failure arrives as 'route_unavailable [destination]'.
-                m = re.fullmatch(r"([a-z_]{1,64})(?: \[\w+\])?", str(exc))
-                if m and m[1] in EXIT_CODES:
-                    raise RemoteRFOpsError(m[1]) from exc
-                raise RemoteRFOpsError("error", str(exc)) from exc
+                # rpc_client explains a failure ('route_unavailable [destination]' from the
+                # Global relay) and chains the original: its code picks the exit code.
+                raise RemoteRFOpsError(_wire_code(exc.__cause__ or exc) or "error", explain(exc)) from exc
     return call
 
 
 def _results(response):
     """A native reply's results; its `ace` is the lab's refusal."""
     if "ace" in response.results:
-        raise _lab_error(str(unmap_arg(response.results["ace"])))
+        raise _deployment_error(str(unmap_arg(response.results["ace"])))
     return response.results
 
 
@@ -336,10 +351,10 @@ def driver_usage(device_type, class_name=None) -> dict:
     if call := DRIVER_CALLS.get(device_type):
         return {"import_line": f"from remoterf.drivers.{DRIVER_IMPORTS[device_type]}",
                 "constructor_template": f"sdr = {call}(token={{token!r}})"}
-    if not re.fullmatch(r"[a-z][a-z0-9_]*", str(device_type or "")):
-        return {"import_line": None, "constructor_template": None}
-    from .drivers.dynamic_device import _default_class_name
+    from .drivers.dynamic_device import _default_class_name, _valid_identifier
 
+    if not _valid_identifier(str(device_type or "")):  # what the driver installer accepts
+        return {"import_line": None, "constructor_template": None}
     cls = class_name or _default_class_name(device_type)
     if not str(cls).isidentifier():
         return {"import_line": None, "constructor_template": None}
@@ -349,8 +364,8 @@ def driver_usage(device_type, class_name=None) -> dict:
 
 # ── device rows ──────────────────────────────────────────────────────
 
-def _device(handle, name, dtype, lab, online, state, until, nxt, max_sec=None, horizon_sec=None):
-    return {"handle": handle, "name": name, "type": dtype, "lab": lab, "online": bool(online),
+def _device(handle, name, dtype, deployment, online, state, until, nxt, max_sec=None, horizon_sec=None):
+    return {"handle": handle, "name": name, "type": dtype, "deployment": deployment, "online": bool(online),
             "state": state if state in ("free", "busy", "mine") else "unknown",
             **_instant("until", until), **_instant("next", nxt),
             "slot_minutes": None if max_sec is None else slot_minutes(max_sec), "max_days_ahead": _days(horizon_sec)}
@@ -371,9 +386,39 @@ def _global_slug(device_id, deployment_name):
     return None
 
 
-def _global_devices(backend, slug=None):
+def _destination_notes(data):
+    """Global's word on deployments that refused or didn't answer, as the shell says it."""
+    notes, offline = [], []
+    for d in data.get("destinations", ()):
+        name = d.get("display_name") if d.get("display_name") != d.get("deployment_id") else None
+        if d.get("status") == "unavailable":
+            offline.append(f"@{name}" if name else "an unnamed deployment")
+        elif d.get("status") == "blocked" and not (d.get("provenance") == "destination_signed"
+                                                  and d.get("error_code") == "principal_unknown"):
+            notes.append(explain(d.get("error_code") or "blocked",
+                                 "destination" if d.get("provenance") == "destination_signed" else "home", where=name))
+    if offline:
+        notes.append(f"{', '.join(offline)} {'is' if len(offline) == 1 else 'are'} offline; the list may be incomplete.")
+    elif data.get("incomplete"):
+        notes.append("Some deployments did not answer; the list may be incomplete.")
+    return notes
+
+
+def _held_at(reservations, device_id):
+    """Your live reservations at the device's deployment; None if unknown.
+    `reservations`: fetches Global's reservations reply."""
+    dep, now = str(device_id).split(":")[0], datetime.now().timestamp()
+    try:
+        return sum(1 for r in reservations()["reservations"]
+                   if r["mine"] and r["deployment_id"] == dep and r["end_time"] > now) or None
+    except Exception:  # noqa: BLE001 - the sentence then leaves the number out
+        return None
+
+
+def _global_devices(backend, slug=None, *, destination_notes=True):
     """A Global home's devices -> (devices, interval, notes, incomplete);
-    an older Global without availability: its device list, state unknown."""
+    an older Global without availability: its device list, state unknown.
+    destination_notes=False: remoterf.devices()' one line for any that didn't answer."""
     slug = slug or _global_slug
     notes = []
     try:
@@ -385,8 +430,10 @@ def _global_devices(backend, slug=None):
             raise
         data, notes = backend.devices(), ["This Global home does not report availability yet; showing devices only."]
     incomplete = bool(data.get("incomplete") or any(d.get("status") == "unavailable" for d in data["destinations"]))
-    if incomplete:
-        notes.append("Some labs did not answer; the list may be incomplete.")
+    if destination_notes:
+        notes += _destination_notes(data)
+    elif incomplete:
+        notes.append("Some deployments did not answer; the list may be incomplete.")
     slugs, devices = {}, []
     for d in data["devices"]:
         key = (d.get("deployment_id"), d.get("deployment_name"))
@@ -399,10 +446,11 @@ def _global_devices(backend, slug=None):
     return devices, data.get("interval"), notes, incomplete
 
 
-def _lab_devices(home, creds):
-    """A lab's ACC:availability -> (devices, interval, notes, incomplete); a
-    lab older than it: its device list, state unknown. Rows carry the lab's
-    device id as `_id`."""
+def _lab_devices(home, creds, *, shell=False):
+    """A deployment's ACC:availability -> (devices, interval, notes, incomplete);
+    one older than it: its device list, state unknown. Rows carry the
+    deployment's device id as `_id`. shell=True: refusals read as remoterf.devices()
+    has always shown them ('that deployment'; an old lab's own text)."""
     from .core.grpc_client import rpc_client
 
     args = {"un": map_arg(creds[0]), "pw": map_arg(creds[1])}
@@ -414,12 +462,13 @@ def _lab_devices(home, creds):
                  "_id": d.get("local_device_id")} for d in data["devices"]], data.get("interval"), [], False
     if "retry_after" in res:
         raise _rate_limited(unmap_arg(res["retry_after"]))
-    error = str(unmap_arg(res.get("ace", map_arg("Unexpected reply from the lab."))))
+    error = str(unmap_arg(res.get("ace", map_arg("Unexpected reply from the deployment."))))
     if "No matching server function" not in error:
-        raise _lab_error(error)
+        raise _deployment_error(error, where=None if shell else home)
     res = rpc_client(function_name="ACC:get_dev", args=args).results
     if "ace" in res:
-        raise _lab_error(str(unmap_arg(res["ace"])))
+        text = str(unmap_arg(res["ace"]))
+        raise RuntimeError(text) if shell else _deployment_error(text, where=home)
     devices = []
     for key in sorted(res, key=lambda k: int(k) if str(k).isdigit() else 0):
         label = str(unmap_arg(res[key]))
@@ -429,7 +478,7 @@ def _lab_devices(home, creds):
         name, handle = _name_and_handle(local["name"])
         devices.append({**_device(f"{handle}@{home}" if handle and home else None, name, None, home,
                                   local["state"].startswith("online"), "unknown", None, None), "_id": key})
-    return devices, None, ["This lab does not report availability yet; showing devices only."], False
+    return devices, None, ["This deployment does not report availability yet; showing devices only."], False
 
 
 # ── sessions ─────────────────────────────────────────────────────────
@@ -438,13 +487,13 @@ def _lab_devices(home, creds):
 class Session:
     account: object  # RemoteRFAccount
     home: str | None
-    home_kind: str  # "lab" | "global"
+    home_kind: str  # "deployment" | "global"
 
 
 @_op
 def saved_session() -> Session:
-    """The saved login (Global: the stored HTTPS session; a lab: the active
-    home's stored login). Never prompts."""
+    """The saved login (Global: the stored HTTPS session; a deployment: the
+    active home's stored login). Never prompts."""
     from .core.direct_path import _credentials
     from .core.grpc_acc import RemoteRFAccount
     from .core.grpc_client import _active_home_name, federated_backend
@@ -469,15 +518,15 @@ def saved_session() -> Session:
         raise RemoteRFOpsError("not_logged_in", NOT_LOGGED_IN)
     account = RemoteRFAccount(*creds, quiet=True)
     account.session_token = creds[1]
-    return Session(account, _active_home_name(), "lab")
+    return Session(account, _active_home_name(), "deployment")
 
 
 def _resolve(s, handle):
-    """`Name@lab` -> (canonical handle, device id at the home, its row)."""
+    """`Name@deployment` -> (canonical handle, device id at the home, its row)."""
     name, _, lab = str(handle or "").strip().rpartition("@")
     lab, key = lab.lower(), _key(name)
     if not key or not lab:
-        raise RemoteRFOpsError("invalid_argument", "A handle is Name@lab, for example Pluto_00@ucla.")
+        raise RemoteRFOpsError("invalid_argument", "A handle is Name@deployment, for example Pluto_00@ucla.")
     if s.home_kind == "global":
         from .core.grpc_client import _deployment_id
 
@@ -486,7 +535,8 @@ def _resolve(s, handle):
             dep = _deployment_id(lab)
         except RuntimeError:
             if any(str(d.get("deployment_name") or "").lower() == lab for d in devices):
-                raise RemoteRFOpsError("lab_unreachable", _LAB_DOWN) from None  # a lab we know, not reachable now
+                # a deployment we know, not reachable now
+                raise RemoteRFOpsError("deployment_unreachable", explain("route_unavailable", where=lab)) from None
             dep = None
         matches = [(f"{d['handle']}@{lab}", d["device_id"], d) for d in devices
                    if dep and d.get("deployment_id") == dep and _key(d.get("handle") or "") == key]
@@ -520,15 +570,16 @@ def _version():
 def whoami(s) -> dict:
     if s.home_kind == "global":
         perms = s.account.backend.permissions()
-        labs = sorted({e["display_name"] for e in perms.get("federation", []) if e.get("status") == "ok"})
+        deployments = sorted({e["display_name"] for e in perms.get("federation", [])
+                              if e.get("status") == "ok" and e["display_name"] != e.get("deployment_id")})
     else:
-        labs = [s.home] if s.home else []
+        deployments = [s.home] if s.home else []
     return {"account": f"{s.account.username}@{s.home}" if s.home else s.account.username, "home": s.home,
-            "home_kind": s.home_kind, "labs": labs, "client_version": _version(), "reserve_enabled": True}
+            "home_kind": s.home_kind, "deployments": deployments, "client_version": _version(), "reserve_enabled": True}
 
 
 @_op
-def list_devices(s, *, lab=None, online_only=True, type=None) -> dict:
+def list_devices(s, *, deployment=None, online_only=True, type=None) -> dict:
     if s.home_kind == "global":
         devices, _, notes, incomplete = _global_devices(s.account.backend)
     else:
@@ -539,10 +590,10 @@ def list_devices(s, *, lab=None, online_only=True, type=None) -> dict:
             d["slot_minutes"] = slot_minutes(max_sec)
     for d in devices:
         d.pop("_id", None)
-    lab = (lab or "").lower()
+    deployment = (deployment or "").lower()
     return {"devices": [d for d in devices
                         if (d["online"] or not online_only)
-                        and (not lab or lab in (str(d["lab"]).lower(), (d["handle"] or "").rpartition("@")[2]))
+                        and (not deployment or deployment in (str(d["deployment"]).lower(), (d["handle"] or "").rpartition("@")[2]))
                         and (not type or str(d["type"] or "").lower() == type.lower())],
             "notes": notes, "incomplete": incomplete}
 
@@ -594,7 +645,8 @@ def find_slots(s, handle, *, start_day=None, days=1, tz=None, now=None) -> dict:
                  for r in native_reservations(_results(s.account.get_reservations())) if r["device_id"] == device_id]
     block = slot_minutes(max_sec)
     if block < 10:
-        raise RemoteRFOpsError("permission_denied", f"Your longest reservation on {h} is under 10 minutes, so it can't be reserved.")
+        raise RemoteRFOpsError("permission_denied",
+                               f"{h} can be reserved for at most {int(max_sec or 0) // 60} minutes, shorter than the 10-minute minimum.")
     if max_days and (day - now.date()).days + days > max_days:
         raise RemoteRFOpsError("invalid_argument", f"{h} can be reserved at most {max_days} days ahead.")
     epoch = lambda dt: int(dt.replace(tzinfo=zone).timestamp())
@@ -612,9 +664,9 @@ def list_reservations(s, *, mine_only=True) -> dict:
         backend = s.account.backend
         data = backend.reservations()
         devices = {d["device_id"]: d for d in backend.devices()["devices"]}
-        names = {d["deployment_id"]: d.get("display_name") for d in data["destinations"]}
-        if data.get("incomplete") or any(d.get("status") == "unavailable" for d in data["destinations"]):
-            notes.append("Some labs did not answer; the list may be incomplete.")
+        names = {d["deployment_id"]: d["display_name"] for d in data["destinations"]
+                 if d.get("display_name") != d["deployment_id"]}
+        notes = _destination_notes(data)
         slugs = {}
         for r in data["reservations"]:
             if mine_only and not r.get("mine"):
@@ -626,8 +678,8 @@ def list_reservations(s, *, mine_only=True) -> dict:
             slug = slugs[r["deployment_id"]]
             out.append({"reservation_id": r["reservation_id"],
                         "handle": f"{dev['handle']}@{slug}" if dev.get("handle") and slug else None,
-                        "device": dev.get("display_name") or r.get("display_name") or r["device_id"].rpartition(":")[2],
-                        "lab": lab, **_instant("start", r["start_time"]), **_instant("end", r["end_time"]),
+                        "device": dev.get("display_name") or r.get("display_name") or "unlisted device",
+                        "deployment": lab, **_instant("start", r["start_time"]), **_instant("end", r["end_time"]),
                         "mine": bool(r.get("mine"))})
     else:
         results = _results(s.account.get_reservations())
@@ -636,17 +688,17 @@ def list_reservations(s, *, mine_only=True) -> dict:
             mine = r["username"] == s.account.username
             if mine_only and not mine:
                 continue
-            row = rows.get(r["device_id"]) or {"name": f"device {r['device_id']}", "lab": s.home, "away": True}
+            row = rows.get(r["device_id"]) or {"name": "unlisted device", "lab": s.home, "away": True}
             name, handle = (row["name"], None) if row["away"] else _name_and_handle(row["name"])
             out.append({"reservation_id": str(r["key"]), "handle": f"{handle}@{s.home}" if handle and s.home else None,
-                        "device": name, "lab": row["lab"], **_instant("start", r["start_time"].timestamp()),
+                        "device": name, "deployment": row["lab"], **_instant("start", r["start_time"].timestamp()),
                         **_instant("end", r["end_time"].timestamp()), "mine": mine})
     out.sort(key=lambda r: (r["start_ts"] or 0, str(r["device"])))
     return {"reservations": out, "notes": notes}
 
 
 def _native_reservations(s):
-    """A lab's reservation rows, or None when it won't list them."""
+    """A deployment's reservation rows, or None when it won't list them."""
     try:
         results = s.account.get_reservations().results
         return None if "ace" in results else native_reservations(results)
@@ -656,13 +708,21 @@ def _native_reservations(s):
 
 @_op
 def reserve(s, handle, start, end, *, reveal_token=False) -> dict:
-    """Forward one reservation to the lab, which decides; never retried."""
+    """Forward one reservation to the deployment, which decides; never retried."""
     start_ts, end_ts = _epoch(start), _epoch(end)
     if end_ts <= start_ts:
         raise RemoteRFOpsError("invalid_argument", "end must be after start.")
-    h, device_id, _ = _resolve(s, handle)
+    h, device_id, row = _resolve(s, handle)
+    where = h.rpartition("@")[2]
     if s.home_kind == "global":
-        reservation = s.account.backend.reserve(device_id, start_ts, end_ts)
+        backend = s.account.backend
+        try:
+            reservation = backend.reserve(device_id, start_ts, end_ts)
+        except AccountBackendError as exc:
+            raise _backend_error(exc, where=where, device=h, request="reservation",
+                                 held=_held_at(backend.reservations, device_id) if exc.code == "reservation_limit" else None,
+                                 minutes=int(row.get("max_reservation_time_sec") or 0) // 60 or None,
+                                 days=_days(row.get("max_horizon_sec"))) from exc
         rid, token = reservation["reservation_id"], reservation.get("token")
         # An older Global issues no rfg_ token; the handle still works.
         token = f"{token}@{h.rpartition('@')[2]}" if token and token.startswith("rfg_") else None
@@ -670,15 +730,15 @@ def reserve(s, handle, start, end, *, reveal_token=False) -> dict:
         before = _native_reservations(s)
         try:
             token = s.account.reserve_device(device_id, datetime.fromtimestamp(start_ts), datetime.fromtimestamp(end_ts))
-        except Exception as exc:
-            if type(exc) is Exception:  # reserve_device's form of the lab's refusal
-                raise _lab_error(str(exc)) from None
-            raise
+        except RuntimeError as exc:  # the deployment's refusal, or rpc_client's explained failure
+            if isinstance(exc, grpc.RpcError):
+                raise  # no answer at all: _op says so
+            raise _deployment_error(str(exc.__cause__ or exc), where=where, device=h, request="reservation") from None
         if not token:
-            raise RemoteRFOpsError("lab_error", "The lab answered without a token.")
+            raise RemoteRFOpsError("deployment_error", "The deployment answered without a token.")
         token = f"{token}@{s.home}"
-        # The lab answers with the token only: its key is the new row in the listing. Rows are
-        # in the lab's own zone, so only their length is compared.
+        # The deployment answers with the token only: its key is the new row in the listing.
+        # Rows are in the deployment's own zone, so only their length is compared.
         after = _native_reservations(s) if before is not None else None
         old = {r["key"] for r in before or ()}
         new = [r for r in after or ()
@@ -696,6 +756,11 @@ def reserve(s, handle, start, end, *, reveal_token=False) -> dict:
 def cancel(s, reservation_id) -> dict:
     rid = str(reservation_id)
     if s.home_kind == "global":
+        num, at, lab = rid.rpartition("@")
+        if at:  # '10@ucla', as the CLI shows a Global reservation
+            from .core.grpc_client import _deployment_id
+
+            rid = f"{_deployment_id(lab.lower())}:{num}"
         s.account.backend.cancel(rid)
     else:
         _results(s.account.cancel_reservation(rid))
@@ -704,7 +769,7 @@ def cancel(s, reservation_id) -> dict:
 
 @_op
 def device_api(s, handle) -> dict:
-    """The driver's API from the lab's IDL; needs no reservation."""
+    """The driver's API from the deployment's IDL; needs no reservation."""
     from .drivers.dynamic_device import _client_class_name, fetch_idl
 
     h, device_id, _ = _resolve(s, handle)
@@ -722,7 +787,8 @@ def device_api(s, handle) -> dict:
                    for key, info in (schema.get(field) or {}).items() if kind == "call" or str(key).startswith(prefix)]
     notes = ["Reading this API needs no reservation; calling the device needs a live one."]
     if not usage["import_line"]:
-        notes.append("This lab's names for the driver are not Python names, so there is no import line; ask the lab.")
+        notes.append("This deployment's names for the driver are not Python names, so there is no import line; "
+                     "ask its administrator.")
     elif device_type not in DRIVER_CALLS:
         notes.append(f"Install this driver once per machine: from remoterf.drivers import ensure_driver; ensure_driver(token={h!r})")
     template = usage["constructor_template"]

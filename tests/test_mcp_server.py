@@ -36,7 +36,7 @@ def fake(monkeypatch):
             return result
         monkeypatch.setattr(ops, name, fn)
 
-    record("whoami", {"account": "jdoe@ucla", "home": "ucla", "home_kind": "lab", "labs": ["ucla"],
+    record("whoami", {"account": "jdoe@ucla", "home": "ucla", "home_kind": "deployment", "deployments": ["ucla"],
                       "client_version": "2.8.0", "reserve_enabled": True})
     record("list_devices", {"devices": [], "notes": [], "incomplete": False})
     record("find_slots", {"handle": "Pluto_00@ucla", "slot_minutes": 30, "timezone": "UTC", "days": 2, "slots": []})
@@ -65,17 +65,17 @@ def test_read_tools_call_ops_with_a_fresh_session(fake):
     calls, sessions, session = fake
     server = mcp_server.build_server(allow_reserve=False, session_factory=session)
     assert sessions == []
-    assert _call(server, "remoterf_whoami") == (False, {"account": "jdoe@ucla", "home": "ucla", "home_kind": "lab",
-                                                        "labs": ["ucla"], "client_version": "2.8.0",
+    assert _call(server, "remoterf_whoami") == (False, {"account": "jdoe@ucla", "home": "ucla", "home_kind": "deployment",
+                                                        "deployments": ["ucla"], "client_version": "2.8.0",
                                                         "reserve_enabled": False})
-    assert _call(server, "remoterf_list_devices", {"lab": "ucla", "type": "pluto"})[1]["incomplete"] is False
+    assert _call(server, "remoterf_list_devices", {"deployment": "ucla", "type": "pluto"})[1]["incomplete"] is False
     assert _call(server, "remoterf_find_slots", {"handle": "Pluto_00@ucla", "from": "2026-10-15", "days": 2,
                                                  "timezone": "UTC"})[1]["slot_minutes"] == 30
     assert _call(server, "remoterf_list_reservations", {"mine_only": False})[1]["reservations"] == []
     assert _call(server, "remoterf_device_api", {"handle": "Pluto_00@ucla"}) == (False, API)
     assert len(sessions) == 5
     assert calls[1:] == [
-        ("list_devices", (), {"lab": "ucla", "online_only": True, "type": "pluto"}),
+        ("list_devices", (), {"deployment": "ucla", "online_only": True, "type": "pluto"}),
         ("find_slots", ("Pluto_00@ucla",), {"start_day": "2026-10-15", "days": 2, "tz": "UTC"}),
         ("list_reservations", (), {"mine_only": False}),
         ("device_api", ("Pluto_00@ucla",), {}),

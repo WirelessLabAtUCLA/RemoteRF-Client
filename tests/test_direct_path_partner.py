@@ -165,9 +165,11 @@ def test_describe_reports_partner_paths(monkeypatch):
     monkeypatch.setattr(direct_path, "_credentials", lambda: None)
     monkeypatch.setenv("REMOTERF_DIRECT", "1")
     assert direct_path.describe() == "relay (direct path off)"  # nothing partnered yet
-    direct_path.mark_partner("tok", "lab-b")
+    direct_path.mark_partner("tok", "uuid-b")  # the Server names the owner by its id
     path = direct_path.current(token="tok")
     path.describe = lambda: "direct 192.0.2.7:4433 (3 calls)"
+    assert direct_path.describe() == "partner deployment: direct 192.0.2.7:4433 (3 calls)"  # never the id
+    monkeypatch.setitem(grpc_client._deployment_ids, "lab-b", "uuid-b")
     assert direct_path.describe() == "partner lab-b: direct 192.0.2.7:4433 (3 calls)"
     path.state = "down"
     path.describe = lambda: "relay (direct path down: timed out; retrying)"

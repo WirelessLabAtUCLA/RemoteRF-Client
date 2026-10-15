@@ -17,6 +17,7 @@ import ast
 from collections.abc import Callable
 from contextlib import nullcontext
 from .grpc_client import rpc_client, quiet as _silenced
+from .messages import explain
 from ..common.utils import *
 
 import datetime
@@ -94,7 +95,6 @@ class RemoteRFAccount:
             try:
                 result = self.backend.login(self.username, self.password)
                 self.username = result['username']
-                self._note(f'Signed in as {self.username}.', Sty.GREEN)
                 return True
             finally:
                 self.password = None
@@ -104,7 +104,6 @@ class RemoteRFAccount:
             args["remember"] = map_arg(True)
         response = self._call(function_name="ACC:login", args=args)
         if 'UC' in response.results:
-            self._note(f'Signed in as {unmap_arg(response.results["UC"])}.', Sty.GREEN)
             if 'token' in response.results:
                 # From here on the token is the credential; the password is gone.
                 self.session_token = unmap_arg(response.results['token'])
@@ -126,7 +125,7 @@ class RemoteRFAccount:
             response = self._call(function_name="ACC:reserve_device", args={"un":map_arg(username), "pw":map_arg(credential_secret), "dd":map_arg(device_id), "st":map_arg(int(start_time.timestamp())), "et":map_arg(int(end_time.timestamp()))})
 
         if 'ace' in response.results:
-            raise Exception(f'{unmap_arg(response.results["ace"])}')
+            raise RuntimeError(f'{unmap_arg(response.results["ace"])}')
         elif 'Token' in response.results:
             return unmap_arg(response.results["Token"])
 
@@ -141,17 +140,17 @@ class RemoteRFAccount:
                 return install_driver(device_id=device_id).name
             return install_driver(token=handle, device_id=device_id).name
         except Exception as e:
-            print(f"{'◆' if supports_unicode() else '*'} Could not install the driver for device {device_id}: {e}")
+            print(f"{'◆' if supports_unicode() else '*'} Could not install the driver for this device: {explain(e)}")
             
     def get_reservations(self):
-        with self._busy("Asking the labs for reservations…"):
+        with self._busy("Asking the deployments for reservations…"):
             if self.is_https_home:
                 return self.backend.reservations()
             username, credential_secret = self._rpc_credentials()
             return self._call(function_name='ACC:get_res', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def get_devices(self):
-        with self._busy("Asking the labs for devices…"):
+        with self._busy("Asking the deployments for devices…"):
             if self.is_https_home:
                 return self.backend.devices()
             username, credential_secret = self._rpc_credentials()
@@ -165,7 +164,7 @@ class RemoteRFAccount:
             return self._call(function_name='ACC:cancel_res', args={"un":map_arg(username), "pw":map_arg(credential_secret), "res_id":map_arg(res_id)})
     
     def get_perms(self):
-        with self._busy("Asking the labs for permissions…"):
+        with self._busy("Asking the deployments for permissions…"):
             if self.is_https_home:
                 return self.backend.permissions()
             username, credential_secret = self._rpc_credentials()

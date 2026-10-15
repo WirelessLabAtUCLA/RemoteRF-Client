@@ -115,6 +115,16 @@ def test_old_lab_falls_back_to_get_dev(monkeypatch, capsys):
     assert "does not report availability" in capsys.readouterr().out
 
 
+def test_lab_refusals_read_as_before(monkeypatch, capsys):
+    _lab(monkeypatch, {"ACC:availability": {"ace": map_arg("principal_disabled")}})
+    assert remoterf.devices() == []
+    assert capsys.readouterr().out == "Your account at that deployment is disabled; ask its administrator.\n"
+    _lab(monkeypatch, {"ACC:availability": {"ace": map_arg("No matching server function to call: availability")},
+                       "ACC:get_dev": {"ace": map_arg("Invalid login credentials.")}})
+    assert remoterf.devices() == []
+    assert capsys.readouterr().out == "Invalid login credentials.\n"
+
+
 def test_lab_not_logged_in(monkeypatch, capsys):
     calls = _lab(monkeypatch, {}, creds=None)
     assert remoterf.devices() == []
@@ -163,6 +173,17 @@ def test_global_rows(monkeypatch, capsys):
         ("Pluto_01@ucla", "mine", "ucla"), (None, "unknown", "Some Lab")]
     out = capsys.readouterr().out
     assert "yours until" in out and "Pluto 05 @Some Lab (no handle)" in out and "incomplete" not in out
+
+
+def test_global_footer_is_one_line_for_missing_deployments(monkeypatch, capsys):
+    backend = FakeBackend()
+    data = backend.availability()
+    data["destinations"] = [{"deployment_id": "u3", "display_name": "mit", "status": "unavailable"},
+                            {"deployment_id": "u4", "display_name": "eth", "status": "blocked", "error_code": "principal_disabled"}]
+    backend.availability = lambda: data
+    _global(monkeypatch, backend)
+    remoterf.devices()
+    assert capsys.readouterr().out.splitlines()[-1] == "Some deployments did not answer; the list may be incomplete."
 
 
 def test_old_global_falls_back_to_devices(monkeypatch, capsys):

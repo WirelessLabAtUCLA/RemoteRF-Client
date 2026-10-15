@@ -540,8 +540,8 @@ with patch.object(client_app, 'account', fake):
     assert "Devices: None" in rendered
     assert "FEDERATED PERMISSIONS" in rendered
     assert "Destination" in rendered and "remote-readers" in rendered
-    assert "Offline destination" in rendered and "destination unavailable" in rendered
-    assert "destination-signed" in rendered
+    assert "Offline destination" in rendered and "Status: offline" in rendered
+    assert "Source:" not in rendered and "destination-signed" not in rendered
 
 
 def test_grpc_perms_always_renders_explicit_incomplete_notice():

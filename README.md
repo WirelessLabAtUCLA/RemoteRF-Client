@@ -14,7 +14,7 @@ To check your current Python version, open a terminal and run:
 python --version
 ```
 
-- **UCLA VPN**: Please ensure that you are connected to the UCLA VPN. You can download and configure the VPN client from the following link: [UCLA VPN Client Download](https://www.it.ucla.edu/it-support-center/services/virtual-private-network-vpn-clients). If you’re not connected to the VPN, you will not have access to the lab servers.
+- **UCLA VPN**: Please ensure that you are connected to the UCLA VPN. You can download and configure the VPN client from the following link: [UCLA VPN Client Download](https://www.it.ucla.edu/it-support-center/services/virtual-private-network-vpn-clients). If you’re not connected to the VPN, you will not have access to the deployment servers.
 
 ## Installation
 
@@ -122,9 +122,9 @@ not close the physical radio. `read_samples` and `read_bytes` are bounded to a
 4 MiB response. Call them repeatedly for longer captures. Native asynchronous
 callbacks are not transported remotely.
 
-Through the RemoteRF Global relay one reply is capped at 768 KiB. A lab on a
+Through the RemoteRF Global relay one reply is capped at 768 KiB. A deployment on a
 current Server keeps a larger reply (up to 4 MiB) and the client fetches it in
-pages; an older lab refuses it with `response_too_large`, so keep reads there
+pages; an older deployment refuses it with `response_too_large`, so keep reads there
 to about 98k complex64 samples (`read_samples(65536)` is safe). LAN and direct
 paths are not capped.
 
@@ -215,7 +215,7 @@ P2P, automatic routing, or global resource IDs. Those are future versions.
 The client-side software behaves identically whether you point it at a LAN
 server or at a RemoteRF Global v0 endpoint.
 
-### RemoteRF Global v2 Phase-1 development boundary
+### RemoteRF Global Phase-1 development boundary
 
 The disposable Global v1 account-selection and deployment-session client was
 removed at Gate C. The normal CLI supports direct/native gRPC accounts and
@@ -224,7 +224,7 @@ username, email, or home token as destination credentials.
 
 Gate G adds permission visibility to the ordinary `perms` command. It renders
 HOME-local groups plus current destination-signed federated groups with their
-contract/version/state and retrieval time. An unreachable destination is
+contract state and retrieval time. An unreachable destination is
 explicitly labeled as unsigned transport status, never as an authoritative
 empty group result. This works when the HOME has zero devices.
 
@@ -331,7 +331,7 @@ Nothing else needs changing!
 
 #### List devices and availability
 
-With a saved login (lab or Global), list the devices you can use, each with the handle to paste into `token=`, and whether it is free right now:
+With a saved login (deployment or Global), list the devices you can use, each with the handle to paste into `token=`, and whether it is free right now:
 
 ```python
 import remoterf
@@ -340,10 +340,10 @@ rows = remoterf.devices()   # prints a table and returns it as a list of dicts
 ```
 
 ```
-DEVICE (token=)  TYPE   ONLINE   NOW                 NEXT
-Pluto_01@lab     pluto  online   free                14:30
-Pluto_02@lab     pluto  online   in use until 13:45  -
-Pluto_03@lab     pluto  offline  yours until 15:00   -
+DEVICE (token=)      TYPE   ONLINE   NOW                 NEXT
+Pluto_01@deployment  pluto  online   free                14:30
+Pluto_02@deployment  pluto  online   in use until 13:45  -
+Pluto_03@deployment  pluto  offline  yours until 15:00   -
 ```
 
 Each account may ask once every 10 seconds; a repeat call within that reprints the last table with the remaining wait.

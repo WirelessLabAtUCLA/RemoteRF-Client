@@ -12,6 +12,11 @@ remoterf-vps-global (pushed with upstream), and in wireless-lab-at-ucla.gitlab.i
 credentials, so the owner pushes that one). Merge to `main` only when a phase ships. In remoterf-vps-global, `main` was
 brought level with the deployed Global code on 2026-10-14 (`ad12f35`), so deploy images from `main` / `feat/ai-mcp` now.
 
+Status: client 2.8.0 ships only the on-your-own-machine part (scriptable CLI and local `remoterf mcp`), in the
+deployment wording of client 2.7.1. The remote connector (Global OAuth + `/mcp`) stays on remoterf-vps-global
+`feat/ai-mcp`, not deployed; its copies of `mcp_tools.json`, `agent_guide.md` and `messages.py` are synced with
+the 2.8.0 deployment wording but not committed or deployed (re-copy `agent_guide.md` before the connector ships).
+
 ---
 
 ## 1. Goal

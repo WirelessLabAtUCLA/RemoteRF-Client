@@ -13,7 +13,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import logging
 import os
 import re
 import sys
@@ -32,6 +31,7 @@ from ..common.utils import *
 from ..common.utils.process_arg import IQ16, fits_iq16, map_iq16
 from .secure_channel import build_secure_channel
 from . import direct_path
+from .messages import debug, explain, log
 from ..deployment.direct import ConnectionProfile, DirectConnectionProfile, resolve_active_profile
 
 _CONFIG_HELP = (
@@ -57,7 +57,6 @@ _active_connection: Optional[_ActiveConnection] = None
 addr = ""
 channel: Optional[grpc.Channel] = None
 stub: Optional[grpc_pb2_grpc.GenericRPCStub] = None
-log = logging.getLogger("remoterf")
 _quiet = threading.local()
 OPS_LAB_TIMEOUT = 60  # seconds, for a lab call made inside quiet()
 
@@ -266,7 +265,7 @@ def _federated_call(route, function_name, args):
                     break
                 raise RuntimeError(
                     "response_too_large [destination]: the reply is over the Global relay's "
-                    "768 KiB limit for one call and this lab does not page it; read fewer "
+                    "768 KiB limit for one call and this deployment does not page it; read fewer "
                     "samples per call (about 98k complex64) or use a direct path"
                 ) from None
             if ref.startswith("rfg_") and str(exc) == "not_found":
@@ -498,6 +497,14 @@ def _global_handle(x, dep):
     return DeviceRoute(matches[0]["device_id"], "global") if matches else None
 
 
+class RemoteRFRpcError(RuntimeError, grpc.RpcError):
+    """A gRPC failure in plain English; still a grpc.RpcError with its code()."""
+
+    def __init__(self, message, cause):
+        super().__init__(message)
+        self.code, self.details = cause.code, cause.details
+
+
 def rpc_client(*, function_name, args, connection=None):
     global tcp_calls
     tcp_calls += 1
@@ -511,14 +518,35 @@ def rpc_client(*, function_name, args, connection=None):
     token = _device_token(function_name, args)
     if function_name.endswith(":tx:CALL1") and "arg1" in args and token in _ci16_tokens:
         args = {**args, "arg1": _tx_wire(args["arg1"])}
-    response = _driver_hooks(function_name, args, token) if connection is None else None
-    if response is None:
-        response = _dispatch(function_name, args, connection)
-    if token is not None and function_name.endswith(":rx:CALL0") and _is_ci16(response.results.get(function_name.split(":")[1])):
-        _ci16_tokens.add(token)
-    if token is not None and function_name.endswith(":rx:CALL0") and _readahead_k():
-        _rx_sizes[token] = response.ByteSize()
-    return response
+    with _explained(args):
+        response = _driver_hooks(function_name, args, token) if connection is None else None
+        if response is None:
+            response = _dispatch(function_name, args, connection)
+        if token is not None and function_name.endswith(":rx:CALL0") and _is_ci16(response.results.get(function_name.split(":")[1])):
+            _ci16_tokens.add(token)
+        if token is not None and function_name.endswith(":rx:CALL0") and _readahead_k():
+            _rx_sizes[token] = response.ByteSize()
+        return response
+
+
+@contextmanager
+def _explained(args):
+    """A failed call in plain English (core/messages.py), keeping its type."""
+    try:
+        yield
+    except (RuntimeError, grpc.RpcError) as exc:
+        from ..deployment.http import AccountBackendError
+
+        a = unmap_arg(args["a"]) if "a" in args else None
+        message = explain(exc, where=a.rpartition("@")[2] if isinstance(a, str) and "@" in a else None)
+        if message == str(exc):
+            raise  # already a sentence: type and text unchanged
+        if isinstance(exc, grpc.RpcError):
+            raise RemoteRFRpcError(message, exc) from exc
+        if isinstance(exc, AccountBackendError):
+            exc.args = (message,)  # .code, .provenance and .retry_after stay
+            raise
+        raise RuntimeError(message) from exc
 
 
 def _driver_hooks(function_name, args, token):
@@ -585,7 +613,8 @@ def batch(token):
             del depth[token]
             pending = _batch_local.pending
             if pending is not None and pending[0] == token:
-                _flush()
+                with _explained(pending[2][0][1]):
+                    _flush()
 
 
 def _flush(last=None):
@@ -613,7 +642,11 @@ def _flush(last=None):
     if "batch_failed" in response.results:
         failed = unmap_arg(response.results["batch_failed"])
         name = ops[failed][0] if isinstance(failed, int) and 0 <= failed < len(ops) else f"{prefix}:batch:CALLN"
-        raise RuntimeError(f"{name}: {unmap_arg(response.results['batch_error'])}")
+        error = unmap_arg(response.results["batch_error"])
+        log.debug("%s: %s", name, error)
+        if name.endswith(":SET"):
+            error = f"Setting {name.split(':')[1]} failed: {error}"
+        raise RuntimeError(f"{error} ({name})" if debug() else error)
     del response.results["batch_done"]
     return response
 
@@ -748,7 +781,7 @@ def _dispatch(function_name, args, connection):
         if fresh is not None:
             if key == "a" and route.res_id is not None and fresh.res_id not in (None, route.res_id):
                 # The device was reset between holders; never carry on silently.
-                raise RuntimeError(f"{token}: reservation changed; re-create the driver")
+                raise RuntimeError("The reservation changed; create the driver again.")
             response = _route_call(fresh, function_name, args)
         return _finish(response)
     return _finish(_send(function_name, args, connection))
@@ -800,9 +833,9 @@ def _finish(response):
     if 'a' in response.results:
         raise RuntimeError(unmap_arg(response.results['a']))
         
-    for key, text in (('UE', 'UserError: {}'), ('Message', '{}')):
+    for key, text in (('UE', explain), ('Message', str)):
         if key in response.results:
-            text = text.format(unmap_arg(response.results[key]))
+            text = text(unmap_arg(response.results[key]))
             if getattr(_quiet, "on", False):
                 log.info(text)  # INFO: never Python's last-resort stderr handler
             else:

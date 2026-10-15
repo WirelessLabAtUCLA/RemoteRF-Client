@@ -132,7 +132,9 @@ def fetch_idl(
     resp = rpc_client(function_name="IDL:get_drivers", args=args)
 
     if 'error' in resp.results:
-        raise RuntimeError(f"IDL fetch failed: {unmap_arg(resp.results['error'])}")
+        from ..core.messages import explain
+
+        raise RuntimeError(explain(str(unmap_arg(resp.results['error']))))
     schema = json.loads(unmap_arg(resp.results['schema']))
     if 'federated' in resp.results:
         if token is not None:
