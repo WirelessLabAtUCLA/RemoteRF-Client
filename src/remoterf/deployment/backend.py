@@ -437,6 +437,13 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
             raise AccountBackendError("Invalid home device response")
         return value["ice"]
 
+    def schema_status(self, schema_hash):
+        """RemoteRF Global's word on a device driver schema: approved, pending, rejected or unknown."""
+        value = self.transport.request("GET", f"{self.base}/schemas/{schema_hash.split(':', 1)[-1]}")
+        if value.get("status") not in {"approved", "pending", "rejected", "unknown"}:
+            raise AccountBackendError("Invalid home schema response")
+        return value["status"]
+
     def _device_frame(self, value):
         if "frame" in value:
             if value.get("provenance") != "destination" or type(value["frame"]) is not bytes:

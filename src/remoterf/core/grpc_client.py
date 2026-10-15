@@ -216,7 +216,9 @@ def _federated_call(route, function_name, args):
     """Relay through Global: an ``rfg_`` token needs no login, a ref the bearer."""
     from ..deployment.http import AccountBackendError
     ref = getattr(route, "wire", route)
-    if direct_path.wants(function_name):
+    # A driver schema always takes the relay, in one piece: Global screens each one it carries.
+    schema = function_name in ("IDL:get_drivers", "DynamicV2:GetSchema:WIRE")
+    if direct_path.wants(function_name) and not schema:
         path = direct_path.global_path(ref, getattr(route, "deployment_id", None))
         if path is not None:
             try:
@@ -247,9 +249,12 @@ def _federated_call(route, function_name, args):
                 # ticks mid-call; a GET changes nothing, so it is sent once more.
                 continue
             if exc.code == "response_too_large" and exc.provenance == "destination":
-                raw = _kept_reply(send, args)
+                raw = None if schema else _kept_reply(send, args)
                 if raw is not None:
                     break
+                if schema:
+                    raise RuntimeError("response_too_large [destination]: this device's driver schema is over "
+                                       "the Global relay's limit") from None
                 raise RuntimeError(
                     "response_too_large [destination]: the reply is over the Global relay's "
                     "768 KiB limit for one call and this deployment does not page it; read fewer "
