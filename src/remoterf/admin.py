@@ -282,7 +282,7 @@ def ssh_argv(lab: str, login: str, alias: str, *, strict: bool = True) -> list[s
             "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-i", str(key_path()).replace("%", "%%"),
             "-o", "PreferredAuthentications=publickey,keyboard-interactive", "-o", "PasswordAuthentication=no",
             "-o", "ServerAliveInterval=30", "-o", "ForwardAgent=no", "-o", "ForwardX11=no",
-            "-o", "ClearAllForwardings=yes", "-o", "LogLevel=ERROR",
+            "-o", "ClearAllForwardings=yes",  # no LogLevel=ERROR: it hides the lab's instructions
             "-l", login, alias]
 
 
