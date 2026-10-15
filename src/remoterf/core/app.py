@@ -86,7 +86,7 @@ def _format_reservation_range(start_time: datetime.datetime, end_time: datetime.
     return f"{start} - {end}"
 
 # ponytail: bounds mirror Global's policy (6-128 chars); not advertised by discovery.
-PASSWORD_MIN, PASSWORD_MAX = 6, 128
+PASSWORD_MIN, PASSWORD_MAX = 8, 128  # RemoteRF Global's own minimum
 _PASSWORD_HINT = f"Password must be {PASSWORD_MIN}-{PASSWORD_MAX} characters."
 
 def _ask(label, *, hidden=False):
@@ -299,14 +299,24 @@ def _remember_login():
         homes.remember_login(home_name, account.username, account.session_token)
 
 
+def homes_joined(name):
+    from ..deployment import homes
+
+    return homes.joined_home(name)
+
+
 def _sync_labs():
     """After a Global login: the labs this account has a login at, and their
-    current addresses -- what `-l` falls back to when Global is down."""
+    current addresses -- what `-l` falls back to when Global is down. Only
+    RemoteRF Global's own answer counts, not any HTTPS home's."""
     if not account.is_https_home:
         return
     try:
         from ..deployment import homes
 
+        saved = homes.load_state()["global_account"]
+        if saved is None or saved["origin"] != account.backend.transport.origin:
+            return
         homes.sync_linked(account.backend.me())
     except Exception:  # noqa: BLE001 - refreshed again at the next login
         pass
@@ -371,6 +381,12 @@ def _account_command(command):
         account.enrollment_code = _consume_enrollment_code(policy)
         try:
             account.username = _ask('Username') if policy['username_required'] else ''
+            if not account.is_https_home and homes_joined(home_name):
+                slug = account.registers_at_global()
+                if slug:
+                    account.password = _password_confirmation(enforce_policy=True)
+                    account.email = _ask('Email')
+                    return _register_at_global(slug)
             account.password = _password_confirmation(enforce_policy=account.is_https_home)
             account.email = _ask('Email') if policy['email_required'] else ''
             if not account.create_user():
@@ -429,6 +445,9 @@ def _account_command(command):
         name, where = homes.split_account(typed)
         here = homes.GLOBAL_ACCOUNTS if account.is_https_home else home_name
         account.username = name if where == here else typed
+        if not account.is_https_home and '@' in account.username and homes.is_linked_home(home_name):
+            # Here the login is the username; an email would send the Global password as typed.
+            raise AccountBackendError('Log in here with your username, not your email')
         account.password = _ask('Password (Hidden)', hidden=True)
         if not account.is_https_home:
             # A lab this Global account has a login at gets a secret bound to it, not the password.

@@ -252,8 +252,13 @@ def _use_linked_lab(username: str | None) -> int:
     again next time."""
     from remoterf.deployment import homes
 
+    mine = homes.linked()["username"]
+    name, where = homes.split_account(username) if username else (mine, None)
+    if not name or name.lower() != mine or where not in (None, homes.GLOBAL_ACCOUNTS):
+        # Only the account the labs were linked for: anything else would send a password as typed.
+        printf('Could not reach RemoteRF Global, and that is not the account linked to your labs.', Sty.WARNING)
+        return 2
     printf('RemoteRF Global is not answering: opening your lab directly.', Sty.WARNING)
-    name = (username or homes.linked()["username"] or "").split("@")[0] or None
     for lab in homes.linked_homes():
         try:
             home = homes.load_home(lab)

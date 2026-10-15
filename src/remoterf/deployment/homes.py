@@ -99,45 +99,79 @@ def linked() -> dict:
 
 
 def sync_linked(me: dict) -> None:
-    """Record the account's lab logins and refresh each lab's saved home (its
-    LAN address and CA may have changed); best effort, Global just answered."""
+    """Record the account's lab logins -- each lab's slug and the CA pin Global
+    publishes for it -- and refresh its saved home (LAN address and CA may have
+    changed). Only from Global's own /me (the caller checks), and only when it
+    lists labs: an older Global must not wipe the record."""
+    if type(me.get("labs")) is not list:
+        return
     labs = {}
-    for lab in me.get("labs") or []:
-        if type(lab) is dict and type(lab.get("slug")) is str and NAME_RE.match(lab["slug"]):
-            labs[str(lab.get("deployment_id"))] = lab["slug"]
-    private_write(root() / LINKED_FILE, {"username": str(me.get("username") or "").lower(), "labs": labs})
-    for deployment_id, slug in labs.items():
-        try:
-            document = discover(f"{slug}.{GLOBAL_DOMAIN}")
-            if document["deployment_id"] == deployment_id:
-                save_home(slug, document)
-        except Exception:  # noqa: BLE001 - the old saved home stays usable
+    for lab in me["labs"]:
+        if type(lab) is not dict or type(lab.get("slug")) is not str or not NAME_RE.match(lab["slug"]):
             continue
+        try:
+            document = discover(f"{lab['slug']}.{GLOBAL_DOMAIN}")
+        except Exception:  # noqa: BLE001 - keep what we knew about it
+            known = linked()["labs"].get(str(lab.get("deployment_id")))
+            if known:
+                labs[str(lab.get("deployment_id"))] = known
+            continue
+        if document["deployment_id"] != lab.get("deployment_id") or not document["cert_sha256"]:
+            continue
+        labs[document["deployment_id"]] = {"slug": lab["slug"], "cert_sha256": document["cert_sha256"]}
+        try:
+            save_home(lab["slug"], document)
+        except Exception:  # noqa: BLE001 - a clashing home is simply not this lab (lab_password checks)
+            pass
+    private_write(root() / LINKED_FILE, {"username": str(me.get("username") or "").lower(), "labs": labs})
+
+
+def _linked_lab(name: str, home: dict) -> str | None:
+    """The linked lab this saved home really is -- its CA must be the one
+    Global publishes for that lab -- or None. A home's own claimed id proves
+    nothing: anyone can serve a discovery document naming another lab."""
+    for deployment_id, lab in linked()["labs"].items():
+        if type(lab) is dict and home.get("cert_sha256") == lab.get("cert_sha256") and (
+            name == lab.get("slug") or home.get("deployment_id") is None  # or a `-c -a` home of that lab
+        ):
+            return deployment_id
+    return None
 
 
 def linked_homes() -> list[str]:
     """Saved homes this account has a lab login at: where `-l` goes when Global is down."""
-    labs = linked()["labs"]
-    return sorted(name for name, home in homes().items() if home.get("deployment_id") in labs)
+    return sorted(name for name, home in homes().items()
+                  if home.get("deployment_id") is not None and _linked_lab(name, home))
 
 
 def lab_password(home: str | None, username: str, password: str) -> str:
-    """What to send `home` as the password: lan_secret at a linked lab, else the password."""
-    info = linked()
+    """What to send `home` as the password: lan_secret at a linked lab (for the
+    linked account's own name), else the password as typed."""
     try:
         saved = load_home(home) if home else None
     except ValidationError:
         saved = None
-    deployment_id = saved and saved["deployment_id"]
-    if saved and deployment_id is None:
-        # A lab set up with `-c -a`: a linked lab's saved home with the same CA is this lab.
-        deployment_id = next((h["deployment_id"] for h in homes().values()
-                              if h["deployment_id"] in info["labs"] and h["cert_sha256"] == saved["cert_sha256"]), None)
-    if deployment_id in info["labs"] and username.lower() == info["username"]:
+    deployment_id = saved and _linked_lab(home, saved)
+    if deployment_id and username.lower() == linked()["username"]:
         from .lanpass import lan_secret
 
         return lan_secret(password, deployment_id, username)
     return password
+
+
+def is_linked_home(home: str | None) -> bool:
+    try:
+        return bool(home) and _linked_lab(home, load_home(home)) is not None
+    except ValidationError:
+        return False
+
+
+def joined_home(home: str | None) -> bool:
+    """Discovered through Global (it has a relay route): registration there goes through Global."""
+    try:
+        return bool(home) and any(r["kind"] == "relay" for r in load_home(home)["routes"])
+    except ValidationError:
+        return False
 
 
 def save_home(name: str, document: dict) -> dict:
@@ -259,30 +293,34 @@ def select_route(home: dict, fallback: bytes | None = None) -> tuple[dict, bytes
     address now used by something else); if no route serves the pinned one but
     one served another, that is refused. Fallback never leaves this HOME.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    import threading
 
     pin = home.get("cert_sha256")
     routes = list(home["routes"])
     failures, mismatched = [], None
-    pool = ThreadPoolExecutor(max_workers=max(1, len(routes)))
-    try:
-        probes = [
-            pool.submit(
-                _probe, route,
-                LAN_CONNECT_TIMEOUT if route["kind"] == "lan" else ROUTE_CONNECT_TIMEOUT,
-            )
-            for route in routes
-        ]
-        for route, probe in zip(routes, probes):
-            certificate = probe.result()
-            if certificate is None:
-                failures.append(route["kind"])
-            elif pin and hashlib.sha256(certificate).hexdigest() != pin:
-                mismatched = mismatched or route["kind"]
-            else:
-                return route, certificate
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+    answers = [None] * len(routes)
+    done = [threading.Event() for _ in routes]
+
+    def probe(i, route, timeout):
+        try:
+            answers[i] = _probe(route, timeout)
+        finally:
+            done[i].set()
+
+    # Daemon threads: a relay probe still hanging after the LAN won must not
+    # hold the process open on exit.
+    for i, route in enumerate(routes):
+        timeout = LAN_CONNECT_TIMEOUT if route["kind"] == "lan" else ROUTE_CONNECT_TIMEOUT
+        threading.Thread(target=probe, args=(i, route, timeout), daemon=True).start()
+    for i, route in enumerate(routes):
+        done[i].wait()
+        certificate = answers[i]
+        if certificate is None:
+            failures.append(route["kind"])
+        elif pin and hashlib.sha256(certificate).hexdigest() != pin:
+            mismatched = mismatched or route["kind"]
+        else:
+            return route, certificate
     if mismatched:
         raise ValidationError(
             f"The {mismatched} route for this deployment served an unexpected certificate"

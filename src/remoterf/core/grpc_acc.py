@@ -63,6 +63,14 @@ class RemoteRFAccount:
             return self.backend.call(function_name, args)
         return rpc_client(function_name=function_name, args=args)
 
+    def registers_at_global(self):
+        """Ask a lab discovered through Global whether it registers there, before
+        any password is sent: a 1.5+ lab answers GS=<slug> first; an older one
+        refuses the empty details and creates nothing."""
+        response = self._call(function_name="ACC:create_user", args={"un": map_arg(self.username or ""), "pw": map_arg(""),
+                                                                       "em": map_arg(""), "ec": map_arg(self.enrollment_code)})
+        return unmap_arg(response.results["GS"]) if 'GS' in response.results else None
+
     def create_user(self):
         if self.is_https_home:
             result = self.backend.register(self.username, self.email, self.password) or {}

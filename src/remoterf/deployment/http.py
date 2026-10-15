@@ -105,7 +105,9 @@ class JsonTransport:
                 if 300 <= response.status_code < 400:
                     raise AccountBackendError("Account redirects are not allowed")
                 if response.status_code >= 500 and not bytes(raw).lstrip().startswith(b"{"):
-                    raise AccountBackendError("Account service unavailable", unreachable=True)
+                    # The proxy answered for an app that is down (502/503): it never saw the request.
+                    raise AccountBackendError("Account service unavailable", unreachable=True,
+                                              sent=response.status_code not in (502, 503))
                 if accept_framed and response.status_code < 300 and (
                     response.headers.get("content-type", "").split(";")[0].strip() == FRAMED_CONTENT_TYPE
                 ):
