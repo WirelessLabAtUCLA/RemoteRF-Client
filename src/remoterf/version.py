@@ -13,7 +13,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from functools import lru_cache
 from importlib.metadata import version, PackageNotFoundError
+
+# What every request says this client is: Global and joined labs refuse a client too old to be safe there.
+CLIENT_HEADER = "X-RemoteRF-Client"
+
+
+@lru_cache(maxsize=None)
+def current() -> str:
+    try:
+        return version("remoterf")
+    except PackageNotFoundError:
+        return "unknown"
 
 def main():
     try:

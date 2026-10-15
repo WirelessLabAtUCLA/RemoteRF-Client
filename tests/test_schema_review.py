@@ -150,3 +150,33 @@ def test_globals_answer_is_read_strictly():
     assert asked == [("GET", "/v2/deployment/schemas/" + "ab" * 32)]
     with pytest.raises(AccountBackendError):
         backend.schema_status("sha256:" + "ab" * 32)
+
+
+def test_every_request_says_which_client_it_is_and_too_old_reads_update(monkeypatch):
+    import httpx
+
+    from remoterf import version
+    from remoterf.core.messages import explain
+    from remoterf.deployment.http import AccountBackendError, JsonTransport
+
+    seen = []
+
+    def answer(request):
+        seen.append(request.headers.get(version.CLIENT_HEADER))
+        return httpx.Response(426, json={"error": {"code": "unsupported_version", "provenance": "home"}})
+
+    transport = JsonTransport("https://global.example", client=httpx.Client(transport=httpx.MockTransport(answer)))
+    with pytest.raises(AccountBackendError) as refused:
+        transport.request("GET", "/v2/deployment/me")
+    assert seen == [version.current()]
+    assert "pip install -U remoterf" in explain(refused.value)
+
+    sent = []
+
+    class Stub:
+        def Call(self, request, metadata=None):
+            sent.append(metadata)
+            return grpc_pb2.GenericRPCResponse()
+
+    grpc_client._send("ACC:login", {}, type("Connection", (), {"stub": Stub()})())
+    assert sent == [(("x-remoterf-client", version.current()),)]

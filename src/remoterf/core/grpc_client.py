@@ -814,7 +814,12 @@ def _send(function_name, args, connection, token=None):
     # TODO: Handle Errors
     
     # print(f"Calling function: {function_name}")
-    return (connection or get_active_connection()).stub.Call(grpc_pb2.GenericRPCRequest(function_name=function_name, args=args))
+    from ..version import CLIENT_HEADER, current
+
+    return (connection or get_active_connection()).stub.Call(
+        grpc_pb2.GenericRPCRequest(function_name=function_name, args=args),
+        metadata=((CLIENT_HEADER.lower(), current()),),
+    )
 
 
 def _finish(response):

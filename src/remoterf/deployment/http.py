@@ -63,7 +63,10 @@ class JsonTransport:
             or any(c in path for c in ("?", "#", "\\", "%"))
         ):
             raise ValidationError("Invalid same-origin account path")
-        headers = {"Accept": f"{FRAMED_CONTENT_TYPE}, application/json" if accept_framed else "application/json"}
+        from ..version import CLIENT_HEADER, current
+
+        headers = {"Accept": f"{FRAMED_CONTENT_TYPE}, application/json" if accept_framed else "application/json",
+                   CLIENT_HEADER: current()}
         content = None
         if frame is not None:
             envelope = json.dumps(data, separators=(",", ":")).encode()
