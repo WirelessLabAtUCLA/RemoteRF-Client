@@ -27,7 +27,7 @@ DUMP = """
 import importlib, json, sys, types
 try:
     import adi
-except ImportError:
+except (ImportError, AttributeError, OSError):  # pyadi without a matching libiio
     sys.modules["adi"] = types.ModuleType("adi")  # the Pluto schema imports pyadi at load
 out = {}
 for device_type, spec in json.loads(sys.argv[1]).items():
