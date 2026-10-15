@@ -153,6 +153,7 @@ def print_help() -> None:
     printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@deployment)", Sty.DEFAULT)
     printf("  remoterf -r | --register [global]", Sty.CYAN, " Register with an enrollment code (or a RemoteRF Global account)", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
+    printf("  remoterf --remote-admin [lab]", Sty.CYAN, "     A lab's console, for its remote admins (-h for more)", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
     print()
     printf("Config:", (Sty.BOLD, Sty.MAGENTA))
@@ -537,6 +538,11 @@ def main() -> int:
 
     if argv[0] in ("homes", "--homes"):
         return _print_homes()
+
+    if argv[0] in ("--remote-admin", "--admin-pipe"):
+        from remoterf.admin import main as admin_main
+
+        return admin_main(argv[1:] if argv[0] == "--remote-admin" else argv)
 
     if argv[0] in ("--version", "-version", "-v"):
         from remoterf.version import main as version_main
