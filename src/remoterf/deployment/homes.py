@@ -188,7 +188,7 @@ def _probe(route: dict, timeout: float) -> bytes | None:
     return certificate if looks_like_pem_cert(certificate) else None
 
 
-def select_route(home: dict) -> tuple[dict, bytes]:
+def select_route(home: dict, fallback: bytes | None = None) -> tuple[dict, bytes]:
     """The best working route for this HOME, and the certificate it served.
 
     Every route is probed at once. They are still preferred in the order the
@@ -223,6 +223,8 @@ def select_route(home: dict) -> tuple[dict, bytes]:
                 "unexpected certificate"
             )
         return route, certificate
+    if fallback is not None and routes:
+        return routes[0], fallback
     raise ValidationError(
         "Could not reach this deployment on any route ("
         + ", ".join(failures or ["none advertised"])
@@ -263,9 +265,24 @@ def activate(name: str, home: dict, route: dict, certificate: bytes) -> Path:
 def connect(name: str) -> dict:
     """Select a saved HOME and bring its transport up. Returns the route used."""
     home = load_home(name)
-    route, certificate = select_route(home)
+    route, certificate = select_route(home, _configured_ca(name, home))
     activate(name, home, route, certificate)
     return route
+
+
+def _configured_ca(name: str, home: dict) -> bytes | None:
+    """The CA `-c -a` saved for a lab with no deployment id, if it still
+    matches the pin. 2.0.x fetched it once and then needed only the gRPC
+    port, so a lab whose cert port is unreachable must still log in."""
+    if home.get("deployment_id") is not None:
+        return None
+    from ..config.config import _certs_dir
+
+    try:
+        certificate = (_certs_dir() / f"{name}.crt").read_bytes()
+    except OSError:
+        return None
+    return certificate if hashlib.sha256(certificate).hexdigest() == home.get("cert_sha256") else None
 
 
 # An account is `name@<deployment>`; Global's own accounts are `name@global`.
@@ -291,12 +308,16 @@ def register_home(host: str) -> tuple[str, dict, dict]:
     return name, home, route
 
 
-def migrate_legacy_target() -> str | None:
-    """Adopt a pre-homes single-target config as a HOME named "default"."""
+def migrate_legacy_target(*, configured: bool = False) -> str | None:
+    """Adopt a pre-homes single-target config as a HOME named "default".
+
+    `configured`: `-c -a` just wrote it, so adopt it even beside other homes
+    and make it the target `-l` opens next.
+    """
     from .direct import resolve_active_profile
 
     data = load_state()
-    if data["homes"]:
+    if data["homes"] and not configured:
         return None
     profile = resolve_active_profile()
     if profile is None or not profile.ca_path.exists():
@@ -311,12 +332,12 @@ def migrate_legacy_target() -> str | None:
                 "kind": "direct",
                 "host": host,
                 "port": int(port),
-                "cert_port": int(port) + 1,
+                "cert_port": profile.cert_port or int(port) + 1,
             }
         ],
         "cert_sha256": hashlib.sha256(profile.ca_path.read_bytes()).hexdigest(),
     }
-    if data["last_target"] is None:
+    if data["last_target"] is None or configured:
         data["last_target"] = {"kind": "home", "name": "default"}
     save_state(data)
     return "default"

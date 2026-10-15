@@ -274,12 +274,33 @@ def test_reconfiguring_the_direct_target_replaces_a_stale_default_home(monkeypat
     monkeypatch.setattr(cfg, "fetch_and_save_ca_cert", fetch)
     cfg.configure("164.67.195.210", 61005, 61006)
 
-    assert homes.homes() == {}
-    assert homes.last_target() is None
-    assert homes.migrate_legacy_target() == "default"
+    assert list(homes.homes()) == ["default"]
+    assert homes.last_target() == {"kind": "home", "name": "default"}
     home = homes.load_home("default")
     assert home["routes"][0]["host"] == "164.67.195.210"
     assert home["cert_sha256"] == hashlib.sha256(new_cert).hexdigest()
+
+
+def test_configure_keeps_a_custom_cert_port_and_wins_over_other_homes(monkeypatch):
+    """`-c -a host:port --cert-port N` then `-l` must reach that server, even
+    for a user who already has other homes saved."""
+    from remoterf.config import config as cfg
+
+    homes.save_home("ucla", document())
+    homes.set_last_target("global")
+    monkeypatch.setattr(cfg, "_host_resolves", lambda host: True)
+    monkeypatch.setattr(cfg, "_confirm_tos", lambda: True)
+    monkeypatch.setattr(
+        cfg, "fetch_and_save_ca_cert",
+        lambda host, port, *, out_path, timeout_sec, overwrite: out_path.write_bytes(CERT) or True,
+    )
+    cfg.configure("192.168.1.30", 61005, 7000)
+
+    assert homes.load_home("default")["routes"] == [
+        {"kind": "direct", "host": "192.168.1.30", "port": 61005, "cert_port": 7000}
+    ]
+    assert homes.last_target() == {"kind": "home", "name": "default"}
+    assert "ucla" in homes.homes()
 
 
 def test_migration_does_nothing_without_a_previous_configuration():
@@ -632,3 +653,36 @@ def test_reserve_shows_the_token_even_when_the_driver_fetch_fails(monkeypatch, c
     assert account.reserve_device(0, now, now + datetime.timedelta(hours=1)) == "reservation-token"
     account.install_reserved_driver("reservation-token", 0)
     assert "Could not install the driver" in capsys.readouterr().out
+
+
+def test_configured_lab_logs_in_when_only_its_grpc_port_answers(monkeypatch):
+    """2.0.x needed the cert port only at `-c -a`; a lab reachable on its gRPC
+    port alone must still open from the CA saved then (and only that CA)."""
+    from remoterf.config import config as cfg
+
+    certs = cfg._certs_dir()
+    certs.mkdir(parents=True, exist_ok=True)
+    (certs / "default.crt").write_bytes(CERT)
+    cfg._write_env_kv(cfg._env_path(), {"REMOTERF_ADDR": "192.168.1.30:61005", "REMOTERF_CA_CERT": str(certs / "default.crt")})
+    assert homes.migrate_legacy_target() == "default"
+    monkeypatch.setattr(homes, "_probe", lambda route, timeout: None)
+    monkeypatch.setattr(homes, "activate", lambda name, home, route, certificate: certificate)
+    assert homes.connect("default")["host"] == "192.168.1.30"
+
+    (certs / "default.crt").write_bytes(OTHER_CERT)  # not the pinned CA: no fallback
+    with pytest.raises(ValidationError):
+        homes.connect("default")
+
+
+def test_reconfiguring_forgets_the_old_servers_login(monkeypatch):
+    from remoterf.config import config as cfg
+
+    homes.remember_login("default", "jdoe", "old-server-session")
+    monkeypatch.setattr(cfg, "_host_resolves", lambda host: True)
+    monkeypatch.setattr(cfg, "_confirm_tos", lambda: True)
+    monkeypatch.setattr(
+        cfg, "fetch_and_save_ca_cert",
+        lambda host, port, *, out_path, timeout_sec, overwrite: out_path.write_bytes(CERT) or True,
+    )
+    cfg.configure("192.168.1.31", 61005, 61006)
+    assert homes.recall_login("default") is None

@@ -13,6 +13,7 @@ class DirectConnectionProfile:
     ca_path: Path
     mode: str = "direct"
     home: str | None = None  # the saved HOME this profile was activated from
+    cert_port: int | None = None  # `-c -a --cert-port`; None means grpc port + 1
 
 
 ConnectionProfile = DirectConnectionProfile
@@ -35,4 +36,5 @@ def resolve_active_profile():
     return DirectConnectionProfile(
         address, setting("REMOTERF_TLS_SERVER_NAME") or None, Path(ca).expanduser(),
         home=setting("REMOTERF_PROFILE") or None,
+        cert_port=int(setting("REMOTERF_CERT_PORT")) if setting("REMOTERF_CERT_PORT").isdigit() else None,
     )
