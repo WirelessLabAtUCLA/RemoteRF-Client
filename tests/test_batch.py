@@ -1,5 +1,6 @@
 """with sdr.batch(): a driver's SETs go to the lab as one <Prefix>:batch:CALLN."""
 
+import grpc
 import pytest
 
 from remoterf.common.grpc import grpc_pb2
@@ -141,7 +142,7 @@ def test_a_full_queue_is_sent_at_64_ops(lab, monkeypatch):
 
 def test_a_failed_set_raises_naming_it_and_later_ops_do_not_run(lab):
     lab.fail.add("sample_rate")
-    with pytest.raises(RuntimeError, match=r"^Pluto:sample_rate:SET: sample_rate refused$"):
+    with pytest.raises(RuntimeError, match=r"^Setting sample_rate failed: sample_rate refused$"):
         with grpc_client.batch(TOKEN):
             _set("rx_lo", 1)
             _set("sample_rate", 2)
@@ -171,11 +172,27 @@ def test_an_old_lab_gets_the_ops_one_by_one_and_is_not_probed_again(lab, old):
 
 def test_a_transport_failure_is_raised_not_replayed(lab):
     lab.old = RuntimeError("route_unavailable [transport]")
-    with pytest.raises(RuntimeError, match="route_unavailable"):
+    with pytest.raises(RuntimeError, match="^lab isn't responding right now; try again in a minute.$") as raised:
         with grpc_client.batch(TOKEN):
             _set("rx_lo", 1)
             _set("tx_lo", 2)
+    assert str(raised.value.__cause__) == "route_unavailable [transport]"
     assert lab.sent == ["Pluto:batch:CALLN"] and lab.ran == [] and TOKEN not in grpc_client._batch_support
+
+
+def test_a_lab_down_at_the_block_end_reads_as_a_sentence_not_a_dump(lab):
+    class Down(grpc.RpcError):
+        def code(self):
+            return grpc.StatusCode.UNAVAILABLE
+
+        def details(self):
+            return "failed to connect to all addresses"
+
+    lab.old = Down()
+    with pytest.raises(grpc.RpcError, match="^Can't reach lab right now; check your connection and try again.$"):
+        with grpc_client.batch(TOKEN):
+            _set("rx_lo", 1)
+            _set("tx_lo", 2)
 
 
 def test_a_virtual_driver_batch_is_a_no_op(lab):

@@ -58,7 +58,9 @@ class RaceTests(unittest.TestCase):
             path = self._path(lambda offer: {"ufrag": "a", "pwd": "b", "candidates": [], "udp": "h:1", "session": "s"})
             self.assertFalse(path.wait(15))
         self.assertEqual(path.state, "down")
-        self.assertEqual(path.reason, "fixed port: timed out; punch: ConnectionError: ICE negotiation failed")
+        self.assertEqual(path.reason, "fixed port: timed out; punch: ICE negotiation failed")
+        with mock.patch.dict("os.environ", {"REMOTERF_DEBUG": "1"}):
+            self.assertEqual(direct_path._why(ConnectionError("ICE negotiation failed")), "ConnectionError: ICE negotiation failed")
 
     def test_a_punch_alone_keeps_its_own_reason(self):
         async def punch(self, ice, answer, configuration):

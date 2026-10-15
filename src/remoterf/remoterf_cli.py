@@ -150,7 +150,7 @@ def print_help() -> None:
     printf("  remoterf -h | --help", Sty.CYAN, "              Show this help", Sty.DEFAULT)
     print()
     printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
-    printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@lab)", Sty.DEFAULT)
+    printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@deployment)", Sty.DEFAULT)
     printf("  remoterf -r | --register [global]", Sty.CYAN, " Register with an enrollment code (or a RemoteRF Global account)", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
@@ -205,7 +205,9 @@ def _account_shell(*, register: bool, enrollment_code: str | None = None,
             or 0
         )
     except (RuntimeError, ValueError) as exc:
-        print(f'Account connection failed: {exc}')
+        from .core.messages import explain
+
+        print(f'Account connection failed: {explain(exc)}')
         return 2
 
 
@@ -241,7 +243,9 @@ def _use_global(*, register: bool, show_banner: bool = True, username: str | Non
     except (RuntimeError, ValueError) as exc:
         if not register and getattr(exc, 'unreachable', False) and homes.linked_homes():
             return _use_linked_lab(username)
-        print(f'Could not reach RemoteRF Global: {exc}')
+        from .core.messages import explain
+
+        print(f'Could not reach RemoteRF Global: {explain(exc)}')
         return 2
     return _account_shell(register=register, show_banner=show_banner, username=username)
 
@@ -321,7 +325,9 @@ def _reason(exc: BaseException) -> str:
         if isinstance(seen, (ConnectionRefusedError, TimeoutError)):
             return 'nothing answered there'
         seen = seen.__cause__ or seen.__context__
-    return str(exc)
+    from .core.messages import explain
+
+    return explain(exc)
 
 
 def _use_home(name: str, *, register: bool, enrollment_code: str | None = None,
@@ -386,7 +392,7 @@ def _register() -> int:
     if not entered:
         # No lab yet: the account lives on Global. A lab's invite can still
         # be redeemed later, from the shell, with `enroll <invite>`.
-        printf('Registering a RemoteRF Global account. Join a lab any time with: enroll <lab invite>', Sty.GRAY)
+        printf('Registering a RemoteRF Global account. Join a deployment any time with: enroll <deployment invite>', Sty.GRAY)
         return _use_global(register=True, show_banner=False)
     try:
         host, code = homes.parse_code(entered)
@@ -448,7 +454,7 @@ def _login_by_username() -> int:
     """A fresh install: an account says where it lives (`alice@ucla`), so
     asking for it is enough. Enter registers, as `-l` here always did."""
     try:
-        name = input('Account (username@lab, Enter to register): ').strip()
+        name = input('Account (username@deployment, Enter to register): ').strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return 1
@@ -630,7 +636,9 @@ def main() -> int:
                         backend.close()
                     return _account_shell(register=True) if register else 0
                 except (RuntimeError, ValueError) as exc:
-                    print(f'Configuration failed: {exc}')
+                    from .core.messages import explain
+
+                    print(f'Configuration failed: {explain(exc)}')
                     return 2
             # parse host:port (minimal, strict)
             s = addr.strip()

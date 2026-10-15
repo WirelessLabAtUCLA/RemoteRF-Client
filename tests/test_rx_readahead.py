@@ -144,8 +144,9 @@ def test_an_old_lab_gets_plain_rx_from_then_on(lab, refuse):
 def test_a_transport_failure_is_raised(lab):
     _rx()
     lab.refuse = RuntimeError("route_unavailable [transport]")
-    with pytest.raises(RuntimeError, match="route_unavailable"):
+    with pytest.raises(RuntimeError, match="isn't responding") as raised:
         _rx()
+    assert "route_unavailable" in str(raised.value.__cause__)
     assert TOKEN not in grpc_client._rx_n_unsupported
 
 

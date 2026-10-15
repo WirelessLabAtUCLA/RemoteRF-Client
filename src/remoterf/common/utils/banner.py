@@ -113,7 +113,7 @@ def _panel_lines(
     top = f"{top_left}{label}{horizontal * (PANEL_INNER_WIDTH - len(label))}{top_right}"
     content = [
         f"{marker} www.remoterf.net",
-        "Created by https://wireless.ee.ucla.edu",
+        "Created by the Wireless Lab at UCLA",
         f"VERSION  {version}",
     ]
     # Before a target is chosen there is no server to name; an "NA" row would
