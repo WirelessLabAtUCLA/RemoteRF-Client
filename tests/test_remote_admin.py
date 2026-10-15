@@ -124,3 +124,31 @@ def test_admin_pipe_pumps_bytes_both_ways():
         server.stop(0)
     assert out.buffer.getvalue() == b"SSH-2.0-HELLO\n"
     assert seen["label"] == admin.device_label()
+
+
+def test_lab_addresses():
+    assert admin._address("192.0.2.7:12321") == ("192.0.2.7", 12321)
+    assert admin._address("[2001:db8::7]:12321") == ("2001:db8::7", 12321)
+    assert admin._address("192.0.2.7") == ("192.0.2.7", 12321)
+    assert admin._address("ucla") is None
+    with pytest.raises(admin.AdminError):
+        admin._address("fe80::1")
+
+
+def test_hostkey_says_when_the_lab_presents_another_key(capsys):
+    admin.trust_line("remoterf-x", LINE)
+    other = LINE.replace("Hk2", "Xk2")
+    with mock.patch.object(admin, "fetch_host_key", return_value=(other, "remoterf-x")):
+        admin.cmd_hostkey("ucla")
+    assert "NOT the key trusted here" in capsys.readouterr().out
+
+
+def test_paths_are_quoted_for_ssh_and_errors_never_trace(monkeypatch, capsys):
+    argv = admin.ssh_argv("ucla", "alice", "remoterf-x")
+    assert any(a.startswith('UserKnownHostsFile="') and a.endswith('known_hosts"') for a in argv)
+    with mock.patch.object(admin, "cmd_trust", side_effect=ValueError("boom")):
+        assert admin.main(["trust", "ucla", "SHA256:x"]) == 1
+    assert "remoterf: boom" in capsys.readouterr().err
+    with mock.patch.object(admin, "pipe", side_effect=KeyboardInterrupt), mock.patch("sys.stdout", io.StringIO()) as out:
+        assert admin.main(["--admin-pipe", "ucla"]) == 130
+    assert out.getvalue() == ""

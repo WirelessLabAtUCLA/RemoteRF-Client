@@ -112,16 +112,33 @@ def _alias(lab: str, deployment_id: str | None) -> str:
     return "remoterf-" + (deployment_id or re.sub(r"[^A-Za-z0-9.-]", "-", lab))
 
 
+def _address(lab: str) -> tuple[str, int] | None:
+    """`host:port`, `[v6]:port` or a bare IPv4 (port 12321): a lab that never joined Global."""
+    if lab.startswith("["):
+        host, _, port = lab[1:].partition("]:")
+    elif lab.count(":") == 1:
+        host, _, port = lab.partition(":")
+    elif ":" in lab:
+        raise AdminError(f"Write an IPv6 lab as [address]:port, not {lab!r}")
+    elif lab.count(".") == 3 and lab.replace(".", "").isdigit():
+        host, port = lab, "12321"
+    else:
+        return None
+    if not host or not port.isdigit():
+        raise AdminError(f"Not a lab address: {lab!r}")
+    return host, int(port)
+
+
 def _resolve(lab: str):
     """(grpc target, CA PEM, TLS server name, HostKeyAlias) for a lab: a saved home,
     a Global name (discovered and saved), or a host:port that never joined Global."""
     from .deployment import homes
 
-    if ":" in lab or (lab.count(".") >= 3 and lab.replace(".", "").isdigit()):
+    address = _address(lab)
+    if address is not None:
         from .config.cert_fetcher import fetch_ca_bytes
 
-        host, _, port = lab.rpartition(":") if ":" in lab else (lab, "", "12321")
-        host = host.strip("[]")
+        host, port = address
         entry = labs().get(lab, {})
         try:
             certificate = fetch_ca_bytes(host, int(entry.get("cert_port") or int(port) + 1), timeout_sec=5.0)
@@ -135,11 +152,15 @@ def _resolve(lab: str):
         home = _rediscover(lab)
     try:
         route, certificate = homes.select_route(home, homes._configured_ca(lab, home))
-    except Exception:  # noqa: BLE001 - a new CA (`certs reset`): Global's current pin, as LAN fallback does
-        if home.get("deployment_id") is None:
-            raise
+    except Exception as exc:  # noqa: BLE001
+        # A new CA (`certs reset`): Global's current pin, as LAN fallback does. Anything else is the answer.
+        if home.get("deployment_id") is None or "unexpected certificate" not in str(exc):
+            raise AdminError(f"Could not reach {lab}: {exc}") from None
         home = _rediscover(lab)
-        route, certificate = homes.select_route(home)
+        try:
+            route, certificate = homes.select_route(home)
+        except Exception as exc2:  # noqa: BLE001
+            raise AdminError(f"Could not reach {lab}: {exc2}") from None
     relay = next((r["host"] for r in home["routes"] if r["kind"] == "relay"), None)
     return (f"{route['host']}:{route['port']}", certificate, relay if route["kind"] != "relay" else None,
             _alias(lab, home.get("deployment_id")))
@@ -148,6 +169,8 @@ def _resolve(lab: str):
 def _rediscover(lab: str) -> dict:
     from .deployment import homes
 
+    if not homes.NAME_RE.match(lab):
+        raise AdminError(f"No saved home {lab!r}, and it is not a RemoteRF Global lab name")
     try:
         return homes.save_home(lab, homes.discover(f"{lab}.{homes.GLOBAL_DOMAIN}"))
     except Exception as exc:  # noqa: BLE001
@@ -167,26 +190,33 @@ def fetch_host_key(lab: str) -> tuple[str, str]:
 
     channel, alias = _channel(lab)
     try:
-        line = channel.unary_unary(SERVICE + "HostKey")(b"", timeout=15).decode().strip()
+        line = channel.unary_unary(SERVICE + "HostKey")(b"", timeout=15).decode("ascii", "replace").strip()
     except grpc.RpcError as exc:
         raise AdminError(f"{lab}: {exc.details() or exc.code().name}") from None
     finally:
         channel.close()
-    if not re.match(r"^ssh-ed25519 [A-Za-z0-9+/=]+$", line):
+    try:
+        fingerprint(line)
+    except Exception:  # noqa: BLE001
+        raise AdminError(f"{lab} sent something that is not a host key") from None
+    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}", line):
         raise AdminError(f"{lab} sent something that is not a host key")
     return line, alias
 
 
 def fingerprint(line: str) -> str:
-    blob = base64.b64decode(line.split()[1])
+    blob = base64.b64decode(line.split()[1], validate=True)
     return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
 
 
-def trusted(alias: str) -> bool:
+def trusted(alias: str, key_line: str | None = None) -> bool:
+    """Whether this alias has a pinned key here (that very key, when given)."""
     try:
-        return any(line.split()[:1] == [alias] for line in known_hosts_path().read_text().splitlines())
+        lines = known_hosts_path().read_text().splitlines()
     except OSError:
         return False
+    return any(l.split()[:1] == [alias] and (key_line is None or l.split()[1:3] == key_line.split()[:2])
+               for l in lines)
 
 
 def trust_line(alias: str, line: str) -> None:
@@ -233,14 +263,23 @@ def pipe(lab: str) -> int:
 # ssh
 # -----------------------------
 
+def _ssh_path(path) -> str:
+    """A path as an ssh option value: quoted (spaces), `%` escaped (ssh expands tokens)."""
+    return '"' + str(path).replace("%", "%%") + '"'
+
+
 def ssh_argv(lab: str, login: str, alias: str, *, strict: bool = True) -> list[str]:
-    proxy = " ".join(shlex.quote(a) for a in (sys.executable, "-m", "remoterf.admin", "--admin-pipe", lab))
+    # -P: never import from the directory ssh happens to run in (3.11+).
+    python = [sys.executable, *(["-P"] if sys.version_info >= (3, 11) else [])]
+    words = [*python, "-m", "remoterf.admin", "--admin-pipe", lab]
+    proxy = subprocess.list2cmdline(words) if os.name == "nt" else " ".join(shlex.quote(a) for a in words)
     return ["ssh", "-F", "none", "-tt",
             "-o", "ProxyCommand=" + proxy.replace("%", "%%"),
             "-o", f"HostKeyAlias={alias}",
-            "-o", f"UserKnownHostsFile={known_hosts_path()}", "-o", "GlobalKnownHostsFile=/dev/null",
+            "-o", f"UserKnownHostsFile={_ssh_path(known_hosts_path())}",
+            "-o", f"GlobalKnownHostsFile={_ssh_path(os.devnull)}",
             "-o", f"StrictHostKeyChecking={'yes' if strict else 'ask'}", "-o", "UpdateHostKeys=no",
-            "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-i", str(key_path()),
+            "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-i", str(key_path()).replace("%", "%%"),
             "-o", "PreferredAuthentications=publickey,keyboard-interactive", "-o", "PasswordAuthentication=no",
             "-o", "ServerAliveInterval=30", "-o", "ForwardAgent=no", "-o", "ForwardX11=no",
             "-o", "ClearAllForwardings=yes", "-o", "LogLevel=ERROR",
@@ -248,6 +287,7 @@ def ssh_argv(lab: str, login: str, alias: str, *, strict: bool = True) -> list[s
 
 
 def _exec(argv: list[str]) -> int:
+    sys.stdout.flush()
     if os.name == "posix":
         os.execvp(argv[0], argv)
     return subprocess.call(argv)
@@ -262,7 +302,7 @@ def cmd_pair(target: str, code: str) -> int:
     code, _, prefix = code.strip().partition(".")
     if not user:
         user = input(f"Your account at {lab}: ").strip()
-    if not prefix:
+    if len(prefix) < 12:
         raise AdminError("That code is missing its .<fingerprint> part; copy the whole line the console printed.")
     _check_ssh()
     line, alias = fetch_host_key(lab)
@@ -289,7 +329,7 @@ def cmd_login(target: str | None) -> int:
             target = names[0]
         else:
             for i, name in enumerate(names, 1):
-                print(f"  {i}) {saved[name]['user']}@{name}")
+                print(f"  {i}) {saved[name].get('user', '?')}@{name}")
             pick = input("Lab: ").strip()
             target = names[int(pick) - 1] if pick.isdigit() and 0 < int(pick) <= len(names) else pick
     user, lab = split_login(target)
@@ -323,7 +363,9 @@ def cmd_trust(lab: str, fp: str) -> int:
 def cmd_hostkey(lab: str) -> int:
     _, lab = split_login(lab)
     line, alias = fetch_host_key(lab)
-    print(f"{lab} presents {fingerprint(line)} ({'trusted here' if trusted(alias) else 'not trusted here'}).")
+    state = ("trusted here" if trusted(alias, line) else
+             "NOT the key trusted here" if trusted(alias) else "not trusted here")
+    print(f"{lab} presents {fingerprint(line)} ({state}).")
     print("Compare it with `serverrf admins hostkey` at the lab before trusting it.")
     return 0
 
@@ -337,9 +379,12 @@ USAGE = """Usage:
 
 def main(argv: list[str]) -> int:
     """argv after `--remote-admin` (or `--admin-pipe <lab>`)."""
-    try:
-        if argv[:1] == ["--admin-pipe"]:
+    if argv[:1] == ["--admin-pipe"]:
+        try:  # stdout carries SSH bytes only, even on the way out
             return pipe(argv[1]) if len(argv) == 2 else 2
+        except (KeyboardInterrupt, BrokenPipeError):
+            return 130
+    try:
         if argv[:1] in (["-h"], ["--help"]):
             print(USAGE)
             return 0
@@ -354,12 +399,12 @@ def main(argv: list[str]) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         return cmd_login(verb)
-    except AdminError as exc:
-        print(f"remoterf: {exc}", file=sys.stderr)
-        return 1
     except (EOFError, KeyboardInterrupt):
         print()
         return 130
+    except Exception as exc:  # noqa: BLE001 - AdminError and anything below it (ssh-keygen, routes)
+        print(f"remoterf: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
