@@ -299,6 +299,59 @@ def _remember_login():
         homes.remember_login(home_name, account.username, account.session_token)
 
 
+def _sync_labs():
+    """After a Global login: the labs this account has a login at, and their
+    current addresses -- what `-l` falls back to when Global is down."""
+    if not account.is_https_home:
+        return
+    try:
+        from ..deployment import homes
+
+        homes.sync_linked(account.backend.me())
+    except Exception:  # noqa: BLE001 - refreshed again at the next login
+        pass
+
+
+def _register_at_global(slug):
+    """This lab (on RemoteRF Global) registers its accounts there, so a name is
+    one person everywhere: make the Global account with the details just typed,
+    join this lab with the same code -- which gives a login here, LAN included --
+    then log in here."""
+    import hashlib
+    from ..deployment import homes
+    from ..deployment.backend import HttpsJsonAccountBackend
+    from ..deployment.direct import resolve_active_profile
+    from ..deployment.lanpass import lan_secret
+    from ..deployment.state import origin
+    from ..remoterf_cli import _global_origin
+
+    # The lab named itself; trust that only if Global's entry for it is this very server.
+    document = homes.discover(f"{slug}.{homes.GLOBAL_DOMAIN}")
+    profile = resolve_active_profile()
+    pin = hashlib.sha256(profile.ca_path.read_bytes()).hexdigest() if profile else None
+    if document["cert_sha256"] is None or document["cert_sha256"] != pin:
+        raise AccountBackendError("This server's RemoteRF Global entry does not match it; ask the lab admin")
+    _note(f"{slug} registers through RemoteRF Global: one account for every lab.", Sty.GRAY)
+    password = account.password
+    remote = HttpsJsonAccountBackend(origin(_global_origin()))
+    try:
+        if (remote.register(account.username, account.email, password) or {}).get('status') != 'active':
+            _panel("Verify email", [("Enter the 6-digit code from the verification email.", Sty.DEFAULT)])
+            remote.verify(account.username, _ask('Verification code').strip())
+        remote.login(account.username, password)
+        remote.enroll(f"{slug}/{account.enrollment_code}", password=password)
+        homes.remember_global_account(remote.transport.origin, remote.capabilities['deployment_id'])
+        homes.sync_linked(remote.me())
+    finally:
+        remote.close()
+    account.password = lan_secret(password, document["deployment_id"], account.username)
+    ok = bool(account.login_user(remember=True))
+    if ok:
+        _remember_login()
+        _note(f"Log in from anywhere as {account.username}; here also over the LAN when Global is down.", Sty.GRAY)
+    return ok
+
+
 def _consume_enrollment_code(policy):
     global pending_enrollment_code
     if not policy['enrollment_code_required']:
@@ -321,6 +374,8 @@ def _account_command(command):
             account.password = _password_confirmation(enforce_policy=account.is_https_home)
             account.email = _ask('Email') if policy['email_required'] else ''
             if not account.create_user():
+                if getattr(account, 'register_at_global', None):
+                    return _register_at_global(account.register_at_global)
                 raise AccountBackendError('Registration failed')
             if account.is_https_home:
                 from ..deployment import homes
@@ -375,9 +430,13 @@ def _account_command(command):
         here = homes.GLOBAL_ACCOUNTS if account.is_https_home else home_name
         account.username = name if where == here else typed
         account.password = _ask('Password (Hidden)', hidden=True)
+        if not account.is_https_home:
+            # A lab this Global account has a login at gets a secret bound to it, not the password.
+            account.password = homes.lab_password(home_name, account.username, account.password)
         ok = bool(account.login_user(remember=not account.is_https_home))
         if ok:
             _remember_login()
+            _sync_labs()
         return ok
     printf('Choose login or register' + (', verify, forgot-password or reset-password.' if account.is_https_home else '.'), Sty.WARNING)
     return False
@@ -409,8 +468,13 @@ def welcome(*, show_banner: bool = True, initial=(), route=None):
         try:
             if account.backend.resume():
                 account.username = account.backend.credentials['username']
+                _sync_labs()
                 return True
-        except Exception:  # noqa: BLE001 - same rule for the HTTPS session
+        except Exception as exc:  # noqa: BLE001 - same rule for the HTTPS session
+            if not getattr(exc, 'sent', True):
+                # Global did not answer: the session is fine, so keep it.
+                printf('RemoteRF Global is not answering. Try again, or open a lab directly: remoterf -l <you>@<lab>', Sty.WARNING)
+                return False
             account.backend.credentials = None
             try:
                 account.backend.store.clear()
@@ -1317,12 +1381,23 @@ def enroll(code=None):
         _error(f"That code is for {host}, not {home_name}. Register there with: remoterf -r")
         return False
     account.enrollment_code = code
-    data = account.set_enroll()
+    if account.is_https_home and host:
+        # With the password, the lab also gets a login for this account (never
+        # the password itself): usable on its LAN, and when Global is down.
+        typed_password = _ask(f'Password, to also log in at {host} directly (Enter to skip)', hidden=True)
+        data = account.backend.enroll(code, password=typed_password or None)
+    else:
+        data = account.set_enroll()
 
     if account.is_https_home:
         if data.get("status") != "enrolled":
             _error("enrollment_not_confirmed")
             return False
+        lab = data.get("lab") or {}
+        if lab.get("linked"):
+            _sync_labs()
+            _note(f"Lab login ready at {lab.get('slug')}: remoterf -l {account.username}@{lab.get('slug')} "
+                  "works on its LAN, even when RemoteRF Global is down.", Sty.GRAY)
     elif 'ace' in data.results or 'UE' in data.results:
         provenance = (
             unmap_arg(data.results['federation_provenance'])

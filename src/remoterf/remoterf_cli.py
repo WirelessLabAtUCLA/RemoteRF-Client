@@ -239,9 +239,32 @@ def _use_global(*, register: bool, show_banner: bool = True, username: str | Non
         finally:
             backend.close()
     except (RuntimeError, ValueError) as exc:
+        if not register and getattr(exc, 'unreachable', False) and homes.linked_homes():
+            return _use_linked_lab(username)
         print(f'Could not reach RemoteRF Global: {exc}')
         return 2
     return _account_shell(register=register, show_banner=show_banner, username=username)
+
+
+def _use_linked_lab(username: str | None) -> int:
+    """Global is down: open a lab this account has a login at, directly (its
+    LAN, or a VPN route), same name and password. `-l` tries Global first
+    again next time."""
+    from remoterf.deployment import homes
+
+    printf('RemoteRF Global is not answering: opening your lab directly.', Sty.WARNING)
+    name = (username or homes.linked()["username"] or "").split("@")[0] or None
+    for lab in homes.linked_homes():
+        try:
+            home = homes.load_home(lab)
+            with _working(f"Connecting to {lab}…"):
+                route = homes.connect(lab, remember=False)
+        except (RuntimeError, ValueError):
+            continue
+        return _account_shell(register=False, server_label=f'{lab} ({_route_label(route)})',
+                              home=lab, route={**route, 'home': home}, username=name)
+    printf('None of your labs answered either. Check your network, or use: remoterf -c -a <lab address>', Sty.WARNING)
+    return 2
 
 
 @contextmanager

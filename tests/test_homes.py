@@ -135,11 +135,16 @@ def test_no_route_is_an_error_not_a_different_home(reachable):
         homes.select_route(homes.load_home("ucla"))
 
 
-def test_a_route_serving_the_wrong_certificate_is_refused(reachable):
+def test_a_route_serving_the_wrong_certificate_is_skipped_and_refused_if_none_is_right(reachable):
+    """A stale LAN address (DHCP gave it to something else) must not lock the
+    lab out; the pin still decides, so nothing goes to the wrong server."""
     reachable["192.168.1.20"] = OTHER_CERT
     reachable["ucla.global.remoterf.net"] = CERT
+    route, certificate = homes.select_route(homes.save_home("ucla", document()))
+    assert route["kind"] == "relay" and certificate == CERT
+    reachable["ucla.global.remoterf.net"] = OTHER_CERT
     with pytest.raises(ValidationError, match="unexpected certificate"):
-        homes.select_route(homes.save_home("ucla", document()))
+        homes.select_route(homes.load_home("ucla"))
 
 
 def test_an_unpinned_deployment_still_connects(reachable):
@@ -666,7 +671,7 @@ def test_configured_lab_logs_in_when_only_its_grpc_port_answers(monkeypatch):
     cfg._write_env_kv(cfg._env_path(), {"REMOTERF_ADDR": "192.168.1.30:61005", "REMOTERF_CA_CERT": str(certs / "default.crt")})
     assert homes.migrate_legacy_target() == "default"
     monkeypatch.setattr(homes, "_probe", lambda route, timeout: None)
-    monkeypatch.setattr(homes, "activate", lambda name, home, route, certificate: certificate)
+    monkeypatch.setattr(homes, "activate", lambda name, home, route, certificate, **_: certificate)
     assert homes.connect("default")["host"] == "192.168.1.30"
 
     (certs / "default.crt").write_bytes(OTHER_CERT)  # not the pinned CA: no fallback

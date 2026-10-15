@@ -204,10 +204,12 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
                     ),
                     old["subject_id"],
                 )
-            except Exception:
-                # Ambiguous rotation must not automatically replay a spent refresh token.
-                self.credentials = None
-                self.store.clear()
+            except Exception as exc:
+                # Ambiguous rotation must not automatically replay a spent refresh
+                # token; a request that never left (Global down) spent nothing.
+                if getattr(exc, "sent", True):
+                    self.credentials = None
+                    self.store.clear()
                 raise
             self.credentials = pair
             self.store.save(pair)
@@ -288,12 +290,14 @@ class HttpsJsonAccountBackend(DeploymentAccountBackend):
         value.update(summary)
         return value
 
-    def enroll(self, code):
+    def enroll(self, code, password=None):
+        """`password` (with a lab invite) also gives the account a login at that lab."""
         self._operation("ACC:set_enroll")
         if not isinstance(code, str) or not 1 <= len(code) <= 1024:
             raise AccountBackendError("invalid_enrollment_code")
         result = self.transport.request(
-            "POST", self.base + "/enroll", data={"code": code}, access=self._access()
+            "POST", self.base + "/enroll",
+            data={"code": code, **({"password": password} if password else {})}, access=self._access()
         )
         if result.get("status") != "enrolled" or result.get("provenance") not in {
             "home", "destination"

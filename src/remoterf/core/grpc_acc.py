@@ -71,6 +71,10 @@ class RemoteRFAccount:
             _note(result.get('message') or 'Registration received.')
             return True
         response = self._call(function_name="ACC:create_user", args={"un":map_arg(self.username), "pw":map_arg(self.password), "em":map_arg(self.email), "ec":map_arg(self.enrollment_code)})
+        # A lab on RemoteRF Global keeps one name for everyone: it registers there.
+        self.register_at_global = unmap_arg(response.results["GS"]) if 'GS' in response.results else None
+        if self.register_at_global:
+            return False
         if 'UC' in response.results:
             _note(f'Account {unmap_arg(response.results["UC"])} created.', Sty.GREEN)
             return True
