@@ -19,8 +19,9 @@ On a home reached over its relay, ICE (aioice) punches one UDP pair to the
 Server and QUIC (aioquic) runs over it; device RPCs then travel as one stream
 per call (4-byte big-endian length + GenericRPCRequest, reply likewise)
 instead of through the relay. Control RPCs (ACC:*) stay on gRPC. When the
-punch fails or the path dies, calls fall back to gRPC; a path that died is
-retried after 30 s, a failed attempt only once a device call wants it.
+punch fails or the path dies, calls fall back to gRPC; a Global host relay is
+tried first after both QUIC paths fail. A path that died is retried after 30 s,
+a failed attempt only once a device call wants it.
 Signaling is ACC:direct_offer over the channel the client already has. See
 RemoteRF-Server docs/gate-i-direct-path.md. A Global device ref or rfg_
 token signals through Global instead (global_path).
@@ -49,6 +50,7 @@ import json
 import os
 import secrets
 import socket
+import ssl
 import threading
 import time
 from typing import Callable, Optional
@@ -336,6 +338,10 @@ class DirectPath:
         self._fixed_transport = None
         self.fixed = False  # dialed the Server's fixed port rather than punched
         self._protocol: Optional[QuicConnectionProtocol] = None
+        self._relay_reader: Optional[asyncio.StreamReader] = None
+        self._relay_writer: Optional[asyncio.StreamWriter] = None
+        self._relay_lock: Optional[asyncio.Lock] = None
+        self._relay_name = ""
         self._dead: Optional[asyncio.Event] = None
         self._wanted: Optional[asyncio.Event] = None  # set when a call needs an idle path back
         self._settled = threading.Event()  # the first attempt finished, either way
@@ -379,6 +385,8 @@ class DirectPath:
     def describe(self) -> str:
         if self.state == "ready":
             calls = f" ({self.calls} calls)" if self.calls else ""
+            if self._relay_name:
+                return f"host relay {self._relay_name}{calls}"
             how = ", fixed port" if self.fixed else ""
             return f"direct {self.remote[0]}:{self.remote[1]}{calls}{how}"
         if self.state == "connecting":
@@ -544,8 +552,43 @@ class DirectPath:
         finally:
             await cancel_tasks(pending)
         if len(failures) == 1:
-            raise next(iter(failures.values()))
-        raise PathError("; ".join(f"{name}: {_why(failures[task])}" for name, task in racers.items()))
+            failure = next(iter(failures.values()))
+        else:
+            failure = PathError("; ".join(f"{name}: {_why(failures[task])}" for name, task in racers.items()))
+        relay = answer.get("relay")
+        if isinstance(relay, dict) and relay.get("endpoint") and relay.get("session"):
+            try:
+                await self._dial_relay(relay, server_name, ca_pem)
+                return
+            except Exception as exc:  # noqa: BLE001 - the usual relay remains the fallback
+                raise PathError(f"{_why(failure)}; host relay: {_why(exc)}") from exc
+        raise failure
+
+    async def _dial_relay(self, relay: dict, server_name: str, ca_pem: bytes) -> None:
+        """Connect the host's TCP fallback and claim its one-use session."""
+        endpoint = str(relay["endpoint"])
+        host, port = endpoint.rsplit(":", 1)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cadata=ca_pem.decode())
+        context.set_alpn_protocols([ALPN])
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, int(port), ssl=context, server_hostname=server_name), FIXED_SECONDS,
+        )
+        try:
+            writer.write(frame(json.dumps({"session": str(relay["session"])}).encode()))
+            await writer.drain()
+            reply = json.loads(await asyncio.wait_for(read_frame(reader), FIXED_SECONDS))
+            if not reply.get("ok"):
+                raise PathError(str(reply.get("a", "session refused")))
+        except BaseException:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            raise
+        self._relay_reader, self._relay_writer = reader, writer
+        self._relay_lock = asyncio.Lock()
+        self._relay_name = server_name
+        self.remote = (host, int(port))
 
     async def _punch(self, ice: Connection, answer: dict, configuration: QuicConfiguration) -> None:
         """QUIC over the pair ICE nominates; the ICE goes with it when this loses."""
@@ -646,6 +689,13 @@ class DirectPath:
             self._dead.set()
 
     async def _call(self, payload: bytes) -> bytes:
+        if self._relay_reader is not None and self._relay_writer is not None and self._relay_lock is not None:
+            async with self._relay_lock:
+                if self.state != "ready":
+                    raise ConnectionError("direct path is down")
+                self._relay_writer.write(frame(payload))
+                await self._relay_writer.drain()
+                return await read_frame(self._relay_reader)
         protocol = self._protocol
         if protocol is None or self.state != "ready":
             raise ConnectionError("direct path is down")
@@ -676,6 +726,13 @@ class DirectPath:
         if self._fixed_transport is not None:
             self._fixed_transport.close()
             self._fixed_transport = None
+        if self._relay_writer is not None:
+            self._relay_writer.close()
+            with contextlib.suppress(Exception):
+                await self._relay_writer.wait_closed()
+            self._relay_reader = self._relay_writer = None
+        self._relay_lock = None
+        self._relay_name = ""
         if self._ice is not None:
             await close_ice(self._ice)
             self._ice = None

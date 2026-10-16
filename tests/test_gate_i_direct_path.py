@@ -31,7 +31,7 @@ from remoterf.core import direct_path
 SERVER_NAME = "direct.test"
 
 
-def write_certs(cert_dir: Path) -> bytes:
+def write_certs(cert_dir: Path, server_name=SERVER_NAME) -> bytes:
     """A throwaway CA and a server certificate for SERVER_NAME; returns the CA PEM."""
     now = datetime.datetime.now(datetime.timezone.utc)
 
@@ -48,7 +48,7 @@ def write_certs(cert_dir: Path) -> bytes:
         )
         if not ca:
             builder = builder.add_extension(
-                x509.SubjectAlternativeName([x509.DNSName(SERVER_NAME)]), critical=False
+                x509.SubjectAlternativeName([x509.DNSName(server_name)]), critical=False
             )
         return builder.sign(signer, hashes.SHA256())
 
@@ -57,7 +57,7 @@ def write_certs(cert_dir: Path) -> bytes:
     ca_cert = cert(ca_name, ca_name, ca_key, ca_key, ca=True)
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     leaf = cert(
-        x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, SERVER_NAME)]),
+        x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, server_name)]),
         ca_name, key, ca_key, ca=False,
     )
     (cert_dir / "server.crt").write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
