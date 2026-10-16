@@ -43,7 +43,9 @@ def server_schemas():
         pytest.skip(f"no Server source at {SERVER_SRC} (set REMOTERF_SERVER_SRC)")
     result = subprocess.run(
         [sys.executable, "-c", DUMP, json.dumps(SCHEMAS)],
-        env={**os.environ, "PYTHONPATH": str(SERVER_SRC)},
+        # The Server's built-in drivers live in its remoterf-device-core package.
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(
+            (str(SERVER_SRC), str(SERVER_SRC.parent / "packages" / "remoterf-device-core" / "src")))},
         capture_output=True, text=True, check=True,
     )
     return json.loads(result.stdout.splitlines()[-1])

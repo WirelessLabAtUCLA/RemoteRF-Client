@@ -14,10 +14,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Auto-generated from IDL schema — do not edit by hand.
-# device_type: hackrf  driver_version: 0.1.1  schema_hash: sha256:6fb625ce99aaf7e190de013ad3e66276265020a5464d9d55d4c0e076dae28f3c
+# device_type: hackrf  driver_version: 0.1.2  schema_hash: sha256:8140489d7ca985b8aed3a5c3be96622dffd9210517be73625fc9a61834735d4f
 
 _PREFIX = "Hackrf"
-_SCHEMA_HASH = "sha256:6fb625ce99aaf7e190de013ad3e66276265020a5464d9d55d4c0e076dae28f3c"
+_SCHEMA_HASH = "sha256:8140489d7ca985b8aed3a5c3be96622dffd9210517be73625fc9a61834735d4f"
 _CLIENT_MODULES = {}
 _CLIENT_OBJECTS = {}
 
