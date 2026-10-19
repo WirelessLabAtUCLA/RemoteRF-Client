@@ -322,15 +322,15 @@ def run_cli(argv, monkeypatch, **patches):
     return remoterf_cli.main()
 
 
-def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
+def test_register_local_only_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
     reachable["ucla.global.remoterf.net"] = CERT
     monkeypatch.setattr(homes, "discover", lambda host, **kw: document())
-    # Every `-r` starts with the Terms; answer them, then hand over the code.
+    # Local-only registration starts with the Terms; answer them, then hand over the code.
     answers = iter(["y", "ucla/QEHN7"])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     shell = mock.Mock(return_value=0)
 
-    assert run_cli(["-r"], monkeypatch, _account_shell=shell) == 0
+    assert run_cli(["-r", "--local-only"], monkeypatch, _account_shell=shell) == 0
     kwargs = shell.call_args.kwargs
     assert (kwargs["register"], kwargs["enrollment_code"], kwargs["server_label"]) == (
         True, "QEHN7", "ucla (relay)"
@@ -340,16 +340,22 @@ def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
     assert homes.last_target() == {"kind": "home", "name": "ucla"}
 
 
-def test_a_blank_code_registers_on_global_and_global_has_its_own_spelling(monkeypatch):
-    answers = iter(["y", "", "y"])
-    monkeypatch.setattr("builtins.input", lambda *_: next(answers, ""))
+def test_register_defaults_to_global_and_local_only_requires_a_code(monkeypatch, capsys):
+    answers = iter(["y", "y"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     used_global = mock.Mock(return_value=0)
     assert run_cli(["-r"], monkeypatch, _use_global=used_global) == 0
-    used_global.assert_called_once_with(register=True, show_banner=False)  # no lab: the account lives on Global
+    used_global.assert_called_once_with(register=True, show_banner=False)
     used_global.reset_mock()
-    # `-r global` asks for the Terms too, then skips the code prompt.
+    # `-r global` remains a backwards-compatible spelling for the default.
     assert run_cli(["-r", "global"], monkeypatch, _use_global=used_global) == 0
     used_global.assert_called_once_with(register=True, show_banner=False)
+    used_global.reset_mock()
+    answers = iter(["y", ""])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+    assert run_cli(["-r", "--local-only"], monkeypatch, _use_global=used_global) == 2
+    assert "--local-only requires an enrollment code" in capsys.readouterr().out
+    used_global.assert_not_called()
 
 
 def test_declining_the_terms_stops_registration_before_any_code(monkeypatch):

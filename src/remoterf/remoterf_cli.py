@@ -151,7 +151,8 @@ def print_help() -> None:
     print()
     printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@deployment)", Sty.DEFAULT)
-    printf("  remoterf -r | --register [global]", Sty.CYAN, " Register with an enrollment code (or a RemoteRF Global account)", Sty.DEFAULT)
+    printf("  remoterf -r | --register", Sty.CYAN, "          Create a RemoteRF Global account", Sty.DEFAULT)
+    printf("  remoterf -r --local-only", Sty.CYAN, "     Register at a deployment with an enrollment code", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
     printf("  remoterf --remote-admin [lab]", Sty.CYAN, "     A lab's console, for its remote admins (-h for more)", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
@@ -167,8 +168,8 @@ def print_help() -> None:
     printf("    --account-transport https-json", Sty.CYAN, "  Select an HTTPS home on a custom port", Sty.DEFAULT)
     print()
     printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
-    printf("  remoterf --register", Sty.GREEN, "                           then: ucla.global.remoterf.net/QEHN7", Sty.GRAY)
-    printf("  remoterf --register global", Sty.GREEN)
+    printf("  remoterf --register", Sty.GREEN)
+    printf("  remoterf --register --local-only", Sty.GREEN, "              then: ucla.global.remoterf.net/QEHN7", Sty.GRAY)
     printf("  remoterf --login", Sty.GREEN)
     printf("  remoterf --login ucla", Sty.GREEN)
     printf("  remoterf --login global", Sty.GREEN)
@@ -367,7 +368,7 @@ def _agree_to_tos() -> bool:
 
 
 def _register_global() -> int:
-    """`remoterf -r global`: straight to a Global account, same agreement as -r."""
+    """Default registration: a Global account, with the usual agreement."""
     print_client_banner(_installed_version(), server="")
     if not _agree_to_tos():
         return 1
@@ -375,7 +376,12 @@ def _register_global() -> int:
 
 
 def _register() -> int:
-    """`remoterf -r`: a deployment enrollment code, or a Global account."""
+    """`remoterf -r`: Global is the normal account home."""
+    return _register_global()
+
+
+def _register_local() -> int:
+    """`remoterf -r --local-only`: register at a specific deployment."""
     from remoterf_federation_core import ValidationError
 
     from remoterf.deployment import homes
@@ -386,15 +392,13 @@ def _register() -> int:
     if not _agree_to_tos():
         return 1
     try:
-        entered = input('Enrollment code (Enter for a RemoteRF Global account): ').strip()
+        entered = input('Enrollment code: ').strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return 1
     if not entered:
-        # No lab yet: the account lives on Global. A lab's invite can still
-        # be redeemed later, from the shell, with `enroll <invite>`.
-        printf('Registering a RemoteRF Global account. Join a deployment any time with: enroll <deployment invite>', Sty.GRAY)
-        return _use_global(register=True, show_banner=False)
+        print('ERROR: --local-only requires an enrollment code')
+        return 2
     try:
         host, code = homes.parse_code(entered)
     except ValidationError as exc:
@@ -523,12 +527,13 @@ def main() -> int:
         return 0
 
     if argv[0] in ("--register", "-register", "-r"):
-        if len(argv) == 2 and argv[1].lstrip("-") == "global":
-            return _register_global()
+        if len(argv) == 1 or (len(argv) == 2 and argv[1].lstrip("-") == "global"):
+            return _register()
+        if len(argv) == 2 and argv[1].lstrip("-") == "local-only":
+            return _register_local()
         if len(argv) > 1:
-            print("ERROR: --register takes no arguments (or 'global')")
+            print("ERROR: --register takes no arguments (or '--local-only')")
             return 2
-        return _register()
 
     if argv[0] in ("--login", "-login", "-l"):
         if len(argv) > 2:

@@ -126,10 +126,10 @@ def test_login_with_a_legacy_address_still_logs_in_there():
     register.assert_not_called()
 
 
-def test_register_without_a_code_makes_a_global_account(monkeypatch):
+def test_register_defaults_to_a_global_account_without_asking_for_a_code(monkeypatch):
     from remoterf import remoterf_cli
 
-    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(AssertionError(prompt)))
     with mock.patch("remoterf.config.config._confirm_tos", return_value=True), \
             mock.patch("remoterf.config.config.forget_tos_agreement"), \
             mock.patch("remoterf.config.config.remember_tos_agreement"), \
