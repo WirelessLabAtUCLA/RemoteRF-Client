@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import itertools
 import sys
 import threading
@@ -153,6 +154,7 @@ def print_help() -> None:
     printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@deployment)", Sty.DEFAULT)
     printf("  remoterf -r | --register", Sty.CYAN, "          Create a RemoteRF Global account", Sty.DEFAULT)
     printf("  remoterf -r --local-only", Sty.CYAN, "     Register at a deployment with an enrollment code", Sty.DEFAULT)
+    printf("  remoterf --reset-pass", Sty.CYAN, "             Reset a RemoteRF Global password by email", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
     printf("  remoterf --remote-admin [lab]", Sty.CYAN, "     A lab's console, for its remote admins (-h for more)", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
@@ -170,6 +172,7 @@ def print_help() -> None:
     printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf --register", Sty.GREEN)
     printf("  remoterf --register --local-only", Sty.GREEN, "              then: ucla.global.remoterf.net/QEHN7", Sty.GRAY)
+    printf("  remoterf --reset-pass", Sty.GREEN)
     printf("  remoterf --login", Sty.GREEN)
     printf("  remoterf --login ucla", Sty.GREEN)
     printf("  remoterf --login global", Sty.GREEN)
@@ -419,6 +422,51 @@ def _register_local() -> int:
     )
 
 
+def _reset_password() -> int:
+    """Reset a Global account password without needing an existing session."""
+    from remoterf.deployment.backend import HttpsJsonAccountBackend
+    from remoterf.deployment.state import origin
+    from .core.messages import explain
+
+    print_client_banner(_installed_version(), server=_global_origin())
+    try:
+        backend = HttpsJsonAccountBackend(origin(_global_origin()))
+    except (RuntimeError, ValueError) as exc:
+        print(f'Could not reach RemoteRF Global: {explain(exc)}')
+        return 2
+    try:
+        email = input('Associated email: ').strip()
+        if not email:
+            print('ERROR: an email address is required')
+            return 2
+        backend.forgot(email)
+        printf('If that address belongs to a RemoteRF Global account, check its email for a password reset code.', Sty.GRAY)
+        token = getpass.getpass('Password reset code (Hidden): ')
+        if not token:
+            print('ERROR: a password reset code is required')
+            return 2
+        while True:
+            password = getpass.getpass('New password (Hidden): ')
+            if not 8 <= len(password) <= 128:
+                print(f'ERROR: password must be 8-128 characters (got {len(password)})')
+                continue
+            if password != getpass.getpass('Confirm new password (Hidden): '):
+                print('ERROR: passwords do not match')
+                continue
+            break
+        backend.reset(token, password)
+        printf('Password reset. Run: remoterf --login', Sty.GREEN)
+        return 0
+    except (RuntimeError, ValueError) as exc:
+        print(f'Password reset failed: {explain(exc)}')
+        return 2
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 1
+    finally:
+        backend.close()
+
+
 def _login(target: str | None) -> int:
     from remoterf.config.config import require_tos_for_login
     from remoterf.deployment import homes
@@ -534,6 +582,12 @@ def main() -> int:
         if len(argv) > 1:
             print("ERROR: --register takes no arguments (or '--local-only')")
             return 2
+
+    if argv[0] in ("--reset-pass", "--reset-password"):
+        if len(argv) > 1:
+            print("ERROR: --reset-pass takes no arguments")
+            return 2
+        return _reset_password()
 
     if argv[0] in ("--login", "-login", "-l"):
         if len(argv) > 2:

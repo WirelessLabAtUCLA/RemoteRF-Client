@@ -528,6 +528,8 @@ def welcome(*, show_banner: bool = True, initial=(), route=None):
                 return True
         except (AccountBackendError, ValidationError) as exc:
             _error(exc)
+            if command in ('l', 'login') and account.is_https_home and getattr(exc, 'code', None) == 'invalid_credentials':
+                printf('Forgot your password? Run: remoterf --reset-pass', Sty.GRAY)
             queue.clear()
         except (KeyboardInterrupt, EOFError):
             return False
