@@ -130,6 +130,9 @@ class FakeGlobal:
     def login(self, user, password):
         self.logins.append((user, password))
 
+    def me(self):
+        return {"labs": []}
+
     def close(self):
         pass
 
@@ -170,6 +173,34 @@ def test_login_lab_stores_the_session_token(capsys, monkeypatch):
     assert code == 0 and json.loads(out) == WHO and connected == ["ucla"]
     assert homes.recall_login("ucla") == {"username": "jdoe", "secret": "tok-123"}
     assert "tok-123" not in out + err
+
+
+def test_login_at_a_linked_lab_sends_the_lab_secret_not_the_password(capsys, monkeypatch):
+    sent = []
+
+    class Account:
+        def __init__(self, user, password, *, backend, quiet):
+            sent.append((user, password))
+            self.username, self.session_token = user, "tok-123"
+
+        def login_user(self, *, remember):
+            return True
+
+    monkeypatch.setattr(homes, "homes", lambda: {"ucla": {}})
+    monkeypatch.setattr(homes, "connect", lambda name: None)
+    monkeypatch.setattr(homes, "is_linked_home", lambda name: name == "ucla")
+    monkeypatch.setattr(homes, "lab_password", lambda home, user, pw: f"lan-secret({home},{user},{pw})")
+    monkeypatch.setattr("remoterf.deployment.backend.LegacyGrpcAccountBackend", lambda: object())
+    monkeypatch.setattr("remoterf.core.grpc_acc.RemoteRFAccount", Account)
+    monkeypatch.setattr(ops, "saved_session", lambda: SESSION)
+    monkeypatch.setattr(ops, "whoami", lambda s: WHO)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("pw\n"))
+    assert run(capsys, "auth", "login", "--user", "jdoe@ucla", "--password-stdin", "--json")[0] == 0
+    assert sent == [("jdoe", "lan-secret(ucla,jdoe,pw)")]
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("pw\n"))
+    code, out, _ = run(capsys, "auth", "login", "--home", "ucla", "--user", "jdoe@example.org", "--password-stdin", "--json")
+    assert code == 2 and "username, not your email" in json.loads(out)["error"]["message"] and len(sent) == 1
 
 
 def test_login_needs_recorded_tos_or_accept_tos(capsys, monkeypatch):

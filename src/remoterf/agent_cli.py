@@ -70,6 +70,10 @@ def _login_global(user, password):
         homes.remember_global_account(selected, deployment_id)
         homes.set_last_target("global")
         backend.login(user, password)
+        try:
+            homes.sync_linked(backend.me())  # the labs `remoterf auth login --home <lab>` then needs
+        except Exception:  # noqa: BLE001 - refreshed again at the next login
+            pass
     finally:
         backend.close()
 
@@ -88,7 +92,11 @@ def _login_lab(home, user, password):
         backend = LegacyGrpcAccountBackend()
     except (RuntimeError, ValueError) as exc:
         raise RemoteRFOpsError("deployment_unreachable", f"Could not connect to {home}: {explain(exc, where=home)}") from exc
-    account = RemoteRFAccount(user, password, backend=backend, quiet=True)
+    if "@" in user and homes.is_linked_home(home):
+        # Here the login is the username; an email would send the Global password as typed.
+        raise RemoteRFOpsError("usage", "Log in here with your username, not your email.")
+    # A lab this Global account has a login at gets a secret bound to it, not the password.
+    account = RemoteRFAccount(user, homes.lab_password(home, user, password), backend=backend, quiet=True)
     if not account.login_user(remember=True):
         raise RemoteRFOpsError("invalid_credentials")
     if not account.session_token:

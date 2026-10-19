@@ -40,6 +40,7 @@ EXIT_CODES = {
     **dict.fromkeys(("permission_denied", "principal_unknown", "contract_not_active", "reserve_disabled",
                      "reservation_refused", "reservation_limit", "lab_reservation_limit", "device_not_permitted"), 6),
     **dict.fromkeys(("route_unavailable", "transport", "deployment_unreachable"), 7),
+    "unsupported_version": 8,
 }
 _RETRYABLE = {"rate_limited", "route_unavailable", "transport", "deployment_unreachable"}
 # A wire code, also as a lab HOME relays it ('Partner refused: <code>') or the Global relay sends it
@@ -101,6 +102,8 @@ def _backend_error(exc, **facts):
     code = str(exc.code)
     if exc.retry_after:
         return _rate_limited(exc.retry_after)
+    if exc.unreachable:  # no answer at all, or its proxy's 502/503 for an app that is down
+        return RemoteRFOpsError("transport", explain(exc, **facts))
     if re.fullmatch("[a-z_]{1,64}", code):
         # The relay's other transport failures (invalid_signed_result, ...): the deployment didn't answer.
         down = exc.provenance == "transport" and code not in EXIT_CODES and code != "response_too_large"
@@ -351,9 +354,11 @@ def driver_usage(device_type, class_name=None) -> dict:
     if call := DRIVER_CALLS.get(device_type):
         return {"import_line": f"from remoterf.drivers.{DRIVER_IMPORTS[device_type]}",
                 "constructor_template": f"sdr = {call}(token={{token!r}})"}
-    from .drivers.dynamic_device import _default_class_name, _valid_identifier
+    from .drivers.dynamic_device import _default_class_name, _require_package_name
 
-    if not _valid_identifier(str(device_type or "")):  # what the driver installer accepts
+    try:
+        _require_package_name(device_type, field="device_type")  # what the driver installer accepts
+    except ValueError:
         return {"import_line": None, "constructor_template": None}
     cls = class_name or _default_class_name(device_type)
     if not str(cls).isidentifier():
@@ -770,7 +775,7 @@ def cancel(s, reservation_id) -> dict:
 @_op
 def device_api(s, handle) -> dict:
     """The driver's API from the deployment's IDL; needs no reservation."""
-    from .drivers.dynamic_device import _client_class_name, fetch_idl
+    from .drivers.dynamic_device import _client_class_name, _needs_review, fetch_idl
 
     h, device_id, _ = _resolve(s, handle)
     schema = fetch_idl(device_id=device_id)
@@ -791,6 +796,15 @@ def device_api(s, handle) -> dict:
                      "ask its administrator.")
     elif device_type not in DRIVER_CALLS:
         notes.append(f"Install this driver once per machine: from remoterf.drivers import ensure_driver; ensure_driver(token={h!r})")
+    if _needs_review(None, device_id):
+        from .drivers.schema_review import require_approved
+
+        try:
+            require_approved(schema)
+        except RuntimeError as exc:
+            notes.append(f"{exc} Scripts for this device will fail until it is approved.")
+        except (ValueError, OSError):
+            notes.append("Whether RemoteRF Global approved this driver could not be checked.")
     template = usage["constructor_template"]
     return {"handle": h, "device_type": device_type, "class_name": DRIVER_CALLS.get(device_type) or cls,
             "import_line": usage["import_line"], "constructor": template and template.format(token=h),

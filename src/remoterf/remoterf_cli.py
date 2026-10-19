@@ -182,7 +182,7 @@ def print_help() -> None:
     printf("  remoterf skill install", Sty.CYAN, "               Install the guide for Claude, Codex, Gemini", Sty.DEFAULT)
     printf("  remoterf mcp [--allow-reserve] | mcp install", Sty.CYAN, "  Local MCP server", Sty.DEFAULT)
     printf("  remoterf doctor", Sty.CYAN, "                      Check this install", Sty.DEFAULT)
-    printf("  Exit codes: 0 ok, 2 usage, 3 login, 4 not found, 5 conflict, 6 permission, 7 unreachable, 130 interrupted", Sty.GRAY)
+    printf("  Exit codes: 0 ok, 2 usage, 3 login, 4 not found, 5 conflict, 6 permission, 7 unreachable, 8 update remoterf, 130 interrupted", Sty.GRAY)
     print()
     printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf --register", Sty.GREEN)

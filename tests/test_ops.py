@@ -258,6 +258,8 @@ def test_errors_are_typed_and_mapped(lab, home, monkeypatch):
     err = _code(ops.list_devices, home)
     assert err.to_dict() == {"error": {"code": "rate_limited", "message": "Asked too recently; try again in 7 s.",
                                        "retryable": True, "retry_after": 7}} and err.exit_code == 5
+    home.account.backend.error = AccountBackendError("Account service unavailable", unreachable=True, sent=False)
+    assert (_code(ops.list_devices, home).code, _code(ops.list_devices, home).exit_code) == ("transport", 7)
     home.account.backend.error = AccountBackendError("route_unavailable", provenance="transport")
     err = _code(ops.list_devices, home)
     assert (err.message, err.retryable, err.exit_code) == (
@@ -377,7 +379,8 @@ def test_ops_lab_calls_have_a_deadline():
     with grpc_client.quiet():
         grpc_client._send("ACC:get_dev", {}, connection)
     grpc_client._send("ACC:get_dev", {}, connection)
-    assert seen == [{"timeout": grpc_client.OPS_LAB_TIMEOUT}, {}]
+    assert [kw.get("timeout") for kw in seen] == [grpc_client.OPS_LAB_TIMEOUT, None]
+    assert all(dict(kw["metadata"]).get("x-remoterf-client") for kw in seen)  # merged with the version header
 
 
 def test_device_api_reads_the_idl_without_a_reservation(lab, monkeypatch):
@@ -397,6 +400,16 @@ def test_device_api_reads_the_idl_without_a_reservation(lab, monkeypatch):
     assert ops.driver_usage("gps")["import_line"] == "from remoterf.drivers.gps import Gps"
     assert ops.driver_usage("GPS")["constructor_template"] == "dev = GPS(token={token!r})"  # any name the installer takes
     assert ops.driver_usage("class")["import_line"] is None
+    assert ops.driver_usage("support")["import_line"] is None  # the client's own module, not installable
+    assert not any("approved" in n for n in out["notes"])
+
+    def refuse(schema):
+        raise RuntimeError("The 'pluto' driver this deployment shares (schema sha256:abc…) was rejected by the RemoteRF team. It was not installed.")
+
+    monkeypatch.setattr("remoterf.drivers.dynamic_device._needs_review", lambda token, device_id: True)
+    monkeypatch.setattr("remoterf.drivers.schema_review.require_approved", refuse)
+    assert "was rejected by the RemoteRF team. It was not installed. Scripts for this device will fail until it is approved." in (
+        ops.device_api(lab, "Pluto_A@ucla")["notes"][-1])
 
 
 def test_device_api_keeps_lab_text_out_of_code(lab, monkeypatch):

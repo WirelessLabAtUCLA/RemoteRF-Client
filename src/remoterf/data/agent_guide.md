@@ -133,4 +133,5 @@ the user; `code` is stable. `retry_after` is in seconds.
 | 5 | conflict, slot_unavailable, reservation_conflict, rate_limited, offline | pick another slot or device; wait `retry_after` before asking again |
 | 6 | permission_denied, principal_unknown, contract_not_active, reserve_disabled, reservation_refused, reservation_limit, lab_reservation_limit, device_not_permitted | the account or server does not allow it; tell the user |
 | 7 | route_unavailable, transport, deployment_unreachable | the deployment or network is down; try again later, with the user's ok |
+| 8 | unsupported_version | this remoterf is too old for the deployment; ask the user to run `pip install -U remoterf` |
 | 130 | | interrupted (Ctrl-C) |
