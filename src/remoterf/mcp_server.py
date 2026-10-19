@@ -120,7 +120,8 @@ def build_server(*, allow_reserve: bool, session_factory=ops.saved_session):
         api = ops.device_api(s, handle)
         try:
             return _docs().example_script(api["device_type"], api["class_name"], api["handle"], recipe,
-                                          token_ref=token_ref, import_line=api["import_line"])
+                                          token_ref=token_ref, import_line=api["import_line"],
+                                          methods=[m["name"] for m in api["methods"]])
         except ValueError as exc:  # the deployment's driver names don't fit a script
             raise ops.RemoteRFOpsError("error", f"No example for {api['handle']}: {exc}.") from None
 

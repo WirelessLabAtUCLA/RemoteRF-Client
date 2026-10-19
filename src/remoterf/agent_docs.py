@@ -49,7 +49,7 @@ def guide(topic=None) -> dict:
     return {"topic": key, "text": sections[key], "topics": list(sections)}
 
 
-def example_script(device_type, class_name, handle, recipe, token_ref=None, import_line=None) -> dict:
+def example_script(device_type, class_name, handle, recipe, token_ref=None, import_line=None, methods=()) -> dict:
     """A receive-only script for one device. Stdlib only and self-contained:
     remoterf-vps-global keeps a copy. Lab-supplied names are validated before
     they reach code; the handle goes in only as a string literal."""
@@ -84,6 +84,8 @@ def example_script(device_type, class_name, handle, recipe, token_ref=None, impo
     }
     family = {"pluto": "adi", "adalm_pluto": "adi", "sim_sdr": "adi", "usrp": "uhd",
               "rtl_sdr": "read", "hackrf": "read"}.get(device_type)
+    if family is None and {"sample_rate", "rx_lo", "rx_buffer_size", "rx"} <= set(methods):
+        family = "adi"  # a lab's own driver with the Pluto (pyadi-iio) receive API
     note = ""
     if family is None and recipe != "connect":
         note = f"No {recipe} recipe for {device_type} devices yet: this script connects and lists the driver's API. "
@@ -239,7 +241,7 @@ def main(argv) -> int:
                 _print_api(api)
             return 0
         ex = example_script(api["device_type"], api["class_name"], api["handle"], args.recipe,
-                            import_line=api["import_line"])
+                            import_line=api["import_line"], methods=[m["name"] for m in api["methods"]])
         if args.out:
             Path(args.out).write_text(ex["code"], encoding="utf-8")
             print(f"wrote {args.out}", file=sys.stderr)

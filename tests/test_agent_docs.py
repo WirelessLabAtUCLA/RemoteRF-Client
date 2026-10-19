@@ -47,6 +47,14 @@ def test_examples_compile_receive_only(device_type, class_name, import_line, cto
     assert ex["filename"].endswith(".py") and "REMOTERF_TOKEN" in ex["run_instructions"]
 
 
+def test_a_lab_driver_with_the_pluto_api_gets_a_receive_recipe():
+    pluto_api = ["sample_rate", "rx_lo", "rx_buffer_size", "rx", "tx"]
+    ex = example_script("adalm_pluto_mimo_ykush", "PlutoMIMO", "host1-pluto-1@ucla", "rx_once", methods=pluto_api)
+    assert ex["filename"] == "adalm_pluto_mimo_ykush_rx_once.py" and "samples = sdr.rx()" in ex["code"]
+    assert not _TX.search(ex["code"].lower())
+    assert example_script("adalm_pluto_mimo_ykush", "PlutoMIMO", "A@b", "rx_once")["filename"].endswith("_connect.py")
+
+
 def test_example_rejects_lab_text_that_is_not_python():
     with pytest.raises(ValueError):
         example_script("x; import os", None, "A@b", "connect")

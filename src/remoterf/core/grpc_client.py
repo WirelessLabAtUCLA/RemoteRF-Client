@@ -773,7 +773,7 @@ def _tx_wire(arg):
 def _dispatch(function_name, args, connection):
     ref = _federated_ref(function_name, args) if connection is None else None
     if ref is not None:
-        return _finish(_federated_call(ref, function_name, args))
+        return _finish(_federated_call(ref, function_name, args), function_name)
     token = (
         _device_token(function_name, args)
         if connection is None and direct_path.wants(function_name) else None
@@ -788,8 +788,8 @@ def _dispatch(function_name, args, connection):
                 # The device was reset between holders; never carry on silently.
                 raise RuntimeError("The reservation changed; create the driver again.")
             response = _route_call(fresh, function_name, args)
-        return _finish(response)
-    return _finish(_send(function_name, args, connection))
+        return _finish(response, function_name)
+    return _finish(_send(function_name, args, connection), function_name)
 
 
 def _route_call(route, function_name, args):
@@ -837,9 +837,20 @@ def _send(function_name, args, connection, token=None):
     return stub.Call(request, metadata=metadata)
 
 
-def _finish(response):
+_DEVICE_VERBS = ("GET", "SET", "CALL0", "CALL1", "CALLN")
+NO_ANSWER = "The device did not answer in time; it may still be powering on. Try again."
+
+
+def _finish(response, function_name=""):
     if 'a' in response.results:
         raise RuntimeError(unmap_arg(response.results['a']))
+    # A lab relaying a host device's failure answers {Ok: False, Error}: a device
+    # call must not pass for done (a setter) or read a value that is not there (a getter).
+    _, prop, verb = (function_name.split(":") + ["", "", ""])[:3]
+    if verb in _DEVICE_VERBS and prop not in ("batch", "rx_n"):
+        results = response.results
+        if "Error" in results or ("Ok" in results and not unmap_arg(results["Ok"])):
+            raise RuntimeError(("Error" in results and unmap_arg(results["Error"])) or NO_ANSWER)
         
     for key, text in (('UE', explain), ('Message', str)):
         if key in response.results:
