@@ -21,6 +21,8 @@ from remoterf_federation_core import (
 from .state import NAMESPACE, origin, private_write, root
 
 HOMES_FILE = "homes-v1.json"
+# Its own file: older clients refuse a homes file with fields they do not know.
+LINKED_FILE = "linked-v1.json"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
 GLOBAL_DOMAIN = "global.remoterf.net"
 
@@ -77,6 +79,99 @@ def remember_global_account(selected_origin: str, deployment_id: str) -> None:
         "deployment_id": deployment_id,
     }
     save_state(data)
+
+
+# -----------------------------
+# Labs the Global account has a login at (Global's /me `labs`)
+# -----------------------------
+#
+# At those labs it logs in directly -- on the LAN, and when Global is down --
+# with lan_secret(password, lab, name), never the password itself.
+
+def linked() -> dict:
+    try:
+        value = strict_json((root() / LINKED_FILE).read_bytes())
+        if type(value) is dict and type(value.get("username")) is str and type(value.get("labs")) is dict:
+            return value
+    except Exception:  # noqa: BLE001 - unreadable is the same as none
+        pass
+    return {"username": None, "labs": {}}
+
+
+def sync_linked(me: dict) -> None:
+    """Record the account's lab logins -- each lab's slug and the CA pin Global
+    publishes for it -- and refresh its saved home (LAN address and CA may have
+    changed). Only from Global's own /me (the caller checks), and only when it
+    lists labs: an older Global must not wipe the record."""
+    if type(me.get("labs")) is not list:
+        return
+    labs = {}
+    for lab in me["labs"]:
+        if type(lab) is not dict or type(lab.get("slug")) is not str or not NAME_RE.match(lab["slug"]):
+            continue
+        try:
+            document = discover(f"{lab['slug']}.{GLOBAL_DOMAIN}")
+        except Exception:  # noqa: BLE001 - keep what we knew about it
+            known = linked()["labs"].get(str(lab.get("deployment_id")))
+            if known:
+                labs[str(lab.get("deployment_id"))] = known
+            continue
+        if document["deployment_id"] != lab.get("deployment_id") or not document["cert_sha256"]:
+            continue
+        labs[document["deployment_id"]] = {"slug": lab["slug"], "cert_sha256": document["cert_sha256"]}
+        try:
+            save_home(lab["slug"], document)
+        except Exception:  # noqa: BLE001 - a clashing home is simply not this lab (lab_password checks)
+            pass
+    private_write(root() / LINKED_FILE, {"username": str(me.get("username") or "").lower(), "labs": labs})
+
+
+def _linked_lab(name: str, home: dict) -> str | None:
+    """The linked lab this saved home really is -- its CA must be the one
+    Global publishes for that lab -- or None. A home's own claimed id proves
+    nothing: anyone can serve a discovery document naming another lab."""
+    for deployment_id, lab in linked()["labs"].items():
+        if type(lab) is dict and home.get("cert_sha256") == lab.get("cert_sha256") and (
+            name == lab.get("slug") or home.get("deployment_id") is None  # or a `-c -a` home of that lab
+        ):
+            return deployment_id
+    return None
+
+
+def linked_homes() -> list[str]:
+    """Saved homes this account has a lab login at: where `-l` goes when Global is down."""
+    return sorted(name for name, home in homes().items()
+                  if home.get("deployment_id") is not None and _linked_lab(name, home))
+
+
+def lab_password(home: str | None, username: str, password: str) -> str:
+    """What to send `home` as the password: lan_secret at a linked lab (for the
+    linked account's own name), else the password as typed."""
+    try:
+        saved = load_home(home) if home else None
+    except ValidationError:
+        saved = None
+    deployment_id = saved and _linked_lab(home, saved)
+    if deployment_id and username.lower() == linked()["username"]:
+        from .lanpass import lan_secret
+
+        return lan_secret(password, deployment_id, username)
+    return password
+
+
+def is_linked_home(home: str | None) -> bool:
+    try:
+        return bool(home) and _linked_lab(home, load_home(home)) is not None
+    except ValidationError:
+        return False
+
+
+def joined_home(home: str | None) -> bool:
+    """Discovered through Global (it has a relay route): registration there goes through Global."""
+    try:
+        return bool(home) and any(r["kind"] == "relay" for r in load_home(home)["routes"])
+    except ValidationError:
+        return False
 
 
 def save_home(name: str, document: dict) -> dict:
@@ -188,41 +283,50 @@ def _probe(route: dict, timeout: float) -> bytes | None:
     return certificate if looks_like_pem_cert(certificate) else None
 
 
-def select_route(home: dict) -> tuple[dict, bytes]:
+def select_route(home: dict, fallback: bytes | None = None) -> tuple[dict, bytes]:
     """The best working route for this HOME, and the certificate it served.
 
-    Every route is probed at once. They are still preferred in the order the
-    deployment advertised them — LAN first — but a client that is not on the
-    LAN waits only the LAN's own short window, not one probe after another.
-    Fallback never leaves this HOME.
+    Every route is probed at once, but taken in the order the deployment
+    advertised them -- LAN first -- as soon as that one answers: a client on
+    the LAN never waits for the relay, and one off it waits only the LAN's own
+    short window. A route serving another certificate is skipped (a stale LAN
+    address now used by something else); if no route serves the pinned one but
+    one served another, that is refused. Fallback never leaves this HOME.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    import threading
 
     pin = home.get("cert_sha256")
     routes = list(home["routes"])
-    failures = []
-    with ThreadPoolExecutor(max_workers=max(1, len(routes))) as pool:
-        probes = [
-            pool.submit(
-                _probe, route,
-                LAN_CONNECT_TIMEOUT if route["kind"] == "lan" else ROUTE_CONNECT_TIMEOUT,
-            )
-            for route in routes
-        ]
-        results = [(route, probe.result()) for route, probe in zip(routes, probes)]
-    for route, certificate in results:
+    failures, mismatched = [], None
+    answers = [None] * len(routes)
+    done = [threading.Event() for _ in routes]
+
+    def probe(i, route, timeout):
+        try:
+            answers[i] = _probe(route, timeout)
+        finally:
+            done[i].set()
+
+    # Daemon threads: a relay probe still hanging after the LAN won must not
+    # hold the process open on exit.
+    for i, route in enumerate(routes):
+        timeout = LAN_CONNECT_TIMEOUT if route["kind"] == "lan" else ROUTE_CONNECT_TIMEOUT
+        threading.Thread(target=probe, args=(i, route, timeout), daemon=True).start()
+    for i, route in enumerate(routes):
+        done[i].wait()
+        certificate = answers[i]
         if certificate is None:
             failures.append(route["kind"])
-            continue
-        digest = hashlib.sha256(certificate).hexdigest()
-        if pin and digest != pin:
-            # A route that serves the wrong certificate is not a fallback
-            # candidate; it is a different server wearing this name.
-            raise ValidationError(
-                f"The {route['kind']} route for this deployment served an "
-                "unexpected certificate"
-            )
-        return route, certificate
+        elif pin and hashlib.sha256(certificate).hexdigest() != pin:
+            mismatched = mismatched or route["kind"]
+        else:
+            return route, certificate
+    if mismatched:
+        raise ValidationError(
+            f"The {mismatched} route for this deployment served an unexpected certificate"
+        )
+    if fallback is not None and routes:
+        return routes[0], fallback
     raise ValidationError(
         "Could not reach this deployment on any route ("
         + ", ".join(failures or ["none advertised"])
@@ -230,7 +334,7 @@ def select_route(home: dict) -> tuple[dict, bytes]:
     )
 
 
-def activate(name: str, home: dict, route: dict, certificate: bytes) -> Path:
+def activate(name: str, home: dict, route: dict, certificate: bytes, *, remember: bool = True) -> Path:
     """Point the client's device transport at this HOME over this route.
 
     Writes the same direct-connection profile a manually configured client
@@ -243,29 +347,49 @@ def activate(name: str, home: dict, route: dict, certificate: bytes) -> Path:
     certs.mkdir(parents=True, exist_ok=True)
     ca_path = certs / f"{name}.crt"
     ca_path.write_bytes(certificate)
-    _write_env_kv(
-        _env_path(),
-        {
-            "REMOTERF_ADDR": f"{route['host']}:{route['port']}",
-            "REMOTERF_CA_CERT": str(ca_path),
-            "REMOTERF_PROFILE": name,
-        },
-    )
+    settings = {
+        "REMOTERF_ADDR": f"{route['host']}:{route['port']}",
+        "REMOTERF_CA_CERT": str(ca_path),
+        "REMOTERF_PROFILE": name,
+    }
+    # A lab on Global always has its relay name in its certificate; the LAN
+    # address it had when that was issued may be long gone (DHCP, a VPN route).
+    relay = next((r["host"] for r in home["routes"] if r["kind"] == "relay"), None)
+    if relay and route["kind"] != "relay":
+        settings["REMOTERF_TLS_SERVER_NAME"] = relay
+    _write_env_kv(_env_path(), settings)
     from .state import select_direct
 
     # No need to tear the channel down: the connection cache keys on the
     # endpoint and the CA file, so it replaces a stale channel by itself.
     select_direct()
-    set_last_target("home", name)
+    if remember:
+        set_last_target("home", name)
     return ca_path
 
 
-def connect(name: str) -> dict:
-    """Select a saved HOME and bring its transport up. Returns the route used."""
+def connect(name: str, *, remember: bool = True) -> dict:
+    """Select a saved HOME and bring its transport up. Returns the route used.
+    remember=False (Global is down): `-l` still tries Global first next time."""
     home = load_home(name)
-    route, certificate = select_route(home)
-    activate(name, home, route, certificate)
+    route, certificate = select_route(home, _configured_ca(name, home))
+    activate(name, home, route, certificate, remember=remember)
     return route
+
+
+def _configured_ca(name: str, home: dict) -> bytes | None:
+    """The CA `-c -a` saved for a lab with no deployment id, if it still
+    matches the pin. 2.0.x fetched it once and then needed only the gRPC
+    port, so a lab whose cert port is unreachable must still log in."""
+    if home.get("deployment_id") is not None:
+        return None
+    from ..config.config import _certs_dir
+
+    try:
+        certificate = (_certs_dir() / f"{name}.crt").read_bytes()
+    except OSError:
+        return None
+    return certificate if hashlib.sha256(certificate).hexdigest() == home.get("cert_sha256") else None
 
 
 # An account is `name@<deployment>`; Global's own accounts are `name@global`.
@@ -291,12 +415,16 @@ def register_home(host: str) -> tuple[str, dict, dict]:
     return name, home, route
 
 
-def migrate_legacy_target() -> str | None:
-    """Adopt a pre-homes single-target config as a HOME named "default"."""
+def migrate_legacy_target(*, configured: bool = False) -> str | None:
+    """Adopt a pre-homes single-target config as a HOME named "default".
+
+    `configured`: `-c -a` just wrote it, so adopt it even beside other homes
+    and make it the target `-l` opens next.
+    """
     from .direct import resolve_active_profile
 
     data = load_state()
-    if data["homes"]:
+    if data["homes"] and not configured:
         return None
     profile = resolve_active_profile()
     if profile is None or not profile.ca_path.exists():
@@ -311,12 +439,12 @@ def migrate_legacy_target() -> str | None:
                 "kind": "direct",
                 "host": host,
                 "port": int(port),
-                "cert_port": int(port) + 1,
+                "cert_port": profile.cert_port or int(port) + 1,
             }
         ],
         "cert_sha256": hashlib.sha256(profile.ca_path.read_bytes()).hexdigest(),
     }
-    if data["last_target"] is None:
+    if data["last_target"] is None or configured:
         data["last_target"] = {"kind": "home", "name": "default"}
     save_state(data)
     return "default"

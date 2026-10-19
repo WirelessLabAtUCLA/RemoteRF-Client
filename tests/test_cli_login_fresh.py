@@ -126,10 +126,10 @@ def test_login_with_a_legacy_address_still_logs_in_there():
     register.assert_not_called()
 
 
-def test_register_without_a_code_makes_a_global_account(monkeypatch):
+def test_register_defaults_to_a_global_account_without_asking_for_a_code(monkeypatch):
     from remoterf import remoterf_cli
 
-    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(AssertionError(prompt)))
     with mock.patch("remoterf.config.config._confirm_tos", return_value=True), \
             mock.patch("remoterf.config.config.forget_tos_agreement"), \
             mock.patch("remoterf.config.config.remember_tos_agreement"), \
@@ -167,6 +167,29 @@ def test_register_global_asks_for_the_tos_like_register(monkeypatch):
         assert remoterf_cli.main() == 1
     remember.assert_not_called()
     use_global.assert_not_called()
+
+
+def test_reset_password_uses_the_global_email_code_flow(monkeypatch):
+    from remoterf import remoterf_cli
+
+    backend = mock.Mock()
+    monkeypatch.setattr("builtins.input", lambda prompt="": "ethange@example.org")
+    monkeypatch.setattr(remoterf_cli.getpass, "getpass", mock.Mock(side_effect=["reset-code", "Sup3r-secret-pw", "Sup3r-secret-pw"]))
+    with mock.patch("remoterf.deployment.backend.HttpsJsonAccountBackend", return_value=backend), \
+            mock.patch.object(remoterf_cli, "print_client_banner"):
+        assert remoterf_cli._reset_password() == 0
+    backend.forgot.assert_called_once_with("ethange@example.org")
+    backend.reset.assert_called_once_with("reset-code", "Sup3r-secret-pw")
+    backend.close.assert_called_once_with()
+
+
+def test_reset_pass_dispatches_without_an_existing_login(monkeypatch):
+    from remoterf import remoterf_cli
+
+    monkeypatch.setattr("sys.argv", ["remoterf", "--reset-pass"])
+    with mock.patch.object(remoterf_cli, "_reset_password", return_value=0) as reset:
+        assert remoterf_cli.main() == 0
+    reset.assert_called_once_with()
 
 
 def _login_at(home, typed, *, https=False, pending=None):

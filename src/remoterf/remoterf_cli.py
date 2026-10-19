@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import itertools
 import sys
 import threading
@@ -151,8 +152,11 @@ def print_help() -> None:
     print()
     printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@deployment)", Sty.DEFAULT)
-    printf("  remoterf -r | --register [global]", Sty.CYAN, " Register with an enrollment code (or a RemoteRF Global account)", Sty.DEFAULT)
+    printf("  remoterf -r | --register", Sty.CYAN, "          Create a RemoteRF Global account", Sty.DEFAULT)
+    printf("  remoterf -r --local-only", Sty.CYAN, "     Register at a deployment with an enrollment code", Sty.DEFAULT)
+    printf("  remoterf --reset-pass", Sty.CYAN, "             Reset a RemoteRF Global password by email", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
+    printf("  remoterf --remote-admin [lab]", Sty.CYAN, "     A lab's console, for its remote admins (-h for more)", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
     print()
     printf("Config:", (Sty.BOLD, Sty.MAGENTA))
@@ -181,8 +185,9 @@ def print_help() -> None:
     printf("  Exit codes: 0 ok, 2 usage, 3 login, 4 not found, 5 conflict, 6 permission, 7 unreachable, 130 interrupted", Sty.GRAY)
     print()
     printf("Examples:", (Sty.BOLD, Sty.MAGENTA))
-    printf("  remoterf --register", Sty.GREEN, "                           then: ucla.global.remoterf.net/QEHN7", Sty.GRAY)
-    printf("  remoterf --register global", Sty.GREEN)
+    printf("  remoterf --register", Sty.GREEN)
+    printf("  remoterf --register --local-only", Sty.GREEN, "              then: ucla.global.remoterf.net/QEHN7", Sty.GRAY)
+    printf("  remoterf --reset-pass", Sty.GREEN)
     printf("  remoterf --login", Sty.GREEN)
     printf("  remoterf --login ucla", Sty.GREEN)
     printf("  remoterf --login global", Sty.GREEN)
@@ -256,11 +261,39 @@ def _use_global(*, register: bool, show_banner: bool = True, username: str | Non
         finally:
             backend.close()
     except (RuntimeError, ValueError) as exc:
+        if not register and getattr(exc, 'unreachable', False) and homes.linked_homes():
+            return _use_linked_lab(username)
         from .core.messages import explain
 
         print(f'Could not reach RemoteRF Global: {explain(exc)}')
         return 2
     return _account_shell(register=register, show_banner=show_banner, username=username)
+
+
+def _use_linked_lab(username: str | None) -> int:
+    """Global is down: open a lab this account has a login at, directly (its
+    LAN, or a VPN route), same name and password. `-l` tries Global first
+    again next time."""
+    from remoterf.deployment import homes
+
+    mine = homes.linked()["username"]
+    name, where = homes.split_account(username) if username else (mine, None)
+    if not name or name.lower() != mine or where not in (None, homes.GLOBAL_ACCOUNTS):
+        # Only the account the labs were linked for: anything else would send a password as typed.
+        printf('Could not reach RemoteRF Global, and that is not the account linked to your labs.', Sty.WARNING)
+        return 2
+    printf('RemoteRF Global is not answering: opening your lab directly.', Sty.WARNING)
+    for lab in homes.linked_homes():
+        try:
+            home = homes.load_home(lab)
+            with _working(f"Connecting to {lab}…"):
+                route = homes.connect(lab, remember=False)
+        except (RuntimeError, ValueError):
+            continue
+        return _account_shell(register=False, server_label=f'{lab} ({_route_label(route)})',
+                              home=lab, route={**route, 'home': home}, username=name)
+    printf('None of your labs answered either. Check your network, or use: remoterf -c -a <lab address>', Sty.WARNING)
+    return 2
 
 
 @contextmanager
@@ -353,7 +386,7 @@ def _agree_to_tos() -> bool:
 
 
 def _register_global() -> int:
-    """`remoterf -r global`: straight to a Global account, same agreement as -r."""
+    """Default registration: a Global account, with the usual agreement."""
     print_client_banner(_installed_version(), server="")
     if not _agree_to_tos():
         return 1
@@ -361,7 +394,12 @@ def _register_global() -> int:
 
 
 def _register() -> int:
-    """`remoterf -r`: a deployment enrollment code, or a Global account."""
+    """`remoterf -r`: Global is the normal account home."""
+    return _register_global()
+
+
+def _register_local() -> int:
+    """`remoterf -r --local-only`: register at a specific deployment."""
     from remoterf_federation_core import ValidationError
 
     from remoterf.deployment import homes
@@ -372,15 +410,13 @@ def _register() -> int:
     if not _agree_to_tos():
         return 1
     try:
-        entered = input('Enrollment code (Enter for a RemoteRF Global account): ').strip()
+        entered = input('Enrollment code: ').strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return 1
     if not entered:
-        # No lab yet: the account lives on Global. A lab's invite can still
-        # be redeemed later, from the shell, with `enroll <invite>`.
-        printf('Registering a RemoteRF Global account. Join a deployment any time with: enroll <deployment invite>', Sty.GRAY)
-        return _use_global(register=True, show_banner=False)
+        print('ERROR: --local-only requires an enrollment code')
+        return 2
     try:
         host, code = homes.parse_code(entered)
     except ValidationError as exc:
@@ -399,6 +435,51 @@ def _register() -> int:
         register=True, enrollment_code=code, server_label=f'{name} ({_route_label(route)})',
         show_banner=False, home=name, route={**route, 'home': home},
     )
+
+
+def _reset_password() -> int:
+    """Reset a Global account password without needing an existing session."""
+    from remoterf.deployment.backend import HttpsJsonAccountBackend
+    from remoterf.deployment.state import origin
+    from .core.messages import explain
+
+    print_client_banner(_installed_version(), server=_global_origin())
+    try:
+        backend = HttpsJsonAccountBackend(origin(_global_origin()))
+    except (RuntimeError, ValueError) as exc:
+        print(f'Could not reach RemoteRF Global: {explain(exc)}')
+        return 2
+    try:
+        email = input('Associated email: ').strip()
+        if not email:
+            print('ERROR: an email address is required')
+            return 2
+        backend.forgot(email)
+        printf('If that address belongs to a RemoteRF Global account, check its email for a password reset code.', Sty.GRAY)
+        token = getpass.getpass('Password reset code (Hidden): ')
+        if not token:
+            print('ERROR: a password reset code is required')
+            return 2
+        while True:
+            password = getpass.getpass('New password (Hidden): ')
+            if not 8 <= len(password) <= 128:
+                print(f'ERROR: password must be 8-128 characters (got {len(password)})')
+                continue
+            if password != getpass.getpass('Confirm new password (Hidden): '):
+                print('ERROR: passwords do not match')
+                continue
+            break
+        backend.reset(token, password)
+        printf('Password reset. Run: remoterf --login', Sty.GREEN)
+        return 0
+    except (RuntimeError, ValueError) as exc:
+        print(f'Password reset failed: {explain(exc)}')
+        return 2
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 1
+    finally:
+        backend.close()
 
 
 def _login(target: str | None) -> int:
@@ -509,12 +590,19 @@ def main() -> int:
         return 0
 
     if argv[0] in ("--register", "-register", "-r"):
-        if len(argv) == 2 and argv[1].lstrip("-") == "global":
-            return _register_global()
+        if len(argv) == 1 or (len(argv) == 2 and argv[1].lstrip("-") == "global"):
+            return _register()
+        if len(argv) == 2 and argv[1].lstrip("-") == "local-only":
+            return _register_local()
         if len(argv) > 1:
-            print("ERROR: --register takes no arguments (or 'global')")
+            print("ERROR: --register takes no arguments (or '--local-only')")
             return 2
-        return _register()
+
+    if argv[0] in ("--reset-pass", "--reset-password"):
+        if len(argv) > 1:
+            print("ERROR: --reset-pass takes no arguments")
+            return 2
+        return _reset_password()
 
     if argv[0] in ("--login", "-login", "-l"):
         if len(argv) > 2:
@@ -524,6 +612,11 @@ def main() -> int:
 
     if argv[0] in ("homes", "--homes"):
         return _print_homes()
+
+    if argv[0] in ("--remote-admin", "--admin-pipe"):
+        from remoterf.admin import main as admin_main
+
+        return admin_main(argv[1:] if argv[0] == "--remote-admin" else argv)
 
     if argv[0] in ("auth", "devices", "slots", "reservations", "reserve", "cancel", "doctor"):
         from remoterf.agent_cli import main as agent_main

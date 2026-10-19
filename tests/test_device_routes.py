@@ -39,7 +39,7 @@ class Stub:
     def __init__(self, replies=None):
         self.calls, self.replies = [], dict(replies or {})
 
-    def Call(self, request):
+    def Call(self, request, metadata=None):
         args = {k: unmap_arg(v) for k, v in request.args.items()}
         self.calls.append((request.function_name, args))
         reply = self.replies.get(request.function_name, {"tx_lo": 1})

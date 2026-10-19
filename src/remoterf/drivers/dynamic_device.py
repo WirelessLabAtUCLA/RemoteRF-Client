@@ -34,8 +34,10 @@ On first device init, pass device_id to also check for schema updates:
 
 from __future__ import annotations
 
+import importlib
 import json
 import keyword
+import re
 import sys
 from pathlib import Path
 
@@ -101,7 +103,7 @@ def fetch_idl(
         from ..core.v2_errors import RemoteRFProtocolError, RemoteRFReservationError, RemoteRFTransportError
 
         try:
-            return fetch_schema_v2(str(token))
+            return _lab_schema(fetch_schema_v2(str(token)))
         except (RemoteRFProtocolError, RemoteRFReservationError):
             # The selected device may only publish v1 (for example Pluto), or
             # the token drives a partner lab's device, which an older home
@@ -135,7 +137,7 @@ def fetch_idl(
         from ..core.messages import explain
 
         raise RuntimeError(explain(str(unmap_arg(resp.results['error']))))
-    schema = json.loads(unmap_arg(resp.results['schema']))
+    schema = _lab_schema(json.loads(unmap_arg(resp.results['schema'])))
     if 'federated' in resp.results:
         if token is not None:
             # A partner lab answered: device calls with this token can punch to it.
@@ -147,6 +149,13 @@ def fetch_idl(
             # A partner's v1 answer may replace an installed v2 driver (see
             # _write_v1_driver_files); a v2 schema is hashed, so left as is.
             schema["federated"] = True
+    return schema
+
+
+def _lab_schema(schema):
+    """A Server's schema never carries "federated": that mark is this client's own (below)."""
+    if not isinstance(schema, dict) or "federated" in schema:
+        raise RuntimeError("The deployment sent a driver schema this client does not accept; it was not installed.")
     return schema
 
 
@@ -225,6 +234,10 @@ def _require_package_name(value, *, field: str) -> str:
     value = str(value or "").strip()
     if not _valid_identifier(value):
         raise ValueError(f"{field} must be a valid Python package identifier: {value!r}")
+    # casefold: on macOS and Windows "Support" is the support/ directory
+    own = {"support"} | {path.stem.casefold() for path in _DRIVERS_DIR.glob("*.py")}
+    if value.startswith("_") or value.casefold() in own:
+        raise ValueError(f"{field} {value!r} names part of the client itself")
     return value
 
 
@@ -234,6 +247,25 @@ def _require_dotted_identifier(value, *, field: str, required_prefix: str | None
         raise ValueError(f"{field} must be under {required_prefix!r}: {value!r}")
     if not value or any(not _valid_identifier(part) for part in value.split(".")):
         raise ValueError(f"{field} must be a dotted Python identifier: {value!r}")
+    return value
+
+
+# The hash goes into a string literal of the generated driver verbatim: no quotes or whitespace.
+_SAFE_HASH = re.compile(r"[A-Za-z0-9.:+_?-]{0,128}")
+
+
+def _require_hash(value) -> str:
+    value = str(value)
+    if not _SAFE_HASH.fullmatch(value):
+        raise ValueError(f"schema_hash may hold only letters, digits and .:+_?-: {value!r}")
+    return value
+
+
+def _require_comment(value, *, field: str) -> str:
+    """Text for a comment line of the generated driver: one printable line."""
+    value = str(value)
+    if len(value) > 128 or not value.isprintable():
+        raise ValueError(f"{field} must be one printable line: {value!r}")
     return value
 
 
@@ -487,6 +519,7 @@ def _validate_client_return(
         raise ValueError(
             f"{context}.client_return target root {root!r} is not declared in client_modules or client_objects"
         )
+    _require_client_class(target, client_modules, client_objects, field=f"{context}.client_return target")
 
     args = spec.get("args", [])
     if not isinstance(args, list):
@@ -517,13 +550,34 @@ def _validate_client_return(
     return {"kind": "constructor", "target": target, "args": checked_args}
 
 
+def _require_client_class(target: str, client_modules: dict, client_objects: dict, *, field: str) -> None:
+    """A constructor target must be a class of the client's own driver code: a
+    declared client object class, or a class a remoterf.drivers module defines.
+    Anything else (``uhd_dsp.np.f2py.os.system``) would hand a lab any callable."""
+    root, *path = target.split(".")
+    if root in client_objects:
+        node = client_objects[root]
+        for part in path:
+            node = (node.get("members") or {}).get(part)
+            if node is None:
+                break
+        if node is not None and node.get("kind") in {"payload_class", "strict_class", "proxy_class"}:
+            return
+        raise ValueError(f"{field} {target!r} is not a declared client class")
+    obj = importlib.import_module(client_modules[root])
+    for part in path:
+        obj = None if part.startswith("_") else getattr(obj, part, None)
+    if not (isinstance(obj, type) and obj.__module__.startswith("remoterf.drivers.")):
+        raise ValueError(f"{field} {target!r} is not a class of the remoterf driver support modules")
+
+
 def _schema_maps(schema: dict) -> tuple[str, str, str, str, str, dict, dict, dict, dict, dict]:
     device_type = _require_package_name(
         schema.get("device_type", "unknown"),
         field="device_type",
     )
-    driver_version = str(schema.get("driver_version", "?"))
-    schema_hash = str(schema.get("schema_hash", "?"))
+    driver_version = _require_comment(schema.get("driver_version", "?"), field="driver_version")
+    schema_hash = _require_hash(schema.get("schema_hash", "?"))
     rpc_prefix = device_type[0].upper() + device_type[1:]
     class_name = _require_identifier(_client_class_name(schema), field="client_class")
     client_modules = _validate_client_modules(schema.get("client_modules", {}) or {})
@@ -1417,13 +1471,36 @@ def _codegen(schema: dict) -> str:
 _DRIVERS_DIR = Path(__file__).parent
 
 
-def _write_driver_files(schema: dict) -> Path:
+def _write_driver_files(schema: dict, *, token=None, device_id=None) -> Path:
+    if _needs_review(token, device_id):
+        from .schema_review import require_approved
+
+        require_approved(schema)
     pkg_dir = _write_v2_driver_files(schema) if str(schema.get("schema_version")) == "2.0" else _write_v1_driver_files(schema)
     stale = f"remoterf.drivers.{pkg_dir.name}"
     old = "remoteRF" + stale[len("remoterf"):]  # the `import remoteRF` alias keys
     for name in [m for m in sys.modules if m in (stale, old) or m.startswith((stale + ".", old + "."))]:
         del sys.modules[name]
     return pkg_dir
+
+
+def _needs_review(token, device_id) -> bool:
+    """A Global account's driver: through Global, or from a lab it logs in at as
+    a linked account. Native and LAN-only labs install as they always did."""
+    from remoterf_federation_core import is_global_ref
+
+    from ..core.grpc_client import _active_home_name, device_route
+    from ..deployment import homes
+
+    if is_global_ref(token) or is_global_ref(device_id):
+        return True
+    if token is not None:
+        route = device_route(str(token))
+        if route.kind == "global":
+            return True
+        if route.kind == "home":
+            return homes.is_linked_home(str(token).rpartition("@")[2].strip().lower())
+    return homes.is_linked_home(_active_home_name())
 
 
 def _write_v1_driver_files(schema: dict) -> Path:
@@ -1572,7 +1649,7 @@ def install_driver(*, token: str = None, device_id: int = None, device_name: str
         device_name=device_name,
         prefer_v2=True,
     )
-    pkg_dir = _write_driver_files(schema)
+    pkg_dir = _write_driver_files(schema, token=token, device_id=device_id)
     _print_driver_cached(pkg_dir)
     return pkg_dir
 
@@ -1612,14 +1689,14 @@ def ensure_driver(*, token: str = None, device_id: int = None, device_name: str 
         and f"from .{device_type}_remote import" in init_path.read_text(encoding="utf-8")
     )
     if not remote_path.exists() or not init_binds_generated:
-        pkg_dir = _write_driver_files(schema)
+        pkg_dir = _write_driver_files(schema, token=token, device_id=device_id)
         _print_driver_cached(pkg_dir)
         return
 
     # File exists — check staleness via the baked-in _SCHEMA_HASH line.
     current_hash = _read_schema_hash(remote_path)
     if current_hash != schema.get("schema_hash"):
-        _write_driver_files(schema)
+        _write_driver_files(schema, token=token, device_id=device_id)
         if _read_schema_hash(remote_path) == current_hash:
             return
         print(
@@ -1692,7 +1769,7 @@ def install_driver_if_stale(*, token: str, current_hash: str) -> bool:
 
     device_type = _schema_device_type(schema)
     try:
-        pkg_dir = _write_driver_files(schema)
+        pkg_dir = _write_driver_files(schema, token=token)
     except OSError as exc:
         # A read-only install (system site-packages): the installed driver keeps working.
         _verified.add(key)

@@ -275,14 +275,17 @@ def configure(host: str, port: int, cert_port: int) -> int:
         "REMOTERF_ADDR": f"{host}:{grpc_port}",
         "REMOTERF_CA_CERT": str(ca_out),
         "REMOTERF_PROFILE": profile,
+        "REMOTERF_CERT_PORT": str(cert_port),
     })
     # This profile is what the "default" home was adopted from. A new address
     # or a re-fetched CA makes that adoption stale (its pin would now refuse
-    # this very server), so drop it and let the next login adopt this one.
+    # this very server), so replace it with this one, the next `-l` target.
     try:
         from ..deployment import homes
 
         homes.forget_home(profile)
+        homes.forget_login(profile)  # its session belongs to the old server
+        homes.migrate_legacy_target(configured=True)
     except Exception:  # noqa: BLE001 - never fail configuration over bookkeeping
         pass
 

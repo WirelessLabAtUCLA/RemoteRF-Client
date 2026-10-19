@@ -27,7 +27,7 @@ DUMP = """
 import importlib, json, sys, types
 try:
     import adi
-except ImportError:
+except (ImportError, AttributeError, OSError):  # pyadi without a matching libiio
     sys.modules["adi"] = types.ModuleType("adi")  # the Pluto schema imports pyadi at load
 out = {}
 for device_type, spec in json.loads(sys.argv[1]).items():
@@ -43,7 +43,9 @@ def server_schemas():
         pytest.skip(f"no Server source at {SERVER_SRC} (set REMOTERF_SERVER_SRC)")
     result = subprocess.run(
         [sys.executable, "-c", DUMP, json.dumps(SCHEMAS)],
-        env={**os.environ, "PYTHONPATH": str(SERVER_SRC)},
+        # The Server's built-in drivers live in its remoterf-device-core package.
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(
+            (str(SERVER_SRC), str(SERVER_SRC.parent / "packages" / "remoterf-device-core" / "src")))},
         capture_output=True, text=True, check=True,
     )
     return json.loads(result.stdout.splitlines()[-1])

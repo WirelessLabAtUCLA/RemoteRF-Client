@@ -135,11 +135,16 @@ def test_no_route_is_an_error_not_a_different_home(reachable):
         homes.select_route(homes.load_home("ucla"))
 
 
-def test_a_route_serving_the_wrong_certificate_is_refused(reachable):
+def test_a_route_serving_the_wrong_certificate_is_skipped_and_refused_if_none_is_right(reachable):
+    """A stale LAN address (DHCP gave it to something else) must not lock the
+    lab out; the pin still decides, so nothing goes to the wrong server."""
     reachable["192.168.1.20"] = OTHER_CERT
     reachable["ucla.global.remoterf.net"] = CERT
+    route, certificate = homes.select_route(homes.save_home("ucla", document()))
+    assert route["kind"] == "relay" and certificate == CERT
+    reachable["ucla.global.remoterf.net"] = OTHER_CERT
     with pytest.raises(ValidationError, match="unexpected certificate"):
-        homes.select_route(homes.save_home("ucla", document()))
+        homes.select_route(homes.load_home("ucla"))
 
 
 def test_an_unpinned_deployment_still_connects(reachable):
@@ -274,12 +279,33 @@ def test_reconfiguring_the_direct_target_replaces_a_stale_default_home(monkeypat
     monkeypatch.setattr(cfg, "fetch_and_save_ca_cert", fetch)
     cfg.configure("164.67.195.210", 61005, 61006)
 
-    assert homes.homes() == {}
-    assert homes.last_target() is None
-    assert homes.migrate_legacy_target() == "default"
+    assert list(homes.homes()) == ["default"]
+    assert homes.last_target() == {"kind": "home", "name": "default"}
     home = homes.load_home("default")
     assert home["routes"][0]["host"] == "164.67.195.210"
     assert home["cert_sha256"] == hashlib.sha256(new_cert).hexdigest()
+
+
+def test_configure_keeps_a_custom_cert_port_and_wins_over_other_homes(monkeypatch):
+    """`-c -a host:port --cert-port N` then `-l` must reach that server, even
+    for a user who already has other homes saved."""
+    from remoterf.config import config as cfg
+
+    homes.save_home("ucla", document())
+    homes.set_last_target("global")
+    monkeypatch.setattr(cfg, "_host_resolves", lambda host: True)
+    monkeypatch.setattr(cfg, "_confirm_tos", lambda: True)
+    monkeypatch.setattr(
+        cfg, "fetch_and_save_ca_cert",
+        lambda host, port, *, out_path, timeout_sec, overwrite: out_path.write_bytes(CERT) or True,
+    )
+    cfg.configure("192.168.1.30", 61005, 7000)
+
+    assert homes.load_home("default")["routes"] == [
+        {"kind": "direct", "host": "192.168.1.30", "port": 61005, "cert_port": 7000}
+    ]
+    assert homes.last_target() == {"kind": "home", "name": "default"}
+    assert "ucla" in homes.homes()
 
 
 def test_migration_does_nothing_without_a_previous_configuration():
@@ -296,15 +322,15 @@ def run_cli(argv, monkeypatch, **patches):
     return remoterf_cli.main()
 
 
-def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
+def test_register_local_only_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
     reachable["ucla.global.remoterf.net"] = CERT
     monkeypatch.setattr(homes, "discover", lambda host, **kw: document())
-    # Every `-r` starts with the Terms; answer them, then hand over the code.
+    # Local-only registration starts with the Terms; answer them, then hand over the code.
     answers = iter(["y", "ucla/QEHN7"])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     shell = mock.Mock(return_value=0)
 
-    assert run_cli(["-r"], monkeypatch, _account_shell=shell) == 0
+    assert run_cli(["-r", "--local-only"], monkeypatch, _account_shell=shell) == 0
     kwargs = shell.call_args.kwargs
     assert (kwargs["register"], kwargs["enrollment_code"], kwargs["server_label"]) == (
         True, "QEHN7", "ucla (relay)"
@@ -314,16 +340,22 @@ def test_register_with_a_code_lands_in_the_home_shell(monkeypatch, reachable):
     assert homes.last_target() == {"kind": "home", "name": "ucla"}
 
 
-def test_a_blank_code_registers_on_global_and_global_has_its_own_spelling(monkeypatch):
-    answers = iter(["y", "", "y"])
-    monkeypatch.setattr("builtins.input", lambda *_: next(answers, ""))
+def test_register_defaults_to_global_and_local_only_requires_a_code(monkeypatch, capsys):
+    answers = iter(["y", "y"])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     used_global = mock.Mock(return_value=0)
     assert run_cli(["-r"], monkeypatch, _use_global=used_global) == 0
-    used_global.assert_called_once_with(register=True, show_banner=False)  # no lab: the account lives on Global
+    used_global.assert_called_once_with(register=True, show_banner=False)
     used_global.reset_mock()
-    # `-r global` asks for the Terms too, then skips the code prompt.
+    # `-r global` remains a backwards-compatible spelling for the default.
     assert run_cli(["-r", "global"], monkeypatch, _use_global=used_global) == 0
     used_global.assert_called_once_with(register=True, show_banner=False)
+    used_global.reset_mock()
+    answers = iter(["y", ""])
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+    assert run_cli(["-r", "--local-only"], monkeypatch, _use_global=used_global) == 2
+    assert "--local-only requires an enrollment code" in capsys.readouterr().out
+    used_global.assert_not_called()
 
 
 def test_declining_the_terms_stops_registration_before_any_code(monkeypatch):
@@ -632,3 +664,36 @@ def test_reserve_shows_the_token_even_when_the_driver_fetch_fails(monkeypatch, c
     assert account.reserve_device(0, now, now + datetime.timedelta(hours=1)) == "reservation-token"
     account.install_reserved_driver("reservation-token", 0)
     assert "Could not install the driver" in capsys.readouterr().out
+
+
+def test_configured_lab_logs_in_when_only_its_grpc_port_answers(monkeypatch):
+    """2.0.x needed the cert port only at `-c -a`; a lab reachable on its gRPC
+    port alone must still open from the CA saved then (and only that CA)."""
+    from remoterf.config import config as cfg
+
+    certs = cfg._certs_dir()
+    certs.mkdir(parents=True, exist_ok=True)
+    (certs / "default.crt").write_bytes(CERT)
+    cfg._write_env_kv(cfg._env_path(), {"REMOTERF_ADDR": "192.168.1.30:61005", "REMOTERF_CA_CERT": str(certs / "default.crt")})
+    assert homes.migrate_legacy_target() == "default"
+    monkeypatch.setattr(homes, "_probe", lambda route, timeout: None)
+    monkeypatch.setattr(homes, "activate", lambda name, home, route, certificate, **_: certificate)
+    assert homes.connect("default")["host"] == "192.168.1.30"
+
+    (certs / "default.crt").write_bytes(OTHER_CERT)  # not the pinned CA: no fallback
+    with pytest.raises(ValidationError):
+        homes.connect("default")
+
+
+def test_reconfiguring_forgets_the_old_servers_login(monkeypatch):
+    from remoterf.config import config as cfg
+
+    homes.remember_login("default", "jdoe", "old-server-session")
+    monkeypatch.setattr(cfg, "_host_resolves", lambda host: True)
+    monkeypatch.setattr(cfg, "_confirm_tos", lambda: True)
+    monkeypatch.setattr(
+        cfg, "fetch_and_save_ca_cert",
+        lambda host, port, *, out_path, timeout_sec, overwrite: out_path.write_bytes(CERT) or True,
+    )
+    cfg.configure("192.168.1.31", 61005, 61006)
+    assert homes.recall_login("default") is None

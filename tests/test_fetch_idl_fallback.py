@@ -85,7 +85,7 @@ def test_a_v1_hash_that_differs_still_lets_v2_decide_and_reinstall(monkeypatch, 
     probes = []
     monkeypatch.setattr(dynamic_v2, "fetch_schema_v2", lambda token: probes.append(token) or v2)
     written = []
-    monkeypatch.setattr(dynamic_device, "_write_driver_files", lambda schema: written.append(schema) or tmp_path)
+    monkeypatch.setattr(dynamic_device, "_write_driver_files", lambda schema, **_: written.append(schema) or tmp_path)
     calls = _schema_rpc(monkeypatch, "sha256:v1")
 
     # A v2 driver whose Server reported a mismatch: v2 still matches, never memoized.
@@ -107,7 +107,7 @@ def test_a_read_only_install_keeps_its_driver(monkeypatch, capsys):
     monkeypatch.setattr(dynamic_v2, "fetch_schema_v2", v1_only)
     calls = _schema_rpc(monkeypatch, "sha256:new")
 
-    def read_only(schema):
+    def read_only(schema, **_):
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(dynamic_device, "_write_driver_files", read_only)

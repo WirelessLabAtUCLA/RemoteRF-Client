@@ -21,10 +21,14 @@ FRAMED_CONTENT_TYPE = "application/x-remoterf-framed"
 
 
 class AccountBackendError(RuntimeError):
-    def __init__(self, code, *, provenance=None, retry_after=None):
+    def __init__(self, code, *, provenance=None, retry_after=None, unreachable=False, sent=True):
         self.code = code
         self.provenance = provenance
         self.retry_after = retry_after
+        # The home did not answer at all (network, DNS, its proxy's 5xx): the
+        # client may try a lab directly. `sent=False`: the request never left.
+        self.unreachable = unreachable
+        self.sent = sent
         super().__init__(code)
 
 
@@ -59,7 +63,10 @@ class JsonTransport:
             or any(c in path for c in ("?", "#", "\\", "%"))
         ):
             raise ValidationError("Invalid same-origin account path")
-        headers = {"Accept": f"{FRAMED_CONTENT_TYPE}, application/json" if accept_framed else "application/json"}
+        from ..version import CLIENT_HEADER, current
+
+        headers = {"Accept": f"{FRAMED_CONTENT_TYPE}, application/json" if accept_framed else "application/json",
+                   CLIENT_HEADER: current()}
         content = None
         if frame is not None:
             envelope = json.dumps(data, separators=(",", ":")).encode()
@@ -100,6 +107,10 @@ class JsonTransport:
                         )
                 if 300 <= response.status_code < 400:
                     raise AccountBackendError("Account redirects are not allowed")
+                if response.status_code >= 500 and not bytes(raw).lstrip().startswith(b"{"):
+                    # The proxy answered for an app that is down (502/503): it never saw the request.
+                    raise AccountBackendError("Account service unavailable", unreachable=True,
+                                              sent=response.status_code not in (502, 503))
                 if accept_framed and response.status_code < 300 and (
                     response.headers.get("content-type", "").split(";")[0].strip() == FRAMED_CONTENT_TYPE
                 ):
@@ -130,7 +141,9 @@ class JsonTransport:
                 return value
         except httpx.HTTPError as exc:
             raise AccountBackendError(
-                "Account connection failed; verify the target and TLS configuration"
+                "Account connection failed; verify the target and TLS configuration",
+                unreachable=True,
+                sent=not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)),
             ) from exc
 
     def permissions(self, path, *, access):
