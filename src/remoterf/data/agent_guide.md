@@ -107,8 +107,6 @@ Prompts: `reserve-and-receive`, `explain-my-reservations`.
 
 ## safety
 
-- Receive only. No transmit through AI tools: never write, suggest or run TX code (`tx`, `send_waveform`, DDS tones)
-  for the user. Transmitting is the user's own code, under their deployment's rules.
 - Reserve and cancel only after the user explicitly approves that device and time, or that reservation, in the
   current conversation. An earlier approval does not cover a new reservation.
 - Never retry a reservation or a cancel automatically. Report the error, and `retry_after` when it is set.
