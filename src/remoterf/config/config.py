@@ -110,7 +110,7 @@ def _confirm_wipe(root: Path) -> bool:
     try:
         return input(prompt).strip().lower() == "wipe"
     except KeyboardInterrupt:
-        print("\nCancelled.")
+        print("\nCanceled.")
         return False
 
 def _wipe_config(root: Path) -> None:
@@ -174,7 +174,7 @@ def _print_config_summary(host: str, grpc_port: int, cert_port: int, ca_out: Pat
 
 
 def _confirm_tos(question: str = "Continue with configuration? [y/N]: ",
-                 cancelled: str = "Configuration cancelled.") -> bool:
+                 cancelled: str = "Configuration canceled.") -> bool:
     _print_separator()
     _print_tos_notice()
     _print_separator()
@@ -219,7 +219,7 @@ def require_tos_for_login() -> bool:
     """Ask once, then remember -- until a registration clears it."""
     if tos_agreed():
         return True
-    if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ", "Login cancelled."):
+    if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ", "Login canceled."):
         return False
     remember_tos_agreement()
     return True
@@ -252,7 +252,7 @@ def configure(host: str, port: int, cert_port: int) -> int:
     overwrite = True
 
     if not _confirm_tos():
-        print("Configuration cancelled. Accept the Terms of Service to continue.")
+        print("Configuration canceled. Accept the Terms of Service to continue.")
         return 1
 
     certs_dir = _certs_dir()

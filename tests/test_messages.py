@@ -146,7 +146,7 @@ def test_getdev_shows_deployments_that_didnt_answer_as_rows(monkeypatch):
     account.get_devices.return_value = {"destinations": DESTS, "devices": [_dev("Bluetooth Dongle")]}
     client_app, lines = _app(monkeypatch, account)
     client_app._federated_devices()
-    assert lines[0] == "◆ stanford isn't sharing with Global right now."
+    assert lines[0] == "stanford isn't sharing with Global right now."
     box = lines[1:]
     assert [line.strip("│ ") for line in box[1:-1]] == [
         "@ucla", "Bluetooth Dongle  online", "@mit (offline)", "unnamed deployment (offline)"]
@@ -163,8 +163,9 @@ def test_the_resdev_picker_lists_offline_deployments_before_the_footer(monkeypat
     client_app, lines = _app(monkeypatch, account)
     monkeypatch.setattr(client_app, "session", SimpleNamespace(prompt=lambda text: "x"))
     client_app._federated_reserve()
-    body = [line.strip("│ ") for line in lines[1:-1]]
+    body = [line.strip("│ ") for line in lines[1:-2]]
     assert body == ["@ucla", "0. Bluetooth Dongle  30 min slots", "@mit (offline)", "", "1 offline device not shown"]
+    assert lines[-1] == "Invalid input. Please enter a number."
     lines.clear()
     account.get_devices.return_value["devices"] = [_dev("Pluto", False)]
     client_app._federated_reserve()
@@ -214,10 +215,10 @@ def test_a_refused_reservation_says_why(monkeypatch):
     reserve = lambda: client_app._federated_reserve_slot(f"{DEST}:1", slot[0].date(), slot, "", "", deployment_name="ucla",
                                                          device_name="Bluetooth Dongle", max_sec=1800)
     for code, shown in [
-        ("reservation_limit", "◆ " + LIMIT),
-        ("reservation_refused", "◆ ucla turned the reservation down."),  # an older lab
-        ("reservation_too_long", "◆ ucla turned the reservation down: Bluetooth_Dongle@ucla can be reserved for at most 30 minutes at a time."),
-        ("reservation_conflict", "◆ ucla turned the reservation down: someone else has Bluetooth_Dongle@ucla at that time. Pick another slot."),
+        ("reservation_limit", LIMIT),
+        ("reservation_refused", "ucla turned the reservation down."),  # an older lab
+        ("reservation_too_long", "ucla turned the reservation down: Bluetooth_Dongle@ucla can be reserved for at most 30 minutes at a time."),
+        ("reservation_conflict", "ucla turned the reservation down: someone else has Bluetooth_Dongle@ucla at that time. Pick another slot."),
     ]:
         lines.clear()
         account.reserve_device.side_effect = AccountBackendError(code, provenance="destination")
@@ -227,9 +228,9 @@ def test_a_refused_reservation_says_why(monkeypatch):
     native = Mock(is_https_home=False)
     client_app, lines = _app(monkeypatch, native)
     for refusal, shown in [
-        ("Partner refused: reservation_limit", "◆ mit turned the reservation down: you already have as many reservations "
+        ("Partner refused: reservation_limit", "mit turned the reservation down: you already have as many reservations "
                                                 "there as you're allowed. Cancel one (cancelres) or wait for one to end."),
-        ("You already have the maximum of 3 reservations.", "◆ You already have the maximum of 3 reservations."),
+        ("You already have the maximum of 3 reservations.", "You already have the maximum of 3 reservations."),
     ]:
         lines.clear()
         native.reserve_device.side_effect = RuntimeError(refusal)
@@ -259,7 +260,7 @@ def test_python_errors_in_resdev_are_not_shown_raw(monkeypatch):
     client_app.account.reserve_device.side_effect = KeyError("max_horizon_sec")
     slot = (datetime.datetime(2026, 10, 14, 9), datetime.datetime(2026, 10, 14, 9, 30))
     client_app._native_reserve_slot(1001, slot[0].date(), slot, "", "", device_label="Pluto SDR @mit (online)")
-    assert lines == ["◆ " + client_app._UNEXPECTED]
+    assert lines == [client_app._UNEXPECTED]
 
 
 def test_a_failed_command_never_ends_the_shell_with_a_traceback(monkeypatch, capsys):
@@ -270,7 +271,7 @@ def test_a_failed_command_never_ends_the_shell_with_a_traceback(monkeypatch, cap
         lines.clear()
         monkeypatch.setattr(client_app, "_account_command", Mock(side_effect=[ValueError("boom"), KeyboardInterrupt]))
         assert client_app.welcome(show_banner=False, initial=["login"]) is False
-        assert lines[0].startswith("◆ That command failed unexpectedly; run with REMOTERF_DEBUG=1 for details.")
+        assert lines[0].startswith("That command failed unexpectedly; run with REMOTERF_DEBUG=1 for details.")
         assert ("Traceback" in capsys.readouterr().err) == bool(debug)
 
 

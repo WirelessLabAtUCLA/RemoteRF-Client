@@ -29,6 +29,7 @@ import ast
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
 
 from ..deployment.http import AccountBackendError
 from ..ops import (
@@ -221,11 +222,9 @@ def _print_native_reserved(device_id, label, when, token):
 
 
 def _connected_args(name, home, route):
-    marker = '◆' if supports_unicode() else '*'
     title = home.get('display_name') or name
     via = 'LAN' if route['kind'] == 'lan' else route['kind']
     return (
-        f'{marker} ', Sty.DEFAULT,
         title, (Sty.BOLD, Sty.BLUE),
         f'  {name}' if title != name else '', Sty.GRAY,
         f'  via {via} {route["host"]}:{route["port"]}', Sty.CYAN,
@@ -266,15 +265,31 @@ def _open_direct_path():
 
 
 def status():
-    """Where this shell is connected and which path its device calls take."""
-    if current_route:
-        rows = [_connected_args(home_name, current_route.get('home') or {}, current_route)]
+    """Show the server, account, memberships, and client version."""
+    from ..deployment import homes
+
+    server = str(server_addr).removeprefix("https://").removeprefix("http://").rstrip("/")
+    where = homes.GLOBAL_ACCOUNTS if account.is_https_home else (home_name or "remoterf")
+    if account.is_https_home:
+        linked = homes.linked()["labs"]
+        memberships = {lab["slug"] for lab in linked.values() if isinstance(lab, dict) and lab.get("slug")}
+        try:
+            memberships.update(
+                entry["display_name"] for entry in account.get_perms().get("federation", [])
+                if entry.get("status") == "ok" and entry.get("display_name")
+                and entry.get("deployment_id") not in linked
+            )
+        except (AccountBackendError, ValidationError):
+            pass
     else:
-        rows = [('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, _home_name(), (Sty.BOLD, Sty.BLUE))]
-    label = _device_path_label()
-    if label:
-        rows.append(('  devices via ', Sty.GRAY, label, Sty.CYAN))
-    _panel("Status", rows)
+        memberships = {home_name or _home_name()}
+    member_text = ", ".join(f"@{name}" for name in sorted(memberships)) or "(none)"
+    _panel("Status", [
+        ("Server:          ", Sty.GRAY, server, (Sty.BOLD, Sty.BLUE)),
+        ("Account:         ", Sty.GRAY, f"{account.username}@{where}", (Sty.BOLD, Sty.GREEN)),
+        ("Memberships:     ", Sty.GRAY, member_text, Sty.MAGENTA),
+        ("Client version:  ", Sty.GRAY, print_my_version(), Sty.CYAN),
+    ])
 
 
 def _remember_login():
@@ -531,11 +546,9 @@ def title():
 
 def session_line():
     """The session facts the full panel carries, on one line under the banner."""
-    marker = '◆' if supports_unicode() else '*'
     display_tos = str(_tos_url()).removeprefix("https://").removeprefix("http://")
     label = _device_path_label()
     printf(
-        f'{marker} ', Sty.DEFAULT,
         f'Logged in as {account.username}', (Sty.BOLD, Sty.GREEN),
         f'   devices via {label}' if label else '', Sty.CYAN,
         f'   TOS {display_tos}', Sty.GRAY,
@@ -558,8 +571,8 @@ def _panel(label, rows):
 
 
 def _note(*args):
-    """One line in the banner's voice: a marker, then printf (text, style) pairs."""
-    printf('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, *args)
+    """One line in the banner's voice."""
+    printf(*args)
 
 
 _UNEXPECTED = "That command failed unexpectedly; run with REMOTERF_DEBUG=1 for details."
@@ -598,11 +611,11 @@ def commands():
         ("'cancelres'", "Cancel a reservation"),
         ("'getres'", "View all reservations"),
         ("'myres'", "View my reservations"),
-        *([] if account.is_https_home else [("'perms'", "View permissions")]),
+        ("'perms'", "View permissions"),
         ("'enroll'", "Enroll with an enrollment code"),
         ("'logout'", "Log out and forget the stored login"),
-        ("'status'", "Connection and the path device calls use"),
-        ("'direct on|off'", "Use, or stop using, a direct device path"),
+        ("'status'", "Show connection and device transport status"),
+        ("'direct on|off'", "Enable or disable direct device transport"),
         *([("'reset-password'", "Set a new password with an emailed token")] if account.is_https_home else []),
         ("'exit' or 'quit'", "Exit"),
     ]
@@ -742,11 +755,14 @@ def _federated_reservation_rows(*, mine_only):
     offline = _render_destinations(data["destinations"])
     names = {d["deployment_id"]: d["display_name"] for d in data["destinations"] if d["display_name"] != d["deployment_id"]}
     rows = [r for r in data["reservations"] if r["mine"] or not mine_only]
-    labels = {}
-    if rows:
+    labels = {
+        r["device_id"]: _device_label(r["display_name"], r.get("handle"), names.get(r["deployment_id"]))
+        for r in rows if r.get("display_name")
+    }
+    if any(r["device_id"] not in labels for r in rows):
         try:
-            labels = {d["device_id"]: _device_label(d["display_name"], d.get("handle"), d["deployment_name"])
-                      for d in account.get_devices()["devices"]}
+            labels.update({d["device_id"]: _device_label(d["display_name"], d.get("handle"), d["deployment_name"])
+                           for d in account.get_devices()["devices"]})
         except AccountBackendError:
             pass
     for r in rows:
@@ -757,13 +773,15 @@ def _federated_reservation_rows(*, mine_only):
     return rows, offline
 
 
-def _reservation_panel(label, items, *, numbered=False, offline=()):
+def _reservation_panel(label, items, *, numbered=False, offline=(), mine=()):
     """`items` are sorted (device label, start, end) rows."""
     width = max(len(device) for device, _, _ in items)
     index_width = len(str(len(items) - 1))
     _panel(label, [
         ((f"{i:>{index_width}}. ", Sty.CYAN) if numbered else ())
-        + (f"{device:<{width}}  ", Sty.MAGENTA, _format_reservation_range(start, end), Sty.CYAN)
+        + (f"{device:<{width}}", Sty.MAGENTA)
+        + (("  (you)", Sty.GREEN) if i < len(mine) and mine[i] else ())
+        + ("  ", Sty.DEFAULT, _format_reservation_range(start, end), Sty.CYAN)
         for i, (device, start, end) in enumerate(items)
     ] + ([(), *_down_rows(offline)] if offline else []))
 
@@ -774,7 +792,8 @@ def _federated_reservations(*, mine_only):
         _none_line("No reservations found.", offline, Sty.BOLD)
         return rows
     _reservation_panel("My reservations" if mine_only else "Reservations",
-                       [(r["device_label"], r["start"], r["end"]) for r in rows], offline=offline)
+                       [(r["device_label"], r["start"], r["end"]) for r in rows], offline=offline,
+                       mine=[] if mine_only else [r["mine"] for r in rows])
     return rows
 
 
@@ -787,31 +806,33 @@ def _confirm_cancel(index, device, start, end):
     return _confirm("Cancel this reservation?")
 
 
-def _federated_cancel():
+def _federated_cancel(choice=None):
     rows, offline = _federated_reservation_rows(mine_only=True)
     if not rows:
         _none_line("No reservations found.", offline, Sty.BOLD)
         return
     _reservation_panel("My reservations", [(r["device_label"], r["start"], r["end"]) for r in rows], numbered=True,
                        offline=offline)
-    inpu = session.prompt(stylize(
-        "Enter the reservation ID you would like to cancel ", Sty.BOLD,
-        "(abort with non-number input)", Sty.CYAN,
-        ": ", Sty.BOLD,
-    ))
+    inpu = str(choice) if choice is not None else session.prompt(stylize(
+        "Enter the reservation ID to cancel ", Sty.BOLD,
+        "(press Enter to abort): ", Sty.CYAN,
+    )).strip()
+    if not inpu:
+        _note("Canceled.", Sty.GRAY)
+        return
     if not inpu.isdigit():
-        print("Aborting. A non integer key was given.")
+        _note("Invalid input. Please enter a number.", Sty.WARNING)
         return
-    id = int(inpu)
-    if id >= len(rows):
-        print("Invalid ID.")
+    selection = int(inpu)
+    if selection >= len(rows):
+        _note("Invalid selection.", Sty.WARNING)
         return
-    r = rows[id]
-    if not _confirm_cancel(id, r["device_label"], r["start"], r["end"]):
-        printf("Aborting. User canceled action.", Sty.WARNING)
+    r = rows[selection]
+    if not _confirm_cancel(selection, r["device_label"], r["start"], r["end"]):
+        _note("Canceled.", Sty.GRAY)
         return
     account.cancel_reservation(r["reservation_id"])
-    _note("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
+    _note(f"Canceled reservation {selection}.", (Sty.BOLD, Sty.GREEN))
 
 
 def _federated_reservations_for_range(start_day, end_day):
@@ -849,7 +870,7 @@ def _federated_reserve_slot(device_id, chosen_day, chosen_slot, slot_start_str, 
                     _UNROUTABLE.format(device_handle, "this deployment's Global name is unknown") if device_handle else _NO_HANDLE)
 
 
-def _federated_reserve():
+def _federated_reserve(index=None):
     """Same flow as the native `resdev` picker, sourced from the HOME's device rows."""
     data = account.get_devices()
     offline = _render_destinations(data["destinations"])
@@ -875,15 +896,17 @@ def _federated_reserve():
             f"{dev['block_min']} min slots", Sty.GREEN,
         ))
     _panel("Devices", rows + _down_rows(offline) + _offline_rows(len(listed) - len(devs)))
-    sel = session.prompt(stylize(
-        "Enter which device you want to reserve ", (Sty.BOLD, Sty.GREEN),
-        "(enter the 0-based index): ", Sty.CYAN,
+    sel = str(index) if index is not None else session.prompt(stylize(
+        "Select a device by index: ", (Sty.BOLD, Sty.GREEN),
     )).strip()
+    if not sel:
+        _note("Canceled.", Sty.GRAY)
+        return
     if not sel.isdigit():
-        print("Invalid input. Please enter a number.")
+        _note("Invalid input. Please enter a number.", Sty.WARNING)
         return
     if int(sel) >= len(devs):
-        print("Invalid selection.")
+        _note("Invalid selection.", Sty.WARNING)
         return
     dev = devs[int(sel)]
     if dev["block_min"] < 10:
@@ -937,9 +960,9 @@ def my_reservations():
     sorted_entries = sorted(((labels.get(e['device_id'], "unlisted device"), e['start_time'], e['end_time']) for e in entries))
     _reservation_panel("My reservations", sorted_entries)
 
-def cancel_my_reservation():
+def cancel_my_reservation(choice=None):
     if account.is_https_home:
-        _federated_cancel()
+        _federated_cancel(choice)
         return
     ## print all of ur reservations and their ids
     ## ask for id to cancel
@@ -963,35 +986,31 @@ def cancel_my_reservation():
         return
     _reservation_panel("My reservations", [(e['label'], e['start_time'], e['end_time']) for e in sorted_entries], numbered=True)
         
-    inpu = session.prompt(stylize(
-        "Enter the reservation ID you would like to cancel ", Sty.BOLD,
-        "(abort with non-number input)", Sty.CYAN,
-        ": ", Sty.BOLD,
-    ))
-    
-    if inpu.isdigit():
-        id = int(inpu)
-        if id >= len(sorted_entries):
-            print("Invalid ID.")
-            return
-        
-        # grab the reservation
-        for entry in sorted_entries:
-            if entry['id'] == id:
-                db_id = entry['key']
-                if _confirm_cancel(id, entry["label"], entry["start_time"], entry["end_time"]):
-                    response = account.cancel_reservation(db_id)
-                    if 'ace' in response.results:
-                        _error(unmap_arg(response.results['ace']))
-                    elif 'UC' in response.results:
-                        _note("Reservation ID ", Sty.DEFAULT, f'{id}', Sty.CYAN, " successfully canceled.", (Sty.BOLD, Sty.GREEN))
-                else:
-                    printf("Aborting. User canceled action.", Sty.WARNING)
-                return
-            
-        _error(f"No reservation found with ID {id}.")
-    else:
-        print("Aborting. A non integer key was given.")
+    inpu = str(choice) if choice is not None else session.prompt(stylize(
+        "Enter the reservation ID to cancel ", Sty.BOLD,
+        "(press Enter to abort): ", Sty.CYAN,
+    )).strip()
+    if not inpu:
+        _note("Canceled.", Sty.GRAY)
+        return
+    if not inpu.isdigit():
+        _note("Invalid input. Please enter a number.", Sty.WARNING)
+        return
+    selection = int(inpu)
+    if selection >= len(sorted_entries):
+        _note("Invalid selection.", Sty.WARNING)
+        return
+
+    entry = sorted_entries[selection]
+    if not _confirm_cancel(selection, entry["label"], entry["start_time"], entry["end_time"]):
+        _note("Canceled.", Sty.GRAY)
+        return
+    response = account.cancel_reservation(entry['key'])
+    if 'ace' in response.results:
+        _error(unmap_arg(response.results['ace']))
+    elif 'UC' in response.results:
+        _note(f"Canceled reservation {selection}.", (Sty.BOLD, Sty.GREEN))
+
 
 def _native_labels():
     """Device id -> 'Bluetooth_Dongle@ucla' for reservation rows; {} if the lab won't list devices."""
@@ -1047,9 +1066,9 @@ def _pick_lab(rows):
 
 def _print_native_devices(rows, *, numbered=False, offline=0):
     width = max(len(row["name"]) for row in rows)
-    index_width = len(str(len(rows)))
+    index_width = len(str(len(rows) - 1))
     lines, lab = [], None
-    for index, row in enumerate(rows, 1):
+    for index, row in enumerate(rows):
         if row["lab"] != lab:
             lab = row["lab"]
             lines.append((f"@{lab}", (Sty.BOLD, Sty.MAGENTA)))
@@ -1085,10 +1104,10 @@ def get_datetime(question:str):
     except ValueError:
         raise RuntimeError("Enter the time as YYYY-MM-DD HH:MM.") from None
 
-def reserve():
+def reserve(index=None):
     try:
         if account.is_https_home:
-            _federated_reserve()
+            _federated_reserve(index)
             return
         rows = _native_device_rows()
         if not rows:
@@ -1102,11 +1121,17 @@ def reserve():
             printf("No devices are online right now.", Sty.WARNING)
             return
         _print_native_devices(online, numbered=True, offline=len(rows) - len(online))
-        pick = session.prompt(stylize("Enter the number of the device to reserve: ", Sty.DEFAULT)).strip()
-        if not pick.isdigit() or not 1 <= int(pick) <= len(online):
-            printf("Pick a number from the list.", Sty.WARNING)
+        pick = str(index) if index is not None else session.prompt(stylize("Select a device by index: ", Sty.DEFAULT)).strip()
+        if not pick:
+            _note("Canceled.", Sty.GRAY)
             return
-        row = online[int(pick) - 1]
+        if not pick.isdigit():
+            _note("Invalid input. Please enter a number.", Sty.WARNING)
+            return
+        if int(pick) >= len(online):
+            _note("Invalid selection.", Sty.WARNING)
+            return
+        row = online[int(pick)]
         start, end = get_datetime("Reserve Start Time"), get_datetime("Reserve End Time")
         token = account.reserve_device(row["id"], start, end)
         if token != '':
@@ -1395,20 +1420,23 @@ def interactive_reserve_next_days(block_minutes=60):
             print(f"{idx}. Device ID: {dev_id}   Name: {dev_name}")
         
         # --- 2) Prompt user to pick a device by 0-based index ---
-        device_selection = input("Enter which device you want to reserve  (enter the 0-based index): ")
+        device_selection = input("Select a device by index: ").strip()
+        if not device_selection:
+            _note("Canceled.", Sty.GRAY)
+            return
         try:
             device_selection = int(device_selection)
             if device_selection < 0 or device_selection >= len(sorted_device_ids):
-                print("Invalid selection.")
+                _note("Invalid selection.", Sty.WARNING)
                 return
         except ValueError:
-            print("Invalid input. Please enter a number.")
+            _note("Invalid input. Please enter a number.", Sty.WARNING)
             return
         
         chosen_device_id = sorted_device_ids[device_selection]
         
         # --- 3) Prompt user for the number of days ---
-        num_days = int(input("Enter the number of days to check for available reservations (starting today): "))
+        num_days = int(input("Number of days to show (default 1 = today): ").strip() or "1")
         
         # --- 4) Optionally override block_minutes ---
         # user_block_input = input(f"Enter block duration in minutes (e.g. 15, 30, 60, 120). Press Enter to default ({block_minutes}): ").strip()
@@ -1455,14 +1483,17 @@ def interactive_reserve_next_days(block_minutes=60):
             printf("  ", Sty.DEFAULT, f"{idx}.", Sty.CYAN, f" {slot_start_str} - {slot_end_str}", Sty.DEFAULT)
         
         # Prompt user to pick a slot by 0-based index
-        selection = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN)))
+        selection = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN))).strip()
+        if not selection:
+            _note("Canceled.", Sty.GRAY)
+            return
         try:
             selection = int(selection)
             if selection < 0 or selection >= len(available_slots):
-                print("Invalid selection.")
+                _note("Invalid selection.", Sty.WARNING)
                 return
         except ValueError:
-            print("Invalid input. Please enter a number.")
+            _note("Invalid input. Please enter a number.", Sty.WARNING)
             return
         
         chosen_day, chosen_slot = available_slots[selection]
@@ -1470,7 +1501,7 @@ def interactive_reserve_next_days(block_minutes=60):
         slot_end_str   = chosen_slot[1].strftime('%I:%M %p')
         
         if not _confirm_reserve(f"Device {chosen_device_id}", *chosen_slot):
-            printf("Reservation cancelled.", Sty.WARNING)
+            _note("Canceled.", Sty.GRAY)
             return
         
         # print(f"device_id : {chosen_device_id}, start_time : {chosen_slot[0]}, end_time : {chosen_slot[1]}")
@@ -1496,14 +1527,14 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     group's reservation horizon; the server refuses starts beyond it anyway."""
     device_label = chosen_device_id if device_label is None else device_label
     limit = f" (up to {max_days})" if max_days else ""
-    num_days_s = session.prompt(stylize(f"Enter the number of days to check for available reservations (starting today){limit}: ", (Sty.BOLD, Sty.GREEN))).strip()
+    num_days_s = session.prompt(stylize(f"Number of days to show{limit} (default 1 = today): ", (Sty.BOLD, Sty.GREEN))).strip()
     try:
-        num_days = int(num_days_s)
+        num_days = int(num_days_s or "1")
         if num_days <= 0 or (max_days and num_days > max_days):
             print("Invalid number of days." if num_days <= 0 else f"Your group may reserve at most {max_days} days ahead.")
             return
     except ValueError:
-        print("Invalid input. Please enter a number.")
+        _note("Invalid input. Please enter a number.", Sty.WARNING)
         return
 
     # ---------------------------
@@ -1535,13 +1566,16 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     _panel("Available slots", rows)
 
     pick_s = session.prompt(stylize("Select a slot by index: ", (Sty.BOLD, Sty.GREEN))).strip()
+    if not pick_s:
+        _note("Canceled.", Sty.GRAY)
+        return
     try:
         pick = int(pick_s)
         if pick < 0 or pick >= len(available_slots):
-            print("Invalid selection.")
+            _note("Invalid selection.", Sty.WARNING)
             return
     except ValueError:
-        print("Invalid input. Please enter a number.")
+        _note("Invalid input. Please enter a number.", Sty.WARNING)
         return
 
     chosen_day, chosen_slot = available_slots[pick]
@@ -1549,7 +1583,7 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     slot_end_str = chosen_slot[1].strftime("%I:%M %p")
 
     if not _confirm_reserve(device_label, *chosen_slot):
-        printf("Reservation cancelled.", Sty.WARNING)
+        _note("Canceled.", Sty.GRAY)
         return
 
     # ---------------------------
@@ -1570,7 +1604,7 @@ def _native_reserve_slot(chosen_device_id, chosen_day, chosen_slot, slot_start_s
         _print_native_reserved(chosen_device_id, device_label, _format_reservation_range(*chosen_slot), token)
 
 
-def interactive_reserve_next_days_auto():
+def interactive_reserve_next_days_auto(index=None):
     try:
         # ---------------------------
         # 1) Fetch perms + per-device caps
@@ -1627,17 +1661,19 @@ def interactive_reserve_next_days_auto():
                          f"{block_min} min slots", Sty.GREEN))
 
         _panel("Devices", rows + _offline_rows(listed - len(names)))
-        sel = session.prompt(stylize(
-            "Enter which device you want to reserve ", (Sty.BOLD, Sty.GREEN),
-            "(enter the 0-based index): ", Sty.CYAN,
+        sel = str(index) if index is not None else session.prompt(stylize(
+            "Select a device by index: ", (Sty.BOLD, Sty.GREEN),
         )).strip()
+        if not sel:
+            _note("Canceled.", Sty.GRAY)
+            return
         try:
             sel_i = int(sel)
             if sel_i < 0 or sel_i >= len(sorted_device_ids):
-                print("Invalid selection.")
+                _note("Invalid selection.", Sty.WARNING)
                 return
         except ValueError:
-            print("Invalid input. Please enter a number.")
+            _note("Invalid input. Please enter a number.", Sty.WARNING)
             return
 
         chosen_device_key = sorted_device_ids[sel_i]
@@ -1696,9 +1732,20 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
         from ..deployment import homes
         # The prompt is the account's full name: alice@ucla, alice@global.
         where = homes.GLOBAL_ACCOUNTS if account.is_https_home else (home_name or 'remoterf')
+        command_words = [
+            "help", "clear", "getdev", "resdev", "cancelres", "getres", "myres", "perms",
+            "enroll", "status", "direct on", "direct off", "logout", "exit", "quit",
+            *(["refresh"] if account.is_https_home else []),
+            *(["admin"] if account.is_admin else []),
+        ]
+        command_completer = WordCompleter(command_words, ignore_case=True, sentence=True)
         while True:
             try:
-                inpu = session.prompt(stylize(f'{account.username}@{where}> ', Sty.BOLD))
+                inpu = session.prompt(
+                    stylize(f'{account.username}@{where}> ', Sty.BOLD),
+                    completer=command_completer,
+                )
+                inpu = inpu.strip()
                 if inpu in ('register', 'verify', 'login', 'forgot-password', 'reset-password'):
                     authenticated = _account_command(inpu)
                     if inpu == 'login' and authenticated:
@@ -1734,7 +1781,7 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                     devices()
                 elif inpu == "help" or inpu == "h":
                     commands()
-                elif inpu == "perms" and not account.is_https_home:
+                elif inpu == "perms":
                     perms()
                 elif inpu == "enroll":
                     enroll()
@@ -1756,8 +1803,30 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                         reserve()
                     else:
                         interactive_reserve_next_days_auto()
+                elif inpu.startswith("resdev ") and inpu != "resdev -n":
+                    try:
+                        selection = int(inpu.split(maxsplit=1)[1])
+                    except ValueError:
+                        _note("Invalid selection.", Sty.WARNING)
+                        continue
+                    if selection < 0:
+                        _note("Invalid selection.", Sty.WARNING)
+                    elif account.is_https_home:
+                        reserve(selection)
+                    else:
+                        interactive_reserve_next_days_auto(selection)
                 elif inpu == 'cancelres':
                     cancel_my_reservation()
+                elif inpu.startswith("cancelres "):
+                    try:
+                        selection = int(inpu.split(maxsplit=1)[1])
+                    except ValueError:
+                        _note("Invalid selection.", Sty.WARNING)
+                        continue
+                    if selection < 0:
+                        _note("Invalid selection.", Sty.WARNING)
+                    else:
+                        cancel_my_reservation(selection)
 
                 elif inpu == 'resdev -n':
                     # check if user is admin
@@ -1765,12 +1834,15 @@ def run(backend=None, *, register=False, enrollment_code=None, server_label=None
                     reserve()
                 elif account.is_admin and inpu.strip().startswith("admin"):
                     handle_admin_command(inpu)
-                elif inpu.strip():
+                elif inpu.startswith("remoterf "):
+                    print("That's a shell command; run it outside this prompt (type 'help' for commands here).")
+                elif inpu:
                     print(f"Unknown command: {inpu}")
             except (AccountBackendError, ValidationError) as exc:
                 _error(exc)
             except KeyboardInterrupt:
-                break
+                print()
+                continue
             except EOFError:
                 break
             except Exception as exc:  # noqa: BLE001 - a failed command never ends the shell

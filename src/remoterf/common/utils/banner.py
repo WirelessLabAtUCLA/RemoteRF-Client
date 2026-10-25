@@ -108,11 +108,10 @@ def _panel_lines(
     top_left, top_right = ("╭", "╮") if unicode_supported else ("+", "+")
     bottom_left, bottom_right = ("╰", "╯") if unicode_supported else ("+", "+")
     vertical = "│" if unicode_supported else "|"
-    marker = "◆" if unicode_supported else "*"
     label = f"{horizontal} REMOTERF CLIENT "
     top = f"{top_left}{label}{horizontal * (PANEL_INNER_WIDTH - len(label))}{top_right}"
     content = [
-        f"{marker} www.remoterf.net",
+        "www.remoterf.net",
         "Created by the Wireless Lab at UCLA",
         f"VERSION  {version}",
     ]
@@ -139,12 +138,11 @@ def _internal_panel_lines(
     top_left, top_right = ("╭", "╮") if unicode_supported else ("+", "+")
     bottom_left, bottom_right = ("╰", "╯") if unicode_supported else ("+", "+")
     vertical = "│" if unicode_supported else "|"
-    marker = "◆" if unicode_supported else "*"
     label = f"{horizontal} REMOTERF SESSION "
     top = f"{top_left}{label}{horizontal * (PANEL_INNER_WIDTH - len(label))}{top_right}"
     display_tos = str(tos_url).removeprefix("https://").removeprefix("http://")
     content = (
-        f"{marker} www.remoterf.net",
+        "www.remoterf.net",
         f"VERSION  {version}",
         f"SERVER   {server or 'NA'}",
         f"TOS      {display_tos}",
@@ -165,9 +163,8 @@ def _compact_lines(
     unicode_supported: bool,
 ) -> list[str]:
     width = max(1, int(columns))
-    marker = "◆" if unicode_supported else "*"
     separator = "·" if unicode_supported else "-"
-    heading = f"{marker} REMOTERF CLIENT"
+    heading = "REMOTERF CLIENT"
     if len(heading) > width:
         heading = COMPACT_BANNER[:width]
 

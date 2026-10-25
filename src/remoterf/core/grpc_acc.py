@@ -24,8 +24,8 @@ import datetime
 
 
 def _note(text, style=Sty.DEFAULT):
-    """One line in the shell's voice: the banner's marker, then the text."""
-    printf('◆ ' if supports_unicode() else '* ', Sty.DEFAULT, str(text), style)
+    """One line in the shell's voice."""
+    printf(str(text), style)
 
 
 def _busy(label):
@@ -152,31 +152,31 @@ class RemoteRFAccount:
                 return install_driver(device_id=device_id).name
             return install_driver(token=handle, device_id=device_id).name
         except Exception as e:
-            print(f"{'◆' if supports_unicode() else '*'} Could not install the driver for this device: {explain(e)}")
+            print(f"Could not install the driver for this device: {explain(e)}")
             
     def get_reservations(self):
-        with self._busy("Asking the deployments for reservations…"):
+        with self._busy("Fetching reservations…"):
             if self.is_https_home:
                 return self.backend.reservations()
             username, credential_secret = self._rpc_credentials()
             return self._call(function_name='ACC:get_res', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def get_devices(self):
-        with self._busy("Asking the deployments for devices…"):
+        with self._busy("Fetching devices…"):
             if self.is_https_home:
                 return self.backend.devices()
             username, credential_secret = self._rpc_credentials()
             return self._call(function_name='ACC:get_dev', args={"un":map_arg(username), "pw":map_arg(credential_secret)})
     
     def cancel_reservation(self, res_id):
-        with self._busy("Cancelling…"):
+        with self._busy("Canceling…"):
             if self.is_https_home:
                 return self.backend.cancel(res_id)
             username, credential_secret = self._rpc_credentials()
             return self._call(function_name='ACC:cancel_res', args={"un":map_arg(username), "pw":map_arg(credential_secret), "res_id":map_arg(res_id)})
     
     def get_perms(self):
-        with self._busy("Asking the deployments for permissions…"):
+        with self._busy("Fetching permissions…"):
             if self.is_https_home:
                 return self.backend.permissions()
             username, credential_secret = self._rpc_credentials()

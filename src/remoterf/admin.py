@@ -340,9 +340,11 @@ def cmd_login(target: str | None) -> int:
     alias = entry.get("alias") or _resolve(lab)[3]
     strict = trusted(alias)
     if not strict:
-        print(f"This machine has not trusted {lab}'s admin host key. Safer: a code from the lab console, "
-              f"`remoterf --remote-admin trust {lab} SHA256:…` with the fingerprint from a trusted place, or a "
-              f"copy of {known_hosts_path()} from a paired machine. Accepting it below on first sight trusts the "
+        print(f"This machine has not trusted {lab}'s admin host key. Safer options:\n"
+              "• Use a code from the lab console.\n"
+              f"• Or run `remoterf --remote-admin trust {lab} SHA256:…` with a verified fingerprint.\n"
+              f"• Copy {known_hosts_path()} from a paired machine.\n"
+              "Accepting it below on first sight trusts the "
               "network you are on.", file=sys.stderr)
     _save_lab(lab, {**entry, "user": user, "alias": alias})
     return _exec(ssh_argv(lab, user, alias, strict=strict))
@@ -371,9 +373,9 @@ def cmd_hostkey(lab: str) -> int:
 
 
 USAGE = """Usage:
-  remoterf --remote-admin [<user>@]<lab>          the lab's console (a menu with no lab)
+  remoterf --remote-admin [<user>@]<lab>            open a lab's admin console (prompts if <lab> is omitted)
   remoterf --remote-admin pair <user>@<lab> <code>  first time on this machine (code from: serverrf admins add/code)
-  remoterf --remote-admin trust <lab> SHA256:…      trust a host key fingerprint read somewhere trusted
+  remoterf --remote-admin trust <lab> SHA256:…      trust a verified host key fingerprint
   remoterf --remote-admin hostkey <lab>             show the lab's current host key"""
 
 

@@ -1649,6 +1649,17 @@ def install_driver(*, token: str = None, device_id: int = None, device_name: str
         device_name=device_name,
         prefer_v2=True,
     )
+    device_type = _schema_device_type(schema)
+    remote_path = _DRIVERS_DIR / device_type / f"{device_type}_remote.py"
+    init_path = remote_path.with_name("__init__.py")
+    if (
+        schema.get("schema_hash")
+        and remote_path.exists()
+        and init_path.exists()
+        and f"from .{device_type}_remote import" in init_path.read_text(encoding="utf-8")
+        and _read_schema_hash(remote_path) == schema.get("schema_hash")
+    ):
+        return remote_path.parent
     pkg_dir = _write_driver_files(schema, token=token, device_id=device_id)
     _print_driver_cached(pkg_dir)
     return pkg_dir

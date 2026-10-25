@@ -153,18 +153,18 @@ def print_help() -> None:
     printf("Commands:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf -l | --login [target]", Sty.CYAN, "    Login: last used, 'global', a home name, or an account (username@deployment)", Sty.DEFAULT)
     printf("  remoterf -r | --register", Sty.CYAN, "          Create a RemoteRF Global account", Sty.DEFAULT)
-    printf("  remoterf -r --local-only", Sty.CYAN, "     Register at a deployment with an enrollment code", Sty.DEFAULT)
+    printf("  remoterf -r --local-only", Sty.CYAN, "          Register at a deployment with an enrollment code", Sty.DEFAULT)
     printf("  remoterf --reset-pass", Sty.CYAN, "             Reset a RemoteRF Global password by email", Sty.DEFAULT)
     printf("  remoterf homes", Sty.CYAN, "                    List saved deployment homes", Sty.DEFAULT)
-    printf("  remoterf --remote-admin [lab]", Sty.CYAN, "     A lab's console, for its remote admins (-h for more)", Sty.DEFAULT)
+    printf("  remoterf --remote-admin [lab]", Sty.CYAN, "     Open a lab's remote-admin console (-h for more)", Sty.DEFAULT)
     printf("  remoterf -v | --version", Sty.CYAN, "           Print version", Sty.DEFAULT)
     print()
     printf("Config:", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf -c | --config [options]", Sty.CYAN)
-    printf("    -a, --addr, -addr <host:port>", Sty.CYAN, "   Set target server", Sty.DEFAULT)
+    printf("    -a, --addr <host:port>", Sty.CYAN, "          Set target server", Sty.DEFAULT)
     printf("    --cert-port <port>", Sty.CYAN, "              Cert server port (default: grpc port + 1)", Sty.DEFAULT)
-    printf("    -w, --wipe, -wipe", Sty.CYAN, "               Delete all local config", Sty.DEFAULT)
-    printf("    -y, --yes, -yes", Sty.CYAN, "                 Skip wipe confirmation", Sty.DEFAULT)
+    printf("    -w, --wipe", Sty.CYAN, "                      Delete all local config", Sty.DEFAULT)
+    printf("    -y, --yes", Sty.CYAN, "                       Skip wipe confirmation", Sty.DEFAULT)
     printf("    -r, --register", Sty.CYAN, "                  Register right after configuring", Sty.DEFAULT)
     print()
     printf("    --account-transport https-json", Sty.CYAN, "  Select an HTTPS home on a custom port", Sty.DEFAULT)
@@ -379,7 +379,7 @@ def _agree_to_tos() -> bool:
 
     forget_tos_agreement()
     if not _confirm_tos("Do you agree to the RemoteRF Terms of Service? [y/N]: ",
-                        "Registration cancelled."):
+                        "Registration canceled."):
         return False
     remember_tos_agreement()
     return True

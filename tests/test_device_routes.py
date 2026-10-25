@@ -623,9 +623,9 @@ def test_resdev_n_lists_numbered_devices(monkeypatch):
     import remoterf.core.app as client_app
 
     lines = _shown(monkeypatch, client_app)
-    account, _ = _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
+    account, _ = _native_shell(monkeypatch, client_app, ["0", "2026-01-01 10:00", "2026-01-01 11:00"])
     client_app.reserve()
-    assert _row(lines, "1.", "Pluto", "SDR", "(OTA)", "[PlutoA]", "online")
+    assert _row(lines, "0.", "Pluto", "SDR", "(OTA)", "[PlutoA]", "online")
     assert _row(lines, "Handle", "PlutoA@ucla") and _row(lines, "PlutoA@ucla", *WHEN)
     assert account.reserve_device.call_args.args[0] == 3
 
@@ -634,7 +634,7 @@ def test_resdev_n_names_the_lab_as_the_token_does(monkeypatch):
     import remoterf.core.app as client_app
 
     lines = _shown(monkeypatch, client_app)
-    _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
+    _native_shell(monkeypatch, client_app, ["0", "2026-01-01 10:00", "2026-01-01 11:00"])
     monkeypatch.setattr(client_app, "current_route", {"home": {"display_name": "127.0.0.1:29496"}})
     client_app.reserve()
     assert any(line.startswith("│ PlutoA@ucla  20") for line in lines)
@@ -721,9 +721,9 @@ def test_resdev_n_leaves_offline_devices_out(monkeypatch):
     import remoterf.core.app as client_app
 
     lines = _shown(monkeypatch, client_app)
-    account, _ = _offline_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
+    account, _ = _offline_shell(monkeypatch, client_app, ["0", "2026-01-01 10:00", "2026-01-01 11:00"])
     client_app.reserve()
-    assert _row(lines, "1.", "USRP", "B210", "online") and not any("PlutoA]" in line for line in lines if "online" in line)
+    assert _row(lines, "0.", "USRP", "B210", "online") and not any("PlutoA]" in line for line in lines if "online" in line)
     assert _row(lines, "2", "offline", "devices", "not", "shown")
     assert account.reserve_device.call_args.args[0] == 4
     # Nothing online: say so, offer nothing.
@@ -778,15 +778,15 @@ def test_known_backend_codes_read_as_sentences(monkeypatch):
         (RuntimeError("route_unavailable [transport]"), "That deployment isn't responding right now; try again in a minute."),
         (AccountBackendError("principal_unknown"), "You're not enrolled at that deployment yet."),
         (AccountBackendError("contract_not_active"), "That deployment isn't sharing with Global right now."),
-        (AccountBackendError("invalid_device_id", provenance="destination"), "That device isn't in your list any more; run getdev again."),
+        (AccountBackendError("invalid_device_id", provenance="destination"), "That device isn't in your list anymore; run getdev again."),
         (AccountBackendError("Registration failed"), "Registration failed"),
     ]:
         lines.clear()
         client_app._error(exc)
-        assert len(lines) == 1 and lines[0].endswith(text) and lines[0].startswith(("◆ ", "* "))
+        assert lines == [text]
     # Through the shell: a refused reservation shows the sentence, not the code.
     lines.clear()
-    account, _ = _native_shell(monkeypatch, client_app, ["1", "2026-01-01 10:00", "2026-01-01 11:00"])
+    account, _ = _native_shell(monkeypatch, client_app, ["0", "2026-01-01 10:00", "2026-01-01 11:00"])
     account.reserve_device.side_effect = AccountBackendError("route_unavailable", provenance="transport")
     client_app.reserve()
     assert lines[-1].endswith("That deployment isn't responding right now; try again in a minute.")
