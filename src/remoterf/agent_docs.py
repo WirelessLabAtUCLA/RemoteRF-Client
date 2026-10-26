@@ -188,7 +188,7 @@ def _print_api(api):
         if methods:
             print(f"\n{kind}s:")
         for m in methods:
-            doc = " ".join(m["doc"].split())
+            doc = " ".join(m["doc"].split()).removeprefix(f"{m['name']}:").strip()
             print(_clean(f"  {m['name']}" + (f"  {doc}" if doc else "")))
     for note in api["notes"]:
         print(f"\n{_clean(note)}")

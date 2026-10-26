@@ -271,16 +271,9 @@ def status():
     server = str(server_addr).removeprefix("https://").removeprefix("http://").rstrip("/")
     where = homes.GLOBAL_ACCOUNTS if account.is_https_home else (home_name or "remoterf")
     if account.is_https_home:
-        linked = homes.linked()["labs"]
-        memberships = {lab["slug"] for lab in linked.values() if isinstance(lab, dict) and lab.get("slug")}
-        try:
-            memberships.update(
-                entry["display_name"] for entry in account.get_perms().get("federation", [])
-                if entry.get("status") == "ok" and entry.get("display_name")
-                and entry.get("deployment_id") not in linked
-            )
-        except (AccountBackendError, ValidationError):
-            pass
+        # Same list as `remoterf auth status` (ops.whoami).
+        memberships = {e["display_name"] for e in account.get_perms().get("federation", [])
+                       if e.get("status") == "ok" and e["display_name"] != e.get("deployment_id")}
     else:
         memberships = {home_name or _home_name()}
     member_text = ", ".join(f"@{name}" for name in sorted(memberships)) or "(none)"
@@ -1526,11 +1519,12 @@ def _pick_slot_and_reserve(chosen_device_id, chosen_device_name, block_minutes, 
     how the reservation is made (token vs. HOME handle). `max_days` is the
     group's reservation horizon; the server refuses starts beyond it anyway."""
     device_label = chosen_device_id if device_label is None else device_label
-    limit = f" (up to {max_days})" if max_days else ""
+    max_days = max_days or 14
+    limit = f" (up to {max_days})"
     num_days_s = session.prompt(stylize(f"Number of days to show{limit} (default 1 = today): ", (Sty.BOLD, Sty.GREEN))).strip()
     try:
         num_days = int(num_days_s or "1")
-        if num_days <= 0 or (max_days and num_days > max_days):
+        if num_days <= 0 or num_days > max_days:
             print("Invalid number of days." if num_days <= 0 else f"Your group may reserve at most {max_days} days ahead.")
             return
     except ValueError:

@@ -171,7 +171,7 @@ def print_help() -> None:
     print()
     printf("Scripts and AI agents (no prompts; --json prints JSON on stdout):", (Sty.BOLD, Sty.MAGENTA))
     printf("  remoterf auth login --user NAME --password-stdin", Sty.CYAN, "  [--home global|DEPLOYMENT] [--accept-tos]", Sty.DEFAULT)
-    printf("  remoterf auth status | logout", Sty.CYAN, "        The saved login", Sty.DEFAULT)
+    printf("  remoterf auth status | logout", Sty.CYAN, "        The saved login (`remoterf whoami` = auth status)", Sty.DEFAULT)
     printf("  remoterf devices [--deployment D] [--all]", Sty.CYAN, "  Devices and their state", Sty.DEFAULT)
     printf("  remoterf slots HANDLE [--days N]", Sty.CYAN, "     Free slots on a device", Sty.DEFAULT)
     printf("  remoterf reservations", Sty.CYAN, "                Your reservations", Sty.DEFAULT)
@@ -415,7 +415,7 @@ def _register_local() -> int:
         print()
         return 1
     if not entered:
-        print('ERROR: --local-only requires an enrollment code')
+        print('remoterf: --local-only requires an enrollment code', file=sys.stderr)
         return 2
     try:
         host, code = homes.parse_code(entered)
@@ -452,21 +452,21 @@ def _reset_password() -> int:
     try:
         email = input('Associated email: ').strip()
         if not email:
-            print('ERROR: an email address is required')
+            print('remoterf: an email address is required', file=sys.stderr)
             return 2
         backend.forgot(email)
         printf('If that address belongs to a RemoteRF Global account, check its email for a password reset code.', Sty.GRAY)
         token = getpass.getpass('Password reset code (Hidden): ')
         if not token:
-            print('ERROR: a password reset code is required')
+            print('remoterf: a password reset code is required', file=sys.stderr)
             return 2
         while True:
             password = getpass.getpass('New password (Hidden): ')
             if not 8 <= len(password) <= 128:
-                print(f'ERROR: password must be 8-128 characters (got {len(password)})')
+                print(f'remoterf: password must be 8-128 characters (got {len(password)})', file=sys.stderr)
                 continue
             if password != getpass.getpass('Confirm new password (Hidden): '):
-                print('ERROR: passwords do not match')
+                print('remoterf: passwords do not match', file=sys.stderr)
                 continue
             break
         backend.reset(token, password)
@@ -595,18 +595,18 @@ def main() -> int:
         if len(argv) == 2 and argv[1].lstrip("-") == "local-only":
             return _register_local()
         if len(argv) > 1:
-            print("ERROR: --register takes no arguments (or '--local-only')")
+            print("remoterf: --register takes no arguments (or '--local-only')", file=sys.stderr)
             return 2
 
     if argv[0] in ("--reset-pass", "--reset-password"):
         if len(argv) > 1:
-            print("ERROR: --reset-pass takes no arguments")
+            print("remoterf: --reset-pass takes no arguments", file=sys.stderr)
             return 2
         return _reset_password()
 
     if argv[0] in ("--login", "-login", "-l"):
         if len(argv) > 2:
-            print("ERROR: --login takes at most one target")
+            print("remoterf: --login takes at most one target", file=sys.stderr)
             return 2
         return _login(argv[1] if len(argv) == 2 else None)
 
@@ -618,7 +618,7 @@ def main() -> int:
 
         return admin_main(argv[1:] if argv[0] == "--remote-admin" else argv)
 
-    if argv[0] in ("auth", "devices", "slots", "reservations", "reserve", "cancel", "doctor"):
+    if argv[0] in ("auth", "whoami", "devices", "slots", "reservations", "reserve", "cancel", "doctor"):
         from remoterf.agent_cli import main as agent_main
         return agent_main(argv)
 
@@ -653,7 +653,7 @@ def main() -> int:
 
             if tok in ("--addr", "-a", "-addr"):
                 if i + 1 >= len(argv):
-                    print("ERROR: missing required argument after --addr/-a/-addr")
+                    print("remoterf: missing required argument after --addr/-a/-addr", file=sys.stderr)
                     return 2
                 addr = argv[i + 1]
                 i += 2
@@ -661,7 +661,7 @@ def main() -> int:
 
             if tok == '--account-transport':
                 if i + 1 >= len(argv) or argv[i + 1] not in ('grpc', 'https-json'):
-                    print('ERROR: account transport must be grpc or https-json')
+                    print('remoterf: account transport must be grpc or https-json', file=sys.stderr)
                     return 2
                 account_transport = argv[i + 1]
                 i += 2
@@ -669,12 +669,12 @@ def main() -> int:
 
             if tok in ("--cert-port", "-cert-port"):
                 if i + 1 >= len(argv):
-                    print("ERROR: missing required argument after --cert-port")
+                    print("remoterf: missing required argument after --cert-port", file=sys.stderr)
                     return 2
                 try:
                     cert_port_arg = int(argv[i + 1].strip())
                 except Exception:
-                    print("ERROR: --cert-port must be an integer")
+                    print("remoterf: --cert-port must be an integer", file=sys.stderr)
                     return 2
                 i += 2
                 continue
@@ -694,12 +694,12 @@ def main() -> int:
                 i += 1
                 continue
 
-            print(f"ERROR: unknown config argument: {tok!r}")
+            print(f"remoterf: unknown config argument: {tok!r}", file=sys.stderr)
             return 2
 
         # Mirror remoterf-config behavior:
         if wipe and addr is not None:
-            print("ERROR: cannot use --wipe and --addr together")
+            print("remoterf: cannot use --wipe and --addr together", file=sys.stderr)
             return 2
 
         if wipe:
@@ -737,7 +737,7 @@ def main() -> int:
             if "://" in s:
                 s = s.split("://", 1)[1]
             if ":" not in s:
-                print("ERROR: addr must be in 'host:port' form")
+                print("remoterf: addr must be in 'host:port' form", file=sys.stderr)
                 return 2
 
             host, port_str = s.rsplit(":", 1)
@@ -745,7 +745,7 @@ def main() -> int:
             try:
                 port = int(port_str.strip())
             except Exception:
-                print("ERROR: port must be an integer")
+                print("remoterf: port must be an integer", file=sys.stderr)
                 return 2
 
             # configure returns the proper exit code
@@ -769,5 +769,5 @@ def main() -> int:
         return 2
 
     # fallback
-    print(f"ERROR: unknown command: {argv[0]!r}")
+    print(f"remoterf: unknown command: {argv[0]!r}", file=sys.stderr)
     return 2

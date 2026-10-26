@@ -93,7 +93,7 @@ def test_human_output_shows_global_reservations_without_ids(capsys, monkeypatch,
     code, out, _ = run(capsys, "reservations")
     assert code == 0 and out.startswith("10@ucla  Pluto_00@ucla") and DEP not in out
     code, out, _ = run(capsys, "cancel", "10@ucla", "--confirm")
-    assert code == 0 and out == "Cancelled.\n"
+    assert code == 0 and out == "Canceled.\n"
 
 
 def test_lab_errors_keep_their_exit_codes(capsys, monkeypatch, session):

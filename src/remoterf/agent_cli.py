@@ -182,13 +182,13 @@ def _apps(a):
 
 def _reserve(a):
     if not a.confirm:
-        raise RemoteRFOpsError("usage", "Reserving changes the deployment's schedule: re-run with --confirm.")
+        raise RemoteRFOpsError("usage", "Dry run only. Re-run with --confirm to reserve this slot.")
     return ops.reserve(ops.saved_session(), a.handle, a.start, a.end, reveal_token=a.reveal_token)
 
 
 def _cancel(a):
     if not a.confirm:
-        raise RemoteRFOpsError("usage", "Cancelling gives the slot up: re-run with --confirm.")
+        raise RemoteRFOpsError("usage", "Dry run only. Re-run with --confirm to cancel this reservation.")
     return ops.cancel(ops.saved_session(), a.reservation_id)
 
 
@@ -271,6 +271,9 @@ def _ref(x):
 
 
 def _show_reservations(r, out):
+    if not r["reservations"]:
+        print("No reservations.", file=out)
+        return
     _table(out, [[_ref(x), x["handle"] or x["device"], _local(x["start_ts"]), "-", _local(x["end_ts"])]
                  for x in r["reservations"]])
 
@@ -316,12 +319,13 @@ def _parser():
     p.add_argument("--user", required=True, help="NAME, or NAME@deployment")
     p.add_argument("--password-stdin", action="store_true", required=True, help="read the password from stdin")
     p.add_argument("--accept-tos", action="store_true", help="agree to the RemoteRF Terms of Service")
-    command(auth, "status", lambda a: ops.whoami(ops.saved_session()), _show_whoami, "who the saved login is")
+    command(auth, "status", lambda a: ops.whoami(ops.saved_session()), _show_whoami, "show active login and deployments")
+    command(sub, "whoami", lambda a: ops.whoami(ops.saved_session()), _show_whoami, "same as `auth status`")
     command(auth, "logout", _logout, lambda r, out: print("Logged out.", file=out), "end and forget the saved login")
     p = command(auth, "apps", _apps, _show_apps, "apps connected through the RemoteRF Global connector (not available yet)")
     p.add_argument("--revoke", metavar="CLIENT_ID", help="disconnect one app")
     p = command(sub, "devices", lambda a: ops.list_devices(ops.saved_session(), deployment=a.deployment, online_only=not a.all),
-                _show_devices, "devices and their state now")
+                _show_devices, "list devices and current availability")
     p.add_argument("--deployment", help="only this deployment's devices")
     p.add_argument("--all", action="store_true", help="include offline devices")
     p = command(sub, "slots", lambda a: ops.find_slots(ops.saved_session(), a.handle, days=a.days),
@@ -333,12 +337,12 @@ def _parser():
     p.add_argument("handle")
     p.add_argument("--start", required=True, help="RFC 3339, for example 2026-10-15T14:00:00Z")
     p.add_argument("--end", required=True)
-    p.add_argument("--confirm", action="store_true", help="really reserve")
+    p.add_argument("--confirm", action="store_true", help="confirm reservation")
     p.add_argument("--reveal-token", action="store_true", help="include the raw reservation token")
-    p = command(sub, "cancel", _cancel, lambda r, out: print("Cancelled.", file=out),
+    p = command(sub, "cancel", _cancel, lambda r, out: print("Canceled.", file=out),
                 "cancel a reservation (needs --confirm)")
     p.add_argument("reservation_id", help="as `remoterf reservations` shows it, or a JSON reservation_id")
-    p.add_argument("--confirm", action="store_true", help="really cancel")
+    p.add_argument("--confirm", action="store_true", help="confirm cancellation")
     command(sub, "doctor", _doctor, _show_doctor, "check this install, its home and its login")
     return parser
 

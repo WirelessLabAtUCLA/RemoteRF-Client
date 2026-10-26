@@ -354,7 +354,7 @@ def test_register_defaults_to_global_and_local_only_requires_a_code(monkeypatch,
     answers = iter(["y", ""])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     assert run_cli(["-r", "--local-only"], monkeypatch, _use_global=used_global) == 2
-    assert "--local-only requires an enrollment code" in capsys.readouterr().out
+    assert "--local-only requires an enrollment code" in capsys.readouterr().err
     used_global.assert_not_called()
 
 
